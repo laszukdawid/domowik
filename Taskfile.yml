@@ -67,7 +67,7 @@ tasks:
       - "{{.DOCKER_COMPOSE}} exec backend alembic upgrade head"
 
   db:migrate:create:
-    desc: Create a new migration (usage: task db:migrate:create -- "migration name")
+    desc: "Create a new migration (usage: task db:migrate:create -- 'migration name')"
     cmds:
       - "{{.DOCKER_COMPOSE}} exec backend alembic revision --autogenerate -m '{{.CLI_ARGS}}'"
 
