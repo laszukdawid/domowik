@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
-  namespace: domovol
+  namespace: domowik
 spec:
   replicas: 2
   selector:
@@ -15,12 +15,12 @@ spec:
     spec:
       containers:
         - name: backend
-          image: domovol/backend:latest
+          image: domowik/backend:latest
           ports:
             - containerPort: 8000
           envFrom:
             - secretRef:
-                name: domovol-secrets
+                name: domowik-secrets
           resources:
             requests:
               memory: "128Mi"

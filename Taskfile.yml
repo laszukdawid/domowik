@@ -193,24 +193,24 @@ tasks:
       - kubectl delete -k k8s/
 
   k8s:status:
-    desc: Show status of domovol namespace
+    desc: Show status of domowik namespace
     cmds:
-      - kubectl get all -n domovol
+      - kubectl get all -n domowik
 
   k8s:logs:backend:
     desc: Tail backend pod logs
     cmds:
-      - kubectl logs -f -l app=backend -n domovol
+      - kubectl logs -f -l app=backend -n domowik
 
   k8s:logs:frontend:
     desc: Tail frontend pod logs
     cmds:
-      - kubectl logs -f -l app=frontend -n domovol
+      - kubectl logs -f -l app=frontend -n domowik
 
   k8s:scraper:trigger:
     desc: Manually trigger the scraper CronJob
     cmds:
-      - kubectl create job --from=cronjob/scraper scraper-manual-$(date +%s) -n domovol
+      - kubectl create job --from=cronjob/scraper scraper-manual-$(date +%s) -n domowik
 
   # =============================================================================
   # Docker Image Build (Production)
@@ -224,15 +224,15 @@ tasks:
   docker:build:backend:
     desc: Build backend production image
     cmds:
-      - docker build -t domovol/backend:latest ./backend
+      - docker build -t domowik/backend:latest ./backend
 
   docker:build:frontend:
     desc: Build frontend production image
     cmds:
-      - docker build -t domovol/frontend:latest ./frontend
+      - docker build -t domowik/frontend:latest ./frontend
 
   docker:push:
     desc: Push images to registry
     cmds:
-      - docker push domovol/backend:latest
-      - docker push domovol/frontend:latest
+      - docker push domowik/backend:latest
+      - docker push domowik/frontend:latest

@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
-  namespace: domovol
+  namespace: domowik
 spec:
   replicas: 2
   selector:
@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: domovol/frontend:latest
+          image: domowik/frontend:latest
           ports:
             - containerPort: 80
           resources:

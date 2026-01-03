@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: scraper
-  namespace: domovol
+  namespace: domowik
 spec:
   schedule: "0 6 * * *"  # Run at 6 AM UTC daily
   concurrencyPolicy: Forbid
@@ -15,11 +15,11 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: scraper
-              image: domovol/backend:latest
+              image: domowik/backend:latest
               command: ["python", "-m", "scraper.run"]
               envFrom:
                 - secretRef:
-                    name: domovol-secrets
+                    name: domowik-secrets
               resources:
                 requests:
                   memory: "256Mi"
