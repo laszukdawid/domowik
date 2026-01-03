@@ -15,7 +15,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: scraper
-              image: domowik/backend:latest
+              image: ghcr.io/laszukdawid/domowik-backend:latest
               command: ["python", "-m", "scraper.run"]
               envFrom:
                 - secretRef:

@@ -9,10 +9,10 @@ metadata:
 spec:
   tls:
     - hosts:
-        - homehero.pro
+        - domowik.lasz.uk
       secretName: domowik-tls
   rules:
-    - host: homehero.pro
+    - host: domowik.lasz.uk
       http:
         paths:
           - path: /api

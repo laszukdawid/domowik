@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: domowik/backend:latest
+          image: ghcr.io/laszukdawid/domowik-backend:latest
           ports:
             - containerPort: 8000
           envFrom:

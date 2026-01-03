@@ -6,6 +6,9 @@ namespace: domowik
 resources:
   - namespace.yaml
   - secrets.yaml
+  - postgres/pvc.yaml
+  - postgres/deployment.yaml
+  - postgres/service.yaml
   - backend/deployment.yaml
   - backend/service.yaml
   - frontend/deployment.yaml
