@@ -15,6 +15,7 @@ from app.config import settings
 from app.models import Listing, AmenityScore
 from scraper.realtor_ca import RealtorCaScraper, ScrapedListing
 from scraper.enricher import AmenityEnricher
+from scraper.notifier import send_notifications
 
 
 async def upsert_listing(session, scraped: ScrapedListing) -> tuple[Listing, bool]:
@@ -163,6 +164,10 @@ async def run_scraper():
                 await session.commit()
                 # Rate limit Overpass API
                 await asyncio.sleep(1.0)
+
+            # Send email notifications
+            print("Sending notifications...")
+            await send_notifications(session, new_listings)
 
         print(f"Scraper completed at {datetime.utcnow()}")
 
