@@ -1,3 +1,5 @@
+import type { Listing, Note, Preferences, ListingFilters } from '../types';
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 class ApiClient {
@@ -74,7 +76,7 @@ class ApiClient {
   }
 
   // Listings
-  async getListings(filters: Record<string, unknown> = {}) {
+  async getListings(filters: ListingFilters = {}) {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
       if (value !== undefined && value !== null) {
@@ -134,8 +136,5 @@ class ApiClient {
     });
   }
 }
-
-// Import types
-import type { Listing, Note, Preferences } from '../types';
 
 export const api = new ApiClient();
