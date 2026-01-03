@@ -1,0 +1,238 @@
+version: '3'
+
+vars:
+  DOCKER_COMPOSE: docker compose
+
+tasks:
+  # =============================================================================
+  # Full Stack
+  # =============================================================================
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  up:
+    desc: Start all services (db, backend, frontend)
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up -d"
+
+  down:
+    desc: Stop all services
+    cmds:
+      - "{{.DOCKER_COMPOSE}} down"
+
+  logs:
+    desc: Tail logs for all services
+    cmds:
+      - "{{.DOCKER_COMPOSE}} logs -f"
+
+  restart:
+    desc: Restart all services
+    cmds:
+      - task: down
+      - task: up
+
+  build:
+    desc: Build all Docker images
+    cmds:
+      - "{{.DOCKER_COMPOSE}} build"
+
+  clean:
+    desc: Stop services and remove volumes
+    cmds:
+      - "{{.DOCKER_COMPOSE}} down -v"
+
+  # =============================================================================
+  # Database
+  # =============================================================================
+  db:up:
+    desc: Start only the database
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up -d db"
+
+  db:logs:
+    desc: Tail database logs
+    cmds:
+      - "{{.DOCKER_COMPOSE}} logs -f db"
+
+  db:shell:
+    desc: Open psql shell
+    cmds:
+      - "{{.DOCKER_COMPOSE}} exec db psql -U postgres -d housesearch"
+
+  db:migrate:
+    desc: Run database migrations
+    cmds:
+      - "{{.DOCKER_COMPOSE}} exec backend alembic upgrade head"
+
+  db:migrate:create:
+    desc: Create a new migration (usage: task db:migrate:create -- "migration name")
+    cmds:
+      - "{{.DOCKER_COMPOSE}} exec backend alembic revision --autogenerate -m '{{.CLI_ARGS}}'"
+
+  # =============================================================================
+  # Backend
+  # =============================================================================
+  backend:up:
+    desc: Start backend and database
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up -d db backend"
+
+  backend:logs:
+    desc: Tail backend logs
+    cmds:
+      - "{{.DOCKER_COMPOSE}} logs -f backend"
+
+  backend:shell:
+    desc: Open shell in backend container
+    cmds:
+      - "{{.DOCKER_COMPOSE}} exec backend bash"
+
+  backend:build:
+    desc: Build backend Docker image
+    cmds:
+      - "{{.DOCKER_COMPOSE}} build backend"
+
+  backend:restart:
+    desc: Restart backend service
+    cmds:
+      - "{{.DOCKER_COMPOSE}} restart backend"
+
+  # =============================================================================
+  # Frontend
+  # =============================================================================
+  frontend:up:
+    desc: Start frontend only
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up -d frontend"
+
+  frontend:logs:
+    desc: Tail frontend logs
+    cmds:
+      - "{{.DOCKER_COMPOSE}} logs -f frontend"
+
+  frontend:build:
+    desc: Build frontend Docker image
+    cmds:
+      - "{{.DOCKER_COMPOSE}} build frontend"
+
+  frontend:restart:
+    desc: Restart frontend service
+    cmds:
+      - "{{.DOCKER_COMPOSE}} restart frontend"
+
+  frontend:dev:
+    desc: Run frontend locally with npm (outside Docker)
+    dir: frontend
+    cmds:
+      - npm install
+      - npm run dev
+
+  # =============================================================================
+  # Scraper
+  # =============================================================================
+  scraper:run:
+    desc: Run the scraper manually
+    cmds:
+      - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.run"
+
+  scraper:run:local:
+    desc: Run scraper locally (requires venv)
+    dir: backend
+    cmds:
+      - python -m scraper.run
+
+  # =============================================================================
+  # Development
+  # =============================================================================
+  dev:
+    desc: Start all services in development mode with logs
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up"
+
+  dev:backend:
+    desc: Start db + backend with logs
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up db backend"
+
+  dev:frontend:
+    desc: Start frontend with logs
+    cmds:
+      - "{{.DOCKER_COMPOSE}} up frontend"
+
+  install:
+    desc: Install all dependencies (backend + frontend)
+    cmds:
+      - task: install:backend
+      - task: install:frontend
+
+  install:backend:
+    desc: Install backend Python dependencies
+    dir: backend
+    cmds:
+      - pip install -r requirements.txt
+
+  install:frontend:
+    desc: Install frontend npm dependencies
+    dir: frontend
+    cmds:
+      - npm install
+
+  # =============================================================================
+  # Kubernetes
+  # =============================================================================
+  k8s:apply:
+    desc: Apply Kubernetes manifests
+    cmds:
+      - kubectl apply -k k8s/
+
+  k8s:delete:
+    desc: Delete Kubernetes resources
+    cmds:
+      - kubectl delete -k k8s/
+
+  k8s:status:
+    desc: Show status of domovol namespace
+    cmds:
+      - kubectl get all -n domovol
+
+  k8s:logs:backend:
+    desc: Tail backend pod logs
+    cmds:
+      - kubectl logs -f -l app=backend -n domovol
+
+  k8s:logs:frontend:
+    desc: Tail frontend pod logs
+    cmds:
+      - kubectl logs -f -l app=frontend -n domovol
+
+  k8s:scraper:trigger:
+    desc: Manually trigger the scraper CronJob
+    cmds:
+      - kubectl create job --from=cronjob/scraper scraper-manual-$(date +%s) -n domovol
+
+  # =============================================================================
+  # Docker Image Build (Production)
+  # =============================================================================
+  docker:build:
+    desc: Build production Docker images
+    cmds:
+      - task: docker:build:backend
+      - task: docker:build:frontend
+
+  docker:build:backend:
+    desc: Build backend production image
+    cmds:
+      - docker build -t domovol/backend:latest ./backend
+
+  docker:build:frontend:
+    desc: Build frontend production image
+    cmds:
+      - docker build -t domovol/frontend:latest ./frontend
+
+  docker:push:
+    desc: Push images to registry
+    cmds:
+      - docker push domovol/backend:latest
+      - docker push domovol/frontend:latest
