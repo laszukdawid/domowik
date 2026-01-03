@@ -32,7 +32,7 @@ export default function FilterBar({ filters, onChange }: FilterBarProps) {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-lg shadow-lg border p-4 z-50">
+        <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-lg shadow-lg border p-4 z-[1000]">
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-1">Price Range</label>
