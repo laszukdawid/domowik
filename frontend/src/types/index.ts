@@ -65,4 +65,48 @@ export interface ListingFilters {
   property_types?: string[];
   include_hidden?: boolean;
   favorites_only?: boolean;
+  min_score?: number;
+  bbox?: string;
+}
+
+export interface ClusterStats {
+  price_min: number;
+  price_max: number;
+  price_avg: number;
+  beds_min: number | null;
+  beds_max: number | null;
+  amenity_avg: number | null;
+}
+
+export interface Cluster {
+  id: string;
+  label: string;
+  center: { lat: number; lng: number };
+  bounds: { north: number; south: number; east: number; west: number };
+  count: number;
+  stats: ClusterStats;
+  listing_ids: number[];
+}
+
+export interface ClusterOutlier {
+  id: number;
+  lat: number;
+  lng: number;
+  price: number;
+  bedrooms: number | null;
+  address: string;
+  amenity_score: number | null;
+  is_favorite: boolean;
+}
+
+export interface ClusterResponse {
+  clusters: Cluster[];
+  outliers: ClusterOutlier[];
+}
+
+export interface BBox {
+  minLng: number;
+  minLat: number;
+  maxLng: number;
+  maxLat: number;
 }

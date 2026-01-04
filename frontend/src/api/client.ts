@@ -1,4 +1,4 @@
-import type { Listing, Note, Preferences, ListingFilters } from '../types';
+import type { Listing, Note, Preferences, ListingFilters, ClusterResponse } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -213,6 +213,29 @@ class ApiClient {
       method: 'PUT',
       body: JSON.stringify(prefs),
     });
+  }
+
+  // Clusters
+  async getClusters(
+    bbox: string,
+    zoom: number,
+    filters: ListingFilters = {}
+  ): Promise<ClusterResponse> {
+    const params = new URLSearchParams();
+    params.append('bbox', bbox);
+    params.append('zoom', String(zoom));
+
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && key !== 'bbox') {
+        if (Array.isArray(value)) {
+          value.forEach((v) => params.append(key, String(v)));
+        } else {
+          params.append(key, String(value));
+        }
+      }
+    });
+
+    return this.request<ClusterResponse>(`/api/clusters?${params.toString()}`);
   }
 }
 
