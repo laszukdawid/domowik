@@ -6,6 +6,7 @@ export function useListings(filters: ListingFilters = {}) {
   return useQuery({
     queryKey: ['listings', filters],
     queryFn: () => api.getListings(filters),
+    placeholderData: (previousData) => previousData, // Keep showing previous results while fetching
   });
 }
 

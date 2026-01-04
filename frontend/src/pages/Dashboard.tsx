@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { useListings } from '../hooks/useListings';
-import type { Listing, ListingFilters } from '../types';
+import { usePersistedFilters } from '../hooks/usePersistedFilters';
+import type { Listing } from '../types';
 import Map from '../components/Map';
 import ListingSidebar from '../components/ListingSidebar';
 import ListingDetail from '../components/ListingDetail';
@@ -9,7 +10,7 @@ import FilterBar from '../components/FilterBar';
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
-  const [filters, setFilters] = useState<ListingFilters>({});
+  const [filters, setFilters] = usePersistedFilters();
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
   const { data: listings = [], isLoading } = useListings(filters);
