@@ -91,6 +91,85 @@ class ApiClient {
     return this.request<Listing[]>(`/api/listings${query ? `?${query}` : ''}`);
   }
 
+  /**
+   * Stream listings in chunks for progressive loading
+   * @param filters - Listing filters
+   * @param onChunk - Callback function that receives each chunk of listings
+   * @param onComplete - Callback function called when streaming is complete
+   * @param onError - Callback function called if an error occurs
+   */
+  async streamListings(
+    filters: ListingFilters = {},
+    onChunk: (listings: Listing[]) => void,
+    onComplete?: () => void,
+    onError?: (error: Error) => void
+  ): Promise<void> {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        if (Array.isArray(value)) {
+          value.forEach((v) => params.append(key, String(v)));
+        } else {
+          params.append(key, String(value));
+        }
+      }
+    });
+    const query = params.toString();
+
+    const headers: HeadersInit = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/listings/stream${query ? `?${query}` : ''}`,
+        { headers }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          onComplete?.();
+          break;
+        }
+
+        // Decode the chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete lines (chunks)
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const chunk = JSON.parse(line) as Listing[];
+              onChunk(chunk);
+            } catch (e) {
+              console.error('Failed to parse chunk:', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      onError?.(error instanceof Error ? error : new Error('Streaming failed'));
+    }
+  }
+
   async getListing(id: number) {
     return this.request<Listing>(`/api/listings/${id}`);
   }

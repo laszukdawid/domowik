@@ -1,10 +1,12 @@
 from typing import Annotated
 from datetime import datetime, timedelta, UTC
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2.functions import ST_X, ST_Y
+import json
 
 from app.models import get_db, Listing, AmenityScore, UserListingStatus, User
 from app.api.deps import get_current_user
@@ -47,19 +49,18 @@ def listing_to_response(
     )
 
 
-@router.get("", response_model=list[ListingResponse])
-async def get_listings(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    user: Annotated[User, Depends(get_current_user)],
+def build_listings_query(
+    user: User,
     min_price: int | None = None,
     max_price: int | None = None,
     min_bedrooms: int | None = None,
     min_sqft: int | None = None,
-    cities: list[str] | None = Query(None),
-    property_types: list[str] | None = Query(None),
+    cities: list[str] | None = None,
+    property_types: list[str] | None = None,
     include_hidden: bool = False,
     favorites_only: bool = False,
 ):
+    """Build the listings query with filters"""
     query = (
         select(
             Listing, UserListingStatus, ST_X(Listing.location), ST_Y(Listing.location)
@@ -96,6 +97,79 @@ async def get_listings(
         query = query.where(UserListingStatus.is_favorite == True)  # noqa: E712
 
     query = query.order_by(Listing.first_seen.desc())
+    return query
+
+
+@router.get("/stream")
+async def stream_listings(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    min_price: int | None = None,
+    max_price: int | None = None,
+    min_bedrooms: int | None = None,
+    min_sqft: int | None = None,
+    cities: list[str] | None = Query(None),
+    property_types: list[str] | None = Query(None),
+    include_hidden: bool = False,
+    favorites_only: bool = False,
+    chunk_size: int = 25,  # Number of listings per chunk
+):
+    """Stream listings in chunks for progressive loading"""
+
+    async def generate_chunks():
+        query = build_listings_query(
+            user, min_price, max_price, min_bedrooms, min_sqft,
+            cities, property_types, include_hidden, favorites_only
+        )
+
+        result = await db.execute(query)
+        rows = result.all()
+
+        # Get user's last visit time
+        last_visit = datetime.now(UTC) - timedelta(days=1)
+
+        chunk = []
+        for listing, status, lng, lat in rows:
+            resp = listing_to_response(listing, lng, lat, status, last_visit)
+            chunk.append(resp.model_dump(mode='json'))
+
+            # Yield chunk when it reaches chunk_size
+            if len(chunk) >= chunk_size:
+                yield json.dumps(chunk) + "\n"
+                chunk = []
+
+        # Yield remaining items
+        if chunk:
+            yield json.dumps(chunk) + "\n"
+
+    return StreamingResponse(
+        generate_chunks(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
+@router.get("", response_model=list[ListingResponse])
+async def get_listings(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+    min_price: int | None = None,
+    max_price: int | None = None,
+    min_bedrooms: int | None = None,
+    min_sqft: int | None = None,
+    cities: list[str] | None = Query(None),
+    property_types: list[str] | None = Query(None),
+    include_hidden: bool = False,
+    favorites_only: bool = False,
+):
+    """Get all listings at once (legacy endpoint)"""
+    query = build_listings_query(
+        user, min_price, max_price, min_bedrooms, min_sqft,
+        cities, property_types, include_hidden, favorites_only
+    )
 
     result = await db.execute(query)
     rows = result.all()

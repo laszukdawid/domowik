@@ -13,7 +13,7 @@ export default function Dashboard() {
   const [filters, setFilters] = usePersistedFilters();
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
 
-  const { data: listings = [], isLoading } = useListings(filters);
+  const { data: listings = [], isLoading, isStreaming } = useListings(filters);
 
   const newListings = listings.filter((l) => l.is_new);
   const allListings = listings;
@@ -22,7 +22,15 @@ export default function Dashboard() {
     <div className="h-screen flex flex-col">
       {/* Header */}
       <header className="bg-white shadow px-4 py-3 flex items-center justify-between">
-        <h1 className="text-xl font-bold">HomeHero</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold">HomeHero</h1>
+          {isStreaming && (
+            <div className="flex items-center gap-2 text-sm text-blue-600">
+              <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+              <span>Loading {listings.length} listings...</span>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-4">
           <FilterBar filters={filters} onChange={setFilters} />
           <span className="text-sm text-gray-600">{user?.name}</span>
@@ -41,7 +49,10 @@ export default function Dashboard() {
         <div className="flex-1 relative">
           {isLoading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-              Loading...
+              <div className="flex flex-col items-center gap-3">
+                <div className="animate-spin h-8 w-8 border-4 border-blue-600 border-t-transparent rounded-full"></div>
+                <p className="text-gray-600">Loading listings...</p>
+              </div>
             </div>
           ) : (
             <Map
