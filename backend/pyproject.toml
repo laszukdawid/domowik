@@ -21,6 +21,7 @@ dependencies = [
     "python-multipart==0.0.6",
     "pyRealtor",
     "setuptools>=80.9.0",
+    "scikit-learn>=1.8.0",
 ]
 
 [project.optional-dependencies]

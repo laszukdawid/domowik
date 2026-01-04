@@ -3,6 +3,7 @@ from app.api.listings import router as listings_router
 from app.api.notes import router as notes_router
 from app.api.status import router as status_router
 from app.api.preferences import router as preferences_router
+from app.api.clusters import router as clusters_router
 
 __all__ = [
     "auth_router",
@@ -10,4 +11,5 @@ __all__ = [
     "notes_router",
     "status_router",
     "preferences_router",
+    "clusters_router",
 ]
