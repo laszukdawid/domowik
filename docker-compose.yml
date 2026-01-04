@@ -20,7 +20,7 @@ services:
       - db
     volumes:
       - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --reload
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --reload
 
   frontend:
     build: ./frontend
