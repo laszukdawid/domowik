@@ -39,7 +39,7 @@ tasks:
       - "{{.DOCKER_COMPOSE}} build"
 
   clean:
-    desc: Stop services and remove volumes
+    desc: "⚠️  DESTRUCTIVE: Stop services and DELETE ALL DATA (removes volumes)"
     cmds:
       - "{{.DOCKER_COMPOSE}} down -v"
 
@@ -88,6 +88,13 @@ tasks:
     desc: Open shell in backend container
     cmds:
       - "{{.DOCKER_COMPOSE}} exec backend bash"
+
+  backend:test:
+    desc: Run tests
+    dir: backend
+    cmds:
+      - uv sync --extra test
+      - uv run pytest tests/ -v
 
   backend:build:
     desc: Build backend Docker image
@@ -152,9 +159,9 @@ tasks:
       - "{{.DOCKER_COMPOSE}} up"
 
   dev:watch:
-    desc: Start all services with hot reload (no rebuild needed)
+    desc: Start all services with hot reload (rebuilds images if needed)
     cmds:
-      - "{{.DOCKER_COMPOSE}} -f docker-compose.yml -f docker-compose.dev.yml up --build"
+      - "{{.DOCKER_COMPOSE}} -f docker-compose.yml -f docker-compose.dev.yml up"
 
   dev:backend:
     desc: Start db + backend with logs
@@ -169,7 +176,7 @@ tasks:
   dev:frontend:watch:
     desc: Start frontend with hot reload
     cmds:
-      - "{{.DOCKER_COMPOSE}} -f docker-compose.yml -f docker-compose.dev.yml up --build frontend"
+      - "{{.DOCKER_COMPOSE}} -f docker-compose.yml -f docker-compose.dev.yml up frontend"
 
   install:
     desc: Install all dependencies (backend + frontend)

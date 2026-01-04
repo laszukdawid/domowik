@@ -6,7 +6,7 @@ Run with: python -m scraper.run
 
 import asyncio
 import sys
-from datetime import datetime
+from datetime import datetime, UTC
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
@@ -28,7 +28,7 @@ async def upsert_listing(session, scraped: ScrapedListing) -> tuple[Listing, boo
     if existing:
         # Update existing listing
         existing.price = scraped.price
-        existing.last_seen = datetime.utcnow()
+        existing.last_seen = datetime.now(UTC)
         existing.raw_data = scraped.raw_data
         if existing.status == "delisted":
             existing.status = "active"
@@ -112,7 +112,7 @@ async def mark_delisted(session, seen_mls_ids: set[str]):
 
     for listing in missing:
         # Only delist after 2 consecutive misses
-        hours_since_seen = (datetime.utcnow() - listing.last_seen).total_seconds() / 3600
+        hours_since_seen = (datetime.now(UTC) - listing.last_seen).total_seconds() / 3600
         if hours_since_seen > 48:
             listing.status = "delisted"
             print(f"Delisted: {listing.mls_id}")
@@ -120,7 +120,7 @@ async def mark_delisted(session, seen_mls_ids: set[str]):
 
 async def run_scraper():
     """Main scraper entry point."""
-    print(f"Starting scraper at {datetime.utcnow()}")
+    print(f"Starting scraper at {datetime.now(UTC)}")
 
     engine = create_async_engine(settings.database_url)
     async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -169,7 +169,7 @@ async def run_scraper():
             print("Sending notifications...")
             await send_notifications(session, new_listings)
 
-        print(f"Scraper completed at {datetime.utcnow()}")
+        print(f"Scraper completed at {datetime.now(UTC)}")
 
     finally:
         await scraper.close()

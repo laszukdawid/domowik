@@ -95,7 +95,10 @@ def matches_preferences(listing: Listing, prefs: UserPreferences) -> bool:
         return False
 
     # Check amenity requirements
-    if prefs.max_park_distance and listing.amenity_score:
+    if prefs.max_park_distance:
+        # If user requires park within X meters, listing must have amenity data
+        if not listing.amenity_score:
+            return False
         if (
             listing.amenity_score.nearest_park_m is None
             or listing.amenity_score.nearest_park_m > prefs.max_park_distance
