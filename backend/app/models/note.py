@@ -1,8 +1,13 @@
-from datetime import datetime
+from datetime import datetime, UTC
 from sqlalchemy import Integer, ForeignKey, Text, DateTime, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+
+def utc_now() -> datetime:
+    """Return current UTC time as timezone-aware datetime."""
+    return datetime.now(UTC)
 
 
 class UserNote(Base):
@@ -12,7 +17,7 @@ class UserNote(Base):
     listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     note: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     listing: Mapped["Listing"] = relationship(back_populates="notes")
     user: Mapped["User"] = relationship(back_populates="notes")
@@ -25,7 +30,7 @@ class UserListingStatus(Base):
     listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id"), primary_key=True)
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False)
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False)
-    viewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="listing_statuses")
     listing: Mapped["Listing"] = relationship(back_populates="user_statuses")

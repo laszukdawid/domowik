@@ -1,5 +1,5 @@
 from typing import Annotated
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
@@ -101,7 +101,7 @@ async def get_listings(
     rows = result.all()
 
     # Get user's last visit time (simplified - track properly in production)
-    last_visit = datetime.utcnow() - timedelta(days=1)
+    last_visit = datetime.now(UTC) - timedelta(days=1)
 
     listings = []
     for listing, status, lng, lat in rows:

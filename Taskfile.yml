@@ -144,11 +144,21 @@ tasks:
     cmds:
       - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.run"
 
+  scraper:run:full:
+    desc: Run the scraper manually (full)
+    cmds:
+      - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.run --full"
+
   scraper:run:local:
     desc: Run scraper locally (requires venv)
     dir: backend
     cmds:
       - python -m scraper.run
+
+  scraper:enrich:
+    desc: Enrich all listings that don't have amenity scores
+    cmds:
+      - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.enrich"
 
   # =============================================================================
   # Development

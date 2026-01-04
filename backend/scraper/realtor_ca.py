@@ -183,9 +183,17 @@ class RealtorCaScraper:
                 except ValueError:
                     pass
 
+            # Build URL from RelativeURLEn if available, otherwise use listing Id
+            relative_url = data.get("RelativeURLEn", "")
+            if relative_url:
+                url = f"https://www.realtor.ca{relative_url}"
+            else:
+                listing_id = data.get("Id", mls_id)
+                url = f"https://www.realtor.ca/real-estate/{listing_id}"
+
             return ScrapedListing(
                 mls_id=mls_id,
-                url=f"https://www.realtor.ca/real-estate/{mls_id}",
+                url=url,
                 address=address,
                 city=city,
                 latitude=lat,

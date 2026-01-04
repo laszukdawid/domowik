@@ -2,9 +2,12 @@
 Main scraper runner script.
 
 Run with: python -m scraper.run
+         python -m scraper.run --full  (for full weekly scrape)
 """
 
+import argparse
 import asyncio
+import random
 import sys
 from datetime import datetime, UTC
 
@@ -118,9 +121,15 @@ async def mark_delisted(session, seen_mls_ids: set[str]):
             print(f"Delisted: {listing.mls_id}")
 
 
-async def run_scraper():
-    """Main scraper entry point."""
-    print(f"Starting scraper at {datetime.now(UTC)}")
+async def run_scraper(full_scrape: bool = False):
+    """Main scraper entry point.
+
+    Args:
+        full_scrape: If True, fetch all pages. If False, stop when most listings
+                     on a page already exist (incremental mode).
+    """
+    mode = "full" if full_scrape else "incremental"
+    print(f"Starting {mode} scrape at {datetime.now(UTC)}")
 
     engine = create_async_engine(settings.database_url)
     async_session = async_sessionmaker(engine, expire_on_commit=False)
@@ -129,41 +138,70 @@ async def run_scraper():
     enricher = AmenityEnricher()
 
     try:
-        # Fetch all listings
-        print("Fetching listings from realtor.ca...")
-        scraped_listings = await scraper.fetch_all()
-        print(f"Fetched {len(scraped_listings)} listings")
-
-        if not scraped_listings:
-            print("No listings fetched, exiting")
-            return
-
         new_listings = []
         seen_mls_ids = set()
+        total_fetched = 0
+
+        # Fetch and upsert page by page so listings appear in UI progressively
+        print("Fetching listings from realtor.ca...")
+        page = 1
+        total_pages = None
 
         async with async_session() as session:
-            # Upsert listings
-            print("Upserting listings...")
-            for scraped in scraped_listings:
-                seen_mls_ids.add(scraped.mls_id)
-                listing, is_new = await upsert_listing(session, scraped)
-                if is_new:
-                    new_listings.append(listing)
+            while True:
+                # Fetch one page
+                listings, total = await scraper.fetch_page(page)
 
-            await session.commit()
-            print(f"New listings: {len(new_listings)}")
+                if page == 1:
+                    if total == 0:
+                        print("No listings found, exiting")
+                        return
+                    total_pages = min((total // 200) + 1, 100)
+                    print(f"Page 1: {len(listings)} listings (total: {total})")
+                else:
+                    print(f"Page {page}/{total_pages}: {len(listings)} listings")
+
+                # Upsert this page's listings immediately
+                page_new_count = 0
+                for scraped in listings:
+                    seen_mls_ids.add(scraped.mls_id)
+                    listing, is_new = await upsert_listing(session, scraped)
+                    if is_new:
+                        new_listings.append(listing)
+                        page_new_count += 1
+
+                # Commit after each page so listings appear in UI
+                await session.commit()
+                total_fetched += len(listings)
+
+                # Check if done
+                if page >= total_pages:
+                    break
+
+                # Incremental mode: stop if 80%+ of this page already existed
+                if not full_scrape and len(listings) > 0:
+                    existing_ratio = (len(listings) - page_new_count) / len(listings)
+                    if existing_ratio >= 0.8:
+                        print(f"Stopping early: {existing_ratio:.0%} of page {page} already existed")
+                        break
+
+                # Rate limiting before next page
+                await asyncio.sleep(random.uniform(2.0, 3.0))
+                page += 1
+
+            print(f"Fetched {total_fetched} listings, {len(new_listings)} new")
 
             # Mark missing as delisted
             await mark_delisted(session, seen_mls_ids)
             await session.commit()
 
             # Enrich new listings
-            print("Enriching new listings...")
-            for listing in new_listings:
+            print(f"Enriching {len(new_listings)} new listings...")
+            for i, listing in enumerate(new_listings, 1):
                 await enrich_listing(session, listing, enricher)
                 await session.commit()
-                # Rate limit Overpass API
-                await asyncio.sleep(1.0)
+                if i % 10 == 0:
+                    print(f"  Enriched {i}/{len(new_listings)} listings")
 
             # Send email notifications
             print("Sending notifications...")
@@ -178,4 +216,11 @@ async def run_scraper():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_scraper())
+    parser = argparse.ArgumentParser(description="Scrape realtor.ca listings")
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Full scrape (all pages). Default is incremental (stop when caught up).",
+    )
+    args = parser.parse_args()
+    asyncio.run(run_scraper(full_scrape=args.full))

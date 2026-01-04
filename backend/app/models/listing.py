@@ -1,10 +1,15 @@
-from datetime import datetime, date
+from datetime import datetime, date, UTC
 from sqlalchemy import String, Integer, DateTime, Date
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 from geoalchemy2 import Geometry
 
 from app.models.base import Base
+
+
+def utc_now() -> datetime:
+    """Return current UTC time as timezone-aware datetime."""
+    return datetime.now(UTC)
 
 
 class Listing(Base):
@@ -22,8 +27,8 @@ class Listing(Base):
     sqft: Mapped[int | None] = mapped_column(Integer, nullable=True)
     property_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     listing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    first_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    last_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     raw_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 

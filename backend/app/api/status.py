@@ -1,5 +1,5 @@
 from typing import Annotated
-from datetime import datetime
+from datetime import datetime, UTC
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -70,7 +70,7 @@ async def update_status(
             listing_id=listing_id,
             is_favorite=req.is_favorite or False,
             is_hidden=req.is_hidden or False,
-            viewed_at=datetime.utcnow(),
+            viewed_at=datetime.now(UTC),
         )
         db.add(status)
     else:
