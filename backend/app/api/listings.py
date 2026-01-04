@@ -1,5 +1,7 @@
 from typing import Annotated
 from datetime import datetime, timedelta, UTC
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, and_
@@ -7,6 +9,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within
 import json
+
+logger = logging.getLogger(__name__)
 
 from app.models import get_db, Listing, AmenityScore, UserListingStatus, User
 from app.api.deps import get_current_user
@@ -103,11 +107,26 @@ def build_listings_query(
 
     if bbox:
         try:
-            min_lng, min_lat, max_lng, max_lat = [float(x) for x in bbox.split(",")]
+            parts = bbox.split(",")
+            if len(parts) != 4:
+                raise ValueError(f"bbox must have exactly 4 components, got {len(parts)}")
+
+            min_lng, min_lat, max_lng, max_lat = [float(x) for x in parts]
+
+            # Validate coordinate bounds
+            if not (-180 <= min_lng <= 180 and -180 <= max_lng <= 180):
+                raise ValueError(
+                    f"Longitude values must be within [-180, 180], got min_lng={min_lng}, max_lng={max_lng}"
+                )
+            if not (-90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+                raise ValueError(
+                    f"Latitude values must be within [-90, 90], got min_lat={min_lat}, max_lat={max_lat}"
+                )
+
             envelope = ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326)
             query = query.where(ST_Within(Listing.location, envelope))
-        except (ValueError, AttributeError):
-            pass  # Invalid bbox, skip filtering
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Invalid bbox parameter '{bbox}': {e}")
 
     query = query.order_by(AmenityScore.amenity_score.desc().nulls_last())
     return query
@@ -126,7 +145,11 @@ async def stream_listings(
     include_hidden: bool = False,
     favorites_only: bool = False,
     min_score: int | None = None,
-    bbox: str | None = None,
+    bbox: str | None = Query(
+        None,
+        description="Bounding box filter as 'minLng,minLat,maxLng,maxLat'. "
+        "Longitude must be within [-180, 180], latitude within [-90, 90].",
+    ),
     chunk_size: int = 25,  # Number of listings per chunk
 ):
     """Stream listings in chunks for progressive loading"""
@@ -180,7 +203,11 @@ async def get_listings(
     include_hidden: bool = False,
     favorites_only: bool = False,
     min_score: int | None = None,
-    bbox: str | None = None,
+    bbox: str | None = Query(
+        None,
+        description="Bounding box filter as 'minLng,minLat,maxLng,maxLat'. "
+        "Longitude must be within [-180, 180], latitude within [-90, 90].",
+    ),
 ):
     """Get all listings at once (legacy endpoint)"""
     query = build_listings_query(
