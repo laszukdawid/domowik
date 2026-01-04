@@ -2,22 +2,17 @@
 Scraper for realtor.ca listings in Greater Vancouver Area.
 
 Uses realtor.ca's API endpoint to fetch property listings.
+Based on pyRealtor's approach for handling authentication.
 """
 
 import asyncio
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
 from pydantic import BaseModel
 
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0",
-]
 
 # Greater Vancouver Area bounds (approximate)
 GVA_BOUNDS = {
@@ -46,28 +41,64 @@ class ScrapedListing(BaseModel):
 
 class RealtorCaScraper:
     BASE_URL = "https://api2.realtor.ca/Listing.svc/PropertySearch_Post"
+    TOKEN_URL = "https://www.realtor.ca/dnight-Exit-shall-Braith-Then-why-vponst-is-proc"
 
     def __init__(self):
         self.client = httpx.AsyncClient(timeout=30.0)
+        self._reese84_token: str | None = None
 
     async def close(self):
         await self.client.aclose()
 
-    def _get_headers(self) -> dict[str, str]:
-        return {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "application/json",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://www.realtor.ca",
-            "Referer": "https://www.realtor.ca/",
+    async def _fetch_reese84_token(self) -> str:
+        """Fetch the reese84 authentication token required by realtor.ca."""
+        payload = {
+            "solution": {
+                "interrogation": None,
+                "version": "beta"
+            },
+            "old_token": None,
+            "error": None,
+            "performance": {"interrogation": 1897}
         }
 
-    def _build_search_params(self, page: int = 1, records_per_page: int = 50) -> dict:
+        response = await self.client.post(
+            self.TOKEN_URL,
+            json=payload,
+            params={"d": "www.realtor.ca"}
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["token"]
+
+    def _get_headers(self, token: str) -> dict[str, str]:
         return {
-            "CultureId": "1",
+            "Accept": "*/*",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "DNT": "1",
+            "Host": "api2.realtor.ca",
+            "Origin": "https://www.realtor.ca",
+            "Pragma": "no-cache",
+            "Referer": "https://www.realtor.ca/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+            "Cookie": f"reese84={token};",
+        }
+
+    def _build_search_params(self, page: int = 1, records_per_page: int = 200) -> dict:
+        return {
+            "Version": "7.0",
             "ApplicationId": "1",
+            "CultureId": "1",
+            "Currency": "CAD",
             "RecordsPerPage": str(records_per_page),
-            "MaximumResults": str(records_per_page),
+            "MaximumResults": "600",
             "PropertyTypeGroupID": "1",  # Residential
             "TransactionTypeId": "2",  # For sale
             "LatitudeMin": str(GVA_BOUNDS["lat_min"]),
@@ -75,8 +106,8 @@ class RealtorCaScraper:
             "LongitudeMin": str(GVA_BOUNDS["lng_min"]),
             "LongitudeMax": str(GVA_BOUNDS["lng_max"]),
             "CurrentPage": str(page),
-            "SortBy": "1",  # Sort by date
-            "SortOrder": "D",  # Descending
+            "ZoomLevel": "10",
+            "Sort": "6-D",  # Sort by date descending
         }
 
     def _parse_listing(self, data: dict) -> ScrapedListing | None:
@@ -93,11 +124,17 @@ class RealtorCaScraper:
                 )
 
             address = ", ".join(address_parts) or "Unknown"
-            city = (
-                data.get("Property", {})
-                .get("Address", {})
-                .get("CityDistrict", "Unknown")
-            )
+
+            # Extract city from AddressText (format: "Address|City, Province PostalCode")
+            address_text = data.get("Property", {}).get("Address", {}).get("AddressText", "")
+            city = "Unknown"
+            if "|" in address_text:
+                city_part = address_text.split("|")[1].strip()
+                # City is before the comma (e.g., "Vancouver, British Columbia V6B1A1")
+                if "," in city_part:
+                    city = city_part.split(",")[0].strip()
+                else:
+                    city = city_part
 
             # Extract coordinates
             lat = float(data.get("Property", {}).get("Address", {}).get("Latitude", 0))
@@ -114,9 +151,14 @@ class RealtorCaScraper:
             bathrooms = None
             building = data.get("Building", {})
             if building.get("Bedrooms"):
-                bedrooms = int(building["Bedrooms"])
+                # Handle formats like "2 + 1" by taking first number
+                bed_str = str(building["Bedrooms"]).split("+")[0].strip()
+                if bed_str.isdigit():
+                    bedrooms = int(bed_str)
             if building.get("BathroomTotal"):
-                bathrooms = int(building["BathroomTotal"])
+                bath_str = str(building["BathroomTotal"]).split("+")[0].strip()
+                if bath_str.isdigit():
+                    bathrooms = int(bath_str)
 
             # Extract sqft
             sqft = None
@@ -162,13 +204,15 @@ class RealtorCaScraper:
 
     async def fetch_page(self, page: int = 1) -> tuple[list[ScrapedListing], int]:
         """Fetch a page of listings. Returns (listings, total_count)."""
+        # Get fresh token for each request
+        token = await self._fetch_reese84_token()
         params = self._build_search_params(page=page)
 
         try:
             response = await self.client.post(
                 self.BASE_URL,
                 data=params,
-                headers=self._get_headers(),
+                headers=self._get_headers(token),
             )
             response.raise_for_status()
             data = response.json()
@@ -199,7 +243,7 @@ class RealtorCaScraper:
         if total == 0:
             return all_listings
 
-        total_pages = min((total // 50) + 1, max_pages)
+        total_pages = min((total // 200) + 1, max_pages)
 
         for page in range(2, total_pages + 1):
             # Rate limiting: 2-3 second delay
