@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
-import type { Listing, BBox } from '../types';
+import type { Listing, BBox, Cluster, ClusterOutlier } from '../types';
 
 // Fix default marker icons
 delete (L.Icon.Default.prototype as { _getIconUrl?: () => string })._getIconUrl;
@@ -18,6 +18,26 @@ function getMarkerColor(score: number | null | undefined): string {
   if (score >= 40) return '#EAB308'; // yellow
   if (score >= 20) return '#F97316'; // orange
   return '#EF4444'; // red
+}
+
+function createOutlierIcon(outlier: ClusterOutlier): L.DivIcon {
+  const color = getMarkerColor(outlier.amenity_score);
+  const size = 12;
+  const border = outlier.is_favorite ? '3px solid #FFD700' : '2px solid white';
+
+  return L.divIcon({
+    className: 'custom-marker',
+    html: `<div style="
+      width: ${size}px;
+      height: ${size}px;
+      background: ${color};
+      border-radius: 50%;
+      border: ${border};
+      box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    "></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
 }
 
 function createMarkerIcon(listing: Listing, isSelected: boolean): L.DivIcon {
@@ -89,11 +109,47 @@ function MapBoundsTracker({ onBoundsChange, debounceMs = 300 }: MapBoundsTracker
   return null;
 }
 
+interface ClusterMarkerProps {
+  center: { lat: number; lng: number };
+  count: number;
+  label: string;
+  onClick: () => void;
+}
+
+function ClusterMarker({ center, count, label, onClick }: ClusterMarkerProps) {
+  // Size based on count
+  const size = Math.min(60, Math.max(30, 20 + Math.log10(count) * 15));
+
+  return (
+    <CircleMarker
+      center={[center.lat, center.lng]}
+      radius={size / 2}
+      pathOptions={{
+        fillColor: '#3B82F6',
+        fillOpacity: 0.8,
+        color: '#1D4ED8',
+        weight: 2,
+      }}
+      eventHandlers={{ click: onClick }}
+    >
+      <Popup>
+        <div className="text-center">
+          <div className="font-semibold">{label}</div>
+          <div className="text-sm text-gray-600">{count} listings</div>
+        </div>
+      </Popup>
+    </CircleMarker>
+  );
+}
+
 interface MapProps {
   listings: Listing[];
+  clusters?: Cluster[];
+  outliers?: ClusterOutlier[];
   selectedId?: number;
-  onSelect: (listing: Listing) => void;
+  onSelect: (listing: Listing | ClusterOutlier) => void;
   onBoundsChange?: (bbox: BBox, zoom: number) => void;
+  onClusterClick?: (cluster: Cluster) => void;
 }
 
 function MapUpdater({ listings }: { listings: Listing[] }) {
@@ -107,7 +163,15 @@ function MapUpdater({ listings }: { listings: Listing[] }) {
   return null;
 }
 
-export default function Map({ listings, selectedId, onSelect, onBoundsChange }: MapProps) {
+export default function Map({
+  listings,
+  clusters = [],
+  outliers = [],
+  selectedId,
+  onSelect,
+  onBoundsChange,
+  onClusterClick,
+}: MapProps) {
   const validListings = listings.filter((l) => l.latitude && l.longitude);
 
   return (
@@ -123,6 +187,37 @@ export default function Map({ listings, selectedId, onSelect, onBoundsChange }: 
       <MapUpdater listings={validListings} />
       {onBoundsChange && <MapBoundsTracker onBoundsChange={onBoundsChange} />}
 
+      {/* Cluster markers */}
+      {clusters.map((cluster) => (
+        <ClusterMarker
+          key={cluster.id}
+          center={cluster.center}
+          count={cluster.count}
+          label={cluster.label}
+          onClick={() => onClusterClick?.(cluster)}
+        />
+      ))}
+
+      {/* Outlier markers */}
+      {outliers.map((outlier) => (
+        <Marker
+          key={`outlier-${outlier.id}`}
+          position={[outlier.lat, outlier.lng]}
+          icon={createOutlierIcon(outlier)}
+          eventHandlers={{
+            click: () => onSelect(outlier as any),
+          }}
+        >
+          <Popup>
+            <div className="text-sm">
+              <div className="font-semibold">{outlier.address}</div>
+              <div className="text-gray-600">${outlier.price.toLocaleString()}</div>
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+
+      {/* Existing individual listing markers */}
       {validListings.map((listing) => (
         <Marker
           key={listing.id}
