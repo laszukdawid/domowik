@@ -1,16 +1,16 @@
 from typing import Annotated
-from datetime import datetime, timedelta, UTC
+import logging
+
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, and_, func
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within
 from sklearn.cluster import DBSCAN
 import numpy as np
 
-from app.models import get_db, Listing, AmenityScore, UserListingStatus, User
+from app.models import get_db, Listing, User
 from app.api.deps import get_current_user
 from app.api.listings import build_listings_query
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/clusters", tags=["clusters"])
 
@@ -19,7 +19,11 @@ router = APIRouter(prefix="/clusters", tags=["clusters"])
 async def get_clusters(
     db: Annotated[AsyncSession, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
-    bbox: str,  # Required: "minLng,minLat,maxLng,maxLat"
+    bbox: str = Query(
+        ...,
+        description="Bounding box filter as 'minLng,minLat,maxLng,maxLat'. "
+        "Longitude must be within [-180, 180], latitude within [-90, 90].",
+    ),
     zoom: int = 10,
     min_price: int | None = None,
     max_price: int | None = None,
@@ -33,10 +37,25 @@ async def get_clusters(
 ):
     """Return clustered listings for a viewport."""
 
-    # Parse bbox
+    # Parse and validate bbox
     try:
-        min_lng, min_lat, max_lng, max_lat = [float(x) for x in bbox.split(",")]
-    except ValueError:
+        parts = bbox.split(",")
+        if len(parts) != 4:
+            raise ValueError(f"bbox must have exactly 4 components, got {len(parts)}")
+
+        min_lng, min_lat, max_lng, max_lat = [float(x) for x in parts]
+
+        # Validate coordinate bounds
+        if not (-180 <= min_lng <= 180 and -180 <= max_lng <= 180):
+            raise ValueError(
+                f"Longitude values must be within [-180, 180], got min_lng={min_lng}, max_lng={max_lng}"
+            )
+        if not (-90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+            raise ValueError(
+                f"Latitude values must be within [-90, 90], got min_lat={min_lat}, max_lat={max_lat}"
+            )
+    except (ValueError, AttributeError) as e:
+        logger.warning(f"Invalid bbox parameter '{bbox}': {e}")
         return {"clusters": [], "outliers": []}
 
     # Fetch listings in bbox
