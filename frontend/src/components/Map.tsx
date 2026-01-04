@@ -1,6 +1,7 @@
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import type { Listing } from '../types';
+import type { Listing, BBox } from '../types';
 
 // Fix default marker icons
 delete (L.Icon.Default.prototype as { _getIconUrl?: () => string })._getIconUrl;
@@ -39,10 +40,60 @@ function createMarkerIcon(listing: Listing, isSelected: boolean): L.DivIcon {
   });
 }
 
+interface MapBoundsTrackerProps {
+  onBoundsChange: (bbox: BBox, zoom: number) => void;
+  debounceMs?: number;
+}
+
+function MapBoundsTracker({ onBoundsChange, debounceMs = 300 }: MapBoundsTrackerProps) {
+  const map = useMap();
+  const timeoutRef = useRef<number | null>(null);
+
+  const emitBounds = () => {
+    const bounds = map.getBounds();
+    const zoom = map.getZoom();
+
+    onBoundsChange({
+      minLng: bounds.getWest(),
+      minLat: bounds.getSouth(),
+      maxLng: bounds.getEast(),
+      maxLat: bounds.getNorth(),
+    }, zoom);
+  };
+
+  useMapEvents({
+    moveend: () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = window.setTimeout(emitBounds, debounceMs);
+    },
+    zoomend: () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = window.setTimeout(emitBounds, debounceMs);
+    },
+  });
+
+  // Emit initial bounds on mount
+  useEffect(() => {
+    emitBounds();
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  return null;
+}
+
 interface MapProps {
   listings: Listing[];
   selectedId?: number;
   onSelect: (listing: Listing) => void;
+  onBoundsChange?: (bbox: BBox, zoom: number) => void;
 }
 
 function MapUpdater({ listings }: { listings: Listing[] }) {
@@ -56,7 +107,7 @@ function MapUpdater({ listings }: { listings: Listing[] }) {
   return null;
 }
 
-export default function Map({ listings, selectedId, onSelect }: MapProps) {
+export default function Map({ listings, selectedId, onSelect, onBoundsChange }: MapProps) {
   const validListings = listings.filter((l) => l.latitude && l.longitude);
 
   return (
@@ -70,6 +121,7 @@ export default function Map({ listings, selectedId, onSelect }: MapProps) {
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <MapUpdater listings={validListings} />
+      {onBoundsChange && <MapBoundsTracker onBoundsChange={onBoundsChange} />}
 
       {validListings.map((listing) => (
         <Marker
