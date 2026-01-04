@@ -5,7 +5,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from geoalchemy2.functions import ST_X, ST_Y
+from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within
 import json
 
 from app.models import get_db, Listing, AmenityScore, UserListingStatus, User
@@ -59,6 +59,8 @@ def build_listings_query(
     property_types: list[str] | None = None,
     include_hidden: bool = False,
     favorites_only: bool = False,
+    min_score: int | None = None,
+    bbox: str | None = None,  # "minLng,minLat,maxLng,maxLat"
 ):
     """Build the listings query with filters"""
     query = (
@@ -72,6 +74,7 @@ def build_listings_query(
                 UserListingStatus.user_id == user.id,
             ),
         )
+        .outerjoin(AmenityScore, AmenityScore.listing_id == Listing.id)
         .options(selectinload(Listing.amenity_score))
         .where(Listing.status == "active")
     )
@@ -95,8 +98,18 @@ def build_listings_query(
         )
     if favorites_only:
         query = query.where(UserListingStatus.is_favorite == True)  # noqa: E712
+    if min_score is not None:
+        query = query.where(AmenityScore.amenity_score >= min_score)
 
-    query = query.order_by(Listing.first_seen.desc())
+    if bbox:
+        try:
+            min_lng, min_lat, max_lng, max_lat = [float(x) for x in bbox.split(",")]
+            envelope = ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326)
+            query = query.where(ST_Within(Listing.location, envelope))
+        except (ValueError, AttributeError):
+            pass  # Invalid bbox, skip filtering
+
+    query = query.order_by(AmenityScore.amenity_score.desc().nulls_last())
     return query
 
 
@@ -112,6 +125,8 @@ async def stream_listings(
     property_types: list[str] | None = Query(None),
     include_hidden: bool = False,
     favorites_only: bool = False,
+    min_score: int | None = None,
+    bbox: str | None = None,
     chunk_size: int = 25,  # Number of listings per chunk
 ):
     """Stream listings in chunks for progressive loading"""
@@ -119,7 +134,7 @@ async def stream_listings(
     async def generate_chunks():
         query = build_listings_query(
             user, min_price, max_price, min_bedrooms, min_sqft,
-            cities, property_types, include_hidden, favorites_only
+            cities, property_types, include_hidden, favorites_only, min_score, bbox
         )
 
         result = await db.execute(query)
@@ -164,11 +179,13 @@ async def get_listings(
     property_types: list[str] | None = Query(None),
     include_hidden: bool = False,
     favorites_only: bool = False,
+    min_score: int | None = None,
+    bbox: str | None = None,
 ):
     """Get all listings at once (legacy endpoint)"""
     query = build_listings_query(
         user, min_price, max_price, min_bedrooms, min_sqft,
-        cities, property_types, include_hidden, favorites_only
+        cities, property_types, include_hidden, favorites_only, min_score, bbox
     )
 
     result = await db.execute(query)
