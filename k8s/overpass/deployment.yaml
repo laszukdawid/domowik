@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overpass
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: overpass
+  template:
+    metadata:
+      labels:
+        app: overpass
+    spec:
+      initContainers:
+        - name: init-data
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ ! -f /db/initialized ]; then
+                echo "Downloading BC OSM data..."
+                curl -L -o /db/region.osm.pbf https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf
+                touch /db/needs_init
+              fi
+          volumeMounts:
+            - name: overpass-data
+              mountPath: /db
+        - name: init-overpass
+          image: wiktorn/overpass-api
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -f /db/needs_init ]; then
+                echo "Initializing Overpass database..."
+                /app/bin/init_osm3s.sh /db/region.osm.pbf /db/db /app
+                rm /db/needs_init
+                touch /db/initialized
+              fi
+          volumeMounts:
+            - name: overpass-data
+              mountPath: /db
+      containers:
+        - name: overpass
+          image: wiktorn/overpass-api
+          ports:
+            - containerPort: 80
+          env:
+            - name: OVERPASS_MODE
+              value: run
+          volumeMounts:
+            - name: overpass-data
+              mountPath: /db
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+      volumes:
+        - name: overpass-data
+          persistentVolumeClaim:
+            claimName: overpass-data

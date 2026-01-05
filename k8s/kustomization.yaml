@@ -9,6 +9,9 @@ resources:
   - postgres/pvc.yaml
   - postgres/deployment.yaml
   - postgres/service.yaml
+  - overpass/pvc.yaml
+  - overpass/deployment.yaml
+  - overpass/service.yaml
   - backend/deployment.yaml
   - backend/service.yaml
   - frontend/deployment.yaml

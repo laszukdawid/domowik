@@ -21,6 +21,9 @@ spec:
           envFrom:
             - secretRef:
                 name: domowik-secrets
+          env:
+            - name: OVERPASS_URL
+              value: "http://overpass:80/api/interpreter"
           resources:
             requests:
               memory: "128Mi"
