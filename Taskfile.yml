@@ -161,6 +161,31 @@ tasks:
       - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.enrich"
 
   # =============================================================================
+  # Overpass (Local OSM)
+  # =============================================================================
+  overpass:init:
+    desc: "Download BC data and initialize Overpass volume (one-time, ~15 min)"
+    cmds:
+      - echo "Downloading British Columbia OSM data..."
+      - curl -L -o /tmp/bc.osm.pbf https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf
+      - echo "Initializing Overpass database (this takes ~15 minutes)..."
+      - "{{.DOCKER_COMPOSE}} run --rm -e OVERPASS_MODE=init -e OVERPASS_PLANET_URL=file:///db/region.osm.pbf -v /tmp/bc.osm.pbf:/db/region.osm.pbf overpass"
+      - echo "Done! Overpass is ready to use."
+
+  overpass:status:
+    desc: Check Overpass API status
+    cmds:
+      - curl -s http://localhost:12345/api/status
+
+  overpass:test:
+    desc: Test Overpass with a sample query
+    cmds:
+      - |
+        curl -s -X POST http://localhost:12345/api/interpreter \
+          -d 'data=[out:json][timeout:5];node["amenity"="cafe"](around:500,49.2827,-123.1207);out;' \
+          | head -c 500
+
+  # =============================================================================
   # Development
   # =============================================================================
   dev:
