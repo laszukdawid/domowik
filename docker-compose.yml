@@ -18,10 +18,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/housesearch
       OVERPASS_URL: http://overpass:80/api/interpreter
     depends_on:
-      db:
-        condition: service_started
-      overpass:
-        condition: service_healthy
+      - db
     volumes:
       - ./backend:/app
     command: uv run uvicorn app.main:app --host 0.0.0.0 --reload
@@ -35,6 +32,8 @@ services:
 
   overpass:
     image: wiktorn/overpass-api
+    profiles:
+      - enrichment
     volumes:
       - overpass_db:/db
     ports:

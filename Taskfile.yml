@@ -169,8 +169,18 @@ tasks:
       - echo "Downloading British Columbia OSM data..."
       - curl -L -o /tmp/bc.osm.pbf https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf
       - echo "Initializing Overpass database (this takes ~15 minutes)..."
-      - "{{.DOCKER_COMPOSE}} run --rm -e OVERPASS_MODE=init -e OVERPASS_PLANET_URL=file:///db/region.osm.pbf -v /tmp/bc.osm.pbf:/db/region.osm.pbf overpass"
-      - echo "Done! Overpass is ready to use."
+      - "{{.DOCKER_COMPOSE}} --profile enrichment run --rm -e OVERPASS_MODE=init -e OVERPASS_PLANET_URL=file:///db/region.osm.pbf -v /tmp/bc.osm.pbf:/db/region.osm.pbf overpass"
+      - echo "Done! Overpass is ready. Start it with: task overpass:up"
+
+  overpass:up:
+    desc: Start Overpass service (requires overpass:init first)
+    cmds:
+      - "{{.DOCKER_COMPOSE}} --profile enrichment up -d overpass"
+
+  overpass:down:
+    desc: Stop Overpass service
+    cmds:
+      - "{{.DOCKER_COMPOSE}} --profile enrichment stop overpass"
 
   overpass:status:
     desc: Check Overpass API status
