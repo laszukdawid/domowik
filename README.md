@@ -5,8 +5,8 @@ A house search application that scrapes MLS listings from realtor.ca, enriches t
 ## Features
 
 - Daily scraping of realtor.ca listings
-- Amenity enrichment (parks, coffee shops, dog parks) via OpenStreetMap
-- Walkability score calculation
+- Amenity enrichment (parks, coffee shops, dog parks) via OpenStreetMap - see [docs/enrichment.md](docs/enrichment.md)
+- Walkability score calculation (0-100)
 - Interactive Leaflet map with filtering
 - Multi-user support with notes, favorites, and hide functionality
 - Email notifications for new matching listings
@@ -28,10 +28,13 @@ A house search application that scrapes MLS listings from realtor.ca, enriches t
 # 1. Start all services
 task up
 
-# 2. Run database migrations (required on first run!)
+# 2. Initialize Overpass (first time only, ~15 min)
+task overpass:init
+
+# 3. Run database migrations (required on first run!)
 task db:migrate
 
-# 3. Access the app
+# 4. Access the app
 # Frontend: http://localhost:3000
 # Backend API: http://localhost:8000
 # API docs: http://localhost:8000/docs
