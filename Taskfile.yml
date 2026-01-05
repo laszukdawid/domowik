@@ -164,12 +164,16 @@ tasks:
   # Overpass (Local OSM)
   # =============================================================================
   overpass:init:
-    desc: "Download BC data and initialize Overpass volume (one-time, ~15 min)"
+    desc: "Download BC data and initialize Overpass volume (one-time, ~20 min)"
     cmds:
-      - echo "Downloading British Columbia OSM data..."
-      - curl -L -o /tmp/bc.osm.pbf https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf
-      - echo "Initializing Overpass database (this takes ~15 minutes)..."
-      - "{{.DOCKER_COMPOSE}} --profile enrichment run --rm -e OVERPASS_MODE=init -e OVERPASS_PLANET_URL=file:///db/region.osm.pbf -v /tmp/bc.osm.pbf:/db/region.osm.pbf overpass"
+      - echo "Initializing Overpass database with British Columbia data..."
+      - echo "This downloads ~1.1GB and takes ~20 minutes. Please wait..."
+      - |
+        {{.DOCKER_COMPOSE}} --profile enrichment run --rm \
+          -e OVERPASS_MODE=init \
+          -e OVERPASS_PLANET_URL=https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf \
+          -e OVERPASS_PLANET_PREPROCESS="mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat -o /db/planet.osm.bz2 /db/planet.osm.pbf && rm /db/planet.osm.pbf" \
+          overpass
       - echo "Done! Overpass is ready. Start it with: task overpass:up"
 
   overpass:up:
