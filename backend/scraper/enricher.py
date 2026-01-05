@@ -2,21 +2,16 @@
 Amenity enrichment using OpenStreetMap Overpass API.
 
 Queries nearby parks, coffee shops, and dog parks for each listing.
+Uses local Overpass instance for fast queries without rate limiting.
 """
 
 import asyncio
-import random
 from typing import Any
 
 import httpx
 from pydantic import BaseModel
 
-
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-
-# Retry settings for Overpass API
-MAX_RETRIES = 3
-RETRY_DELAY_BASE = 5  # Base delay in seconds, increases exponentially
+from app.config import settings
 
 
 class AmenityData(BaseModel):
@@ -106,63 +101,32 @@ def calculate_walkability_score(amenity_data: AmenityData) -> int:
 
 class AmenityEnricher:
     def __init__(self):
-        self.client = httpx.AsyncClient(timeout=60.0)
-        self._last_request_time = 0.0
+        self.client = httpx.AsyncClient(timeout=10.0)  # Reduced timeout for local
 
     async def close(self):
         await self.client.aclose()
 
-    async def _rate_limit(self):
-        """Ensure minimum delay between requests to Overpass API."""
-        import time
-        min_delay = 1.5  # Minimum 1.5 seconds between requests
-        elapsed = time.time() - self._last_request_time
-        if elapsed < min_delay:
-            await asyncio.sleep(min_delay - elapsed)
-        self._last_request_time = time.time()
-
     async def _query_overpass(self, query: str) -> list[dict]:
-        """Execute Overpass query with retry logic for rate limits and timeouts."""
-        for attempt in range(MAX_RETRIES):
-            await self._rate_limit()
-            try:
-                response = await self.client.post(
-                    OVERPASS_URL,
-                    data={"data": query},
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data.get("elements", [])
-            except httpx.HTTPStatusError as e:
-                status = e.response.status_code
-                if status in (429, 504, 503, 502) and attempt < MAX_RETRIES - 1:
-                    # Rate limited or server overloaded - back off exponentially
-                    delay = RETRY_DELAY_BASE * (2 ** attempt) + random.uniform(0, 2)
-                    print(f"Overpass {status} error, retrying in {delay:.1f}s (attempt {attempt + 1}/{MAX_RETRIES})")
-                    await asyncio.sleep(delay)
-                    continue
-                print(f"Overpass query error: {e}")
-                return []
-            except httpx.TimeoutException:
-                if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAY_BASE * (2 ** attempt) + random.uniform(0, 2)
-                    print(f"Overpass timeout, retrying in {delay:.1f}s (attempt {attempt + 1}/{MAX_RETRIES})")
-                    await asyncio.sleep(delay)
-                    continue
-                print("Overpass query timed out after all retries")
-                return []
-            except httpx.HTTPError as e:
-                print(f"Overpass query error: {e}")
-                return []
-        return []
+        """Execute Overpass query against local instance."""
+        try:
+            response = await self.client.post(
+                settings.overpass_url,
+                data={"data": query},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("elements", [])
+        except httpx.HTTPError as e:
+            print(f"Overpass query error: {e}")
+            return []
 
     async def get_nearby_parks(
         self, lat: float, lng: float, radius_m: int = 1000
     ) -> list[dict]:
         """Get parks within radius."""
         query = f"""
-        [out:json][timeout:25];
+        [out:json][timeout:5];
         (
           way["leisure"="park"](around:{radius_m},{lat},{lng});
           relation["leisure"="park"](around:{radius_m},{lat},{lng});
@@ -197,7 +161,7 @@ class AmenityEnricher:
     ) -> list[dict]:
         """Get coffee shops within radius."""
         query = f"""
-        [out:json][timeout:25];
+        [out:json][timeout:5];
         (
           node["amenity"="cafe"](around:{radius_m},{lat},{lng});
           way["amenity"="cafe"](around:{radius_m},{lat},{lng});
@@ -232,7 +196,7 @@ class AmenityEnricher:
     ) -> list[dict]:
         """Get dog parks within radius."""
         query = f"""
-        [out:json][timeout:25];
+        [out:json][timeout:5];
         (
           node["leisure"="dog_park"](around:{radius_m},{lat},{lng});
           way["leisure"="dog_park"](around:{radius_m},{lat},{lng});
@@ -263,10 +227,12 @@ class AmenityEnricher:
 
     async def enrich(self, lat: float, lng: float) -> AmenityData:
         """Get all amenity data for a location."""
-        # Run queries sequentially to respect Overpass API rate limits
-        parks = await self.get_nearby_parks(lat, lng)
-        cafes = await self.get_nearby_coffee_shops(lat, lng)
-        dog_parks = await self.get_nearby_dog_parks(lat, lng)
+        # Run all queries in parallel - no rate limiting with local Overpass
+        parks, cafes, dog_parks = await asyncio.gather(
+            self.get_nearby_parks(lat, lng),
+            self.get_nearby_coffee_shops(lat, lng),
+            self.get_nearby_dog_parks(lat, lng),
+        )
 
         data = AmenityData(
             parks=parks[:10],  # Limit to top 10
