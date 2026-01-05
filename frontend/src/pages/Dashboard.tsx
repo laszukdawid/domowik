@@ -14,8 +14,9 @@ export default function Dashboard() {
   const [filters, setFilters] = usePersistedFilters();
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [mapBounds, setMapBounds] = useState<{ bbox: BBox; zoom: number } | null>(null);
+  const [expandedCluster, setExpandedCluster] = useState<Cluster | null>(null);
 
-  // Fetch clusters based on current viewport
+  // Only fetch clusters - this is lightweight
   const {
     data: clusterData,
     isLoading: clustersLoading
@@ -26,12 +27,18 @@ export default function Dashboard() {
     enabled: !!mapBounds,
   });
 
-  // Fetch full listings for expanded cluster view
+  // Only fetch full listings when zoomed in far enough OR when a cluster is expanded
+  const shouldFetchListings = (mapBounds && mapBounds.zoom >= 15) || expandedCluster !== null;
+
+  const listingsBbox = expandedCluster
+    ? `${expandedCluster.bounds.west},${expandedCluster.bounds.south},${expandedCluster.bounds.east},${expandedCluster.bounds.north}`
+    : mapBounds
+      ? `${mapBounds.bbox.minLng},${mapBounds.bbox.minLat},${mapBounds.bbox.maxLng},${mapBounds.bbox.maxLat}`
+      : undefined;
+
   const { data: listings = [], isStreaming } = useListings({
     ...filters,
-    bbox: mapBounds
-      ? `${mapBounds.bbox.minLng},${mapBounds.bbox.minLat},${mapBounds.bbox.maxLng},${mapBounds.bbox.maxLat}`
-      : undefined,
+    bbox: shouldFetchListings ? listingsBbox : undefined,
   });
 
   const clusters = clusterData?.clusters ?? [];
@@ -40,10 +47,12 @@ export default function Dashboard() {
 
   const handleBoundsChange = useCallback((bbox: BBox, zoom: number) => {
     setMapBounds({ bbox, zoom });
+    // Clear expanded cluster when viewport changes
+    setExpandedCluster(null);
   }, []);
 
   const handleSelect = (item: Listing | ClusterOutlier) => {
-    // If it's an outlier, fetch full listing data
+    // If it's an outlier, try to find full listing data
     if ('address' in item && !('amenity_score' in item && typeof item.amenity_score === 'object')) {
       const fullListing = listings.find(l => l.id === item.id);
       if (fullListing) {
@@ -55,9 +64,18 @@ export default function Dashboard() {
   };
 
   const handleClusterClick = (cluster: Cluster) => {
-    // Could zoom to cluster bounds here if desired
-    console.log('Cluster clicked:', cluster.label);
+    // Expand cluster - this triggers fetching listings for that cluster's bounds
+    setExpandedCluster(cluster);
   };
+
+  const handleClusterCollapse = () => {
+    setExpandedCluster(null);
+  };
+
+  // Filter listings for expanded cluster
+  const expandedListings = expandedCluster
+    ? listings.filter(l => expandedCluster.listing_ids.includes(l.id))
+    : [];
 
   return (
     <div className="h-screen flex flex-col">
@@ -110,11 +128,13 @@ export default function Dashboard() {
             <ListingSidebar
               clusters={clusters}
               outliers={outliers}
-              listings={listings}
-              isLoading={clustersLoading}
+              listings={expandedListings}
+              isLoading={clustersLoading || (expandedCluster !== null && isStreaming)}
               totalCount={totalCount}
               onSelect={handleSelect}
               onClusterClick={handleClusterClick}
+              expandedCluster={expandedCluster}
+              onBack={handleClusterCollapse}
             />
           )}
         </div>

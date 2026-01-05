@@ -152,16 +152,8 @@ interface MapProps {
   onClusterClick?: (cluster: Cluster) => void;
 }
 
-function MapUpdater({ listings }: { listings: Listing[] }) {
-  const map = useMap();
-
-  // Center on Vancouver area if no listings
-  if (listings.length === 0) {
-    map.setView([49.2827, -123.1207], 11);
-  }
-
-  return null;
-}
+// Removed MapUpdater - it was calling setView on every render when listings=0,
+// causing the map to "bounce back" to Vancouver when panning/zooming.
 
 export default function Map({
   listings,
@@ -184,7 +176,6 @@ export default function Map({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <MapUpdater listings={validListings} />
       {onBoundsChange && <MapBoundsTracker onBoundsChange={onBoundsChange} />}
 
       {/* Cluster markers */}

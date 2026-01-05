@@ -3,10 +3,9 @@ import type { Cluster } from '../types';
 interface ClusterCardProps {
   cluster: Cluster;
   onClick: () => void;
-  isExpanded?: boolean;
 }
 
-export default function ClusterCard({ cluster, onClick, isExpanded }: ClusterCardProps) {
+export default function ClusterCard({ cluster, onClick }: ClusterCardProps) {
   const { stats } = cluster;
 
   const formatPrice = (price: number) => {
@@ -25,13 +24,7 @@ export default function ClusterCard({ cluster, onClick, isExpanded }: ClusterCar
   return (
     <div
       onClick={onClick}
-      className={`
-        p-3 rounded-lg border cursor-pointer transition-colors
-        ${isExpanded
-          ? 'border-blue-500 bg-blue-50'
-          : 'border-gray-200 hover:border-gray-300 bg-white hover:bg-gray-50'
-        }
-      `}
+      className="p-3 rounded-lg border cursor-pointer transition-colors border-gray-200 hover:border-gray-300 bg-white hover:bg-gray-50"
     >
       <div className="flex items-center justify-between mb-1">
         <span className="font-medium text-gray-900">{cluster.label}</span>

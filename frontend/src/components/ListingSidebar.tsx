@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import { FixedSizeList as List } from 'react-window';
 import type { Listing, Cluster, ClusterOutlier } from '../types';
 import ListingCard from './ListingCard';
@@ -12,6 +12,8 @@ interface ListingSidebarProps {
   totalCount: number;
   onSelect: (listing: Listing | ClusterOutlier) => void;
   onClusterClick: (cluster: Cluster) => void;
+  expandedCluster: Cluster | null;
+  onBack: () => void;
 }
 
 export default function ListingSidebar({
@@ -22,33 +24,14 @@ export default function ListingSidebar({
   totalCount,
   onSelect,
   onClusterClick,
+  expandedCluster,
+  onBack,
 }: ListingSidebarProps) {
-  const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
-
-  const expandedCluster = expandedClusterId
-    ? clusters.find(c => c.id === expandedClusterId)
-    : null;
-
-  const expandedListings = expandedCluster
-    ? listings.filter(l => expandedCluster.listing_ids.includes(l.id))
-    : [];
-
-  const handleClusterClick = (cluster: Cluster) => {
-    if (expandedClusterId === cluster.id) {
-      setExpandedClusterId(null);
-    } else {
-      setExpandedClusterId(cluster.id);
-      onClusterClick(cluster);
-    }
-  };
-
-  const handleBack = () => {
-    setExpandedClusterId(null);
-  };
 
   // Virtualized row renderer for expanded view
   const Row = useCallback(({ index, style }: { index: number; style: React.CSSProperties }) => {
-    const listing = expandedListings[index];
+    const listing = listings[index];
+    if (!listing) return null;
     return (
       <div style={style} className="px-4 py-1">
         <ListingCard
@@ -58,15 +41,15 @@ export default function ListingSidebar({
         />
       </div>
     );
-  }, [expandedListings, onSelect]);
+  }, [listings, onSelect]);
 
   // Show expanded cluster view
-  if (expandedCluster && expandedListings.length > 0) {
+  if (expandedCluster) {
     return (
       <div className="h-full flex flex-col">
         <div className="p-4 border-b bg-gray-50">
           <button
-            onClick={handleBack}
+            onClick={onBack}
             className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 mb-2"
           >
             <span>←</span>
@@ -75,17 +58,24 @@ export default function ListingSidebar({
           <h2 className="font-semibold text-gray-900">
             {expandedCluster.label} ({expandedCluster.count})
           </h2>
+          {isLoading && (
+            <div className="text-sm text-blue-600 mt-1">Loading listings...</div>
+          )}
         </div>
 
         <div className="flex-1">
-          <List
-            height={600}
-            itemCount={expandedListings.length}
-            itemSize={80}
-            width="100%"
-          >
-            {Row}
-          </List>
+          {listings.length > 0 ? (
+            <List
+              height={600}
+              itemCount={listings.length}
+              itemSize={80}
+              width="100%"
+            >
+              {Row}
+            </List>
+          ) : !isLoading ? (
+            <div className="p-4 text-gray-500">No listings found</div>
+          ) : null}
         </div>
       </div>
     );
@@ -106,8 +96,7 @@ export default function ListingSidebar({
             <ClusterCard
               key={cluster.id}
               cluster={cluster}
-              onClick={() => handleClusterClick(cluster)}
-              isExpanded={expandedClusterId === cluster.id}
+              onClick={() => onClusterClick(cluster)}
             />
           ))}
         </div>

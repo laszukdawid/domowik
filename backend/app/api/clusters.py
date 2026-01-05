@@ -2,17 +2,91 @@ from typing import Annotated
 import logging
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within
 from sklearn.cluster import DBSCAN
 import numpy as np
 
-from app.models import get_db, Listing, User
+from app.models import get_db, Listing, AmenityScore, UserListingStatus, User
 from app.api.deps import get_current_user
-from app.api.listings import build_listings_query
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/clusters", tags=["clusters"])
+
+
+def build_lightweight_query(
+    user: User,
+    min_price: int | None = None,
+    max_price: int | None = None,
+    min_bedrooms: int | None = None,
+    min_sqft: int | None = None,
+    cities: list[str] | None = None,
+    property_types: list[str] | None = None,
+    include_hidden: bool = False,
+    favorites_only: bool = False,
+    min_score: int | None = None,
+    bbox: str | None = None,
+):
+    """Build a lightweight query for clustering - no eager loading of related objects."""
+    query = (
+        select(
+            Listing.id,
+            Listing.price,
+            Listing.bedrooms,
+            Listing.address,
+            ST_X(Listing.location).label("lng"),
+            ST_Y(Listing.location).label("lat"),
+            UserListingStatus.is_favorite,
+            AmenityScore.amenity_score,
+        )
+        .outerjoin(
+            UserListingStatus,
+            and_(
+                UserListingStatus.listing_id == Listing.id,
+                UserListingStatus.user_id == user.id,
+            ),
+        )
+        .outerjoin(AmenityScore, AmenityScore.listing_id == Listing.id)
+        .where(Listing.status == "active")
+    )
+
+    if min_price:
+        query = query.where(Listing.price >= min_price)
+    if max_price:
+        query = query.where(Listing.price <= max_price)
+    if min_bedrooms:
+        query = query.where(Listing.bedrooms >= min_bedrooms)
+    if min_sqft:
+        query = query.where(Listing.sqft >= min_sqft)
+    if cities:
+        query = query.where(Listing.city.in_(cities))
+    if property_types:
+        query = query.where(Listing.property_type.in_(property_types))
+    if not include_hidden:
+        query = query.where(
+            (UserListingStatus.is_hidden == False)  # noqa: E712
+            | (UserListingStatus.is_hidden == None)  # noqa: E711
+        )
+    if favorites_only:
+        query = query.where(UserListingStatus.is_favorite == True)  # noqa: E712
+    if min_score is not None:
+        query = query.where(AmenityScore.amenity_score >= min_score)
+
+    if bbox:
+        try:
+            parts = bbox.split(",")
+            if len(parts) == 4:
+                min_lng, min_lat, max_lng, max_lat = [float(x) for x in parts]
+                if (-180 <= min_lng <= 180 and -180 <= max_lng <= 180 and
+                    -90 <= min_lat <= 90 and -90 <= max_lat <= 90):
+                    envelope = ST_MakeEnvelope(min_lng, min_lat, max_lng, max_lat, 4326)
+                    query = query.where(ST_Within(Listing.location, envelope))
+        except (ValueError, AttributeError):
+            pass
+
+    return query
 
 
 @router.get("")
@@ -58,8 +132,8 @@ async def get_clusters(
         logger.warning(f"Invalid bbox parameter '{bbox}': {e}")
         return {"clusters": [], "outliers": []}
 
-    # Fetch listings in bbox
-    query = build_listings_query(
+    # Fetch listings in bbox using lightweight query
+    query = build_lightweight_query(
         user, min_price, max_price, min_bedrooms, min_sqft,
         cities, property_types, include_hidden, favorites_only, min_score, bbox
     )
@@ -73,31 +147,35 @@ async def get_clusters(
     # If zoomed in enough or few listings, return as outliers (no clustering)
     if zoom >= 15 or len(rows) < 20:
         outliers = []
-        for listing, status, lng, lat in rows:
-            if lng and lat:
+        for row in rows:
+            if row.lng and row.lat:
                 outliers.append({
-                    "id": listing.id,
-                    "lat": lat,
-                    "lng": lng,
-                    "price": listing.price,
-                    "bedrooms": listing.bedrooms,
-                    "address": listing.address,
-                    "amenity_score": listing.amenity_score.amenity_score if listing.amenity_score else None,
-                    "is_favorite": status.is_favorite if status else False,
+                    "id": row.id,
+                    "lat": row.lat,
+                    "lng": row.lng,
+                    "price": row.price,
+                    "bedrooms": row.bedrooms,
+                    "address": row.address,
+                    "amenity_score": row.amenity_score,
+                    "is_favorite": row.is_favorite or False,
                 })
         return {"clusters": [], "outliers": outliers}
 
     # Prepare data for clustering
     coords = []
     listing_data = []
-    for listing, status, lng, lat in rows:
-        if lng and lat:
-            coords.append([lng, lat])
+    for row in rows:
+        if row.lng and row.lat:
+            coords.append([row.lng, row.lat])
             listing_data.append({
-                "listing": listing,
-                "status": status,
-                "lng": lng,
-                "lat": lat,
+                "id": row.id,
+                "price": row.price,
+                "bedrooms": row.bedrooms,
+                "address": row.address,
+                "amenity_score": row.amenity_score,
+                "is_favorite": row.is_favorite or False,
+                "lng": row.lng,
+                "lat": row.lat,
             })
 
     if not coords:
@@ -122,14 +200,14 @@ async def get_clusters(
         if label == -1:
             # Outlier (not in any cluster)
             outliers.append({
-                "id": data["listing"].id,
+                "id": data["id"],
                 "lat": data["lat"],
                 "lng": data["lng"],
-                "price": data["listing"].price,
-                "bedrooms": data["listing"].bedrooms,
-                "address": data["listing"].address,
-                "amenity_score": data["listing"].amenity_score.amenity_score if data["listing"].amenity_score else None,
-                "is_favorite": data["status"].is_favorite if data["status"] else False,
+                "price": data["price"],
+                "bedrooms": data["bedrooms"],
+                "address": data["address"],
+                "amenity_score": data["amenity_score"],
+                "is_favorite": data["is_favorite"],
             })
         else:
             if label not in cluster_map:
@@ -141,10 +219,9 @@ async def get_clusters(
     for cluster_id, items in cluster_map.items():
         lats = [d["lat"] for d in items]
         lngs = [d["lng"] for d in items]
-        prices = [d["listing"].price for d in items]
-        beds = [d["listing"].bedrooms for d in items if d["listing"].bedrooms]
-        scores = [d["listing"].amenity_score.amenity_score for d in items
-                  if d["listing"].amenity_score and d["listing"].amenity_score.amenity_score]
+        prices = [d["price"] for d in items]
+        beds = [d["bedrooms"] for d in items if d["bedrooms"]]
+        scores = [d["amenity_score"] for d in items if d["amenity_score"]]
 
         clusters.append({
             "id": f"cluster_{cluster_id}",
@@ -168,7 +245,7 @@ async def get_clusters(
                 "beds_max": max(beds) if beds else None,
                 "amenity_avg": round(sum(scores) / len(scores), 1) if scores else None,
             },
-            "listing_ids": [d["listing"].id for d in items],
+            "listing_ids": [d["id"] for d in items],
         })
 
     # Sort clusters by count descending

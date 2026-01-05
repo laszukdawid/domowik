@@ -61,21 +61,46 @@ export default function ListingDetail({ listing, onClose }: ListingDetailProps) 
 
       {/* Amenity scores */}
       {amenity && (
-        <div className="mb-4 p-3 bg-gray-50 rounded">
-          <div className="text-sm font-medium mb-2">Amenities</div>
-          <div className="space-y-1 text-sm">
-            {amenity.nearest_park_m && (
-              <div>🌳 Park: {amenity.nearest_park_m}m</div>
+        <div className="mb-4 p-3 bg-gray-700 rounded">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-medium">Amenity Score</div>
+            {amenity.amenity_score != null && (
+              <div
+                className={`text-xl font-bold px-3 py-1 rounded ${
+                  amenity.amenity_score >= 70
+                    ? 'bg-green-600 text-white'
+                    : amenity.amenity_score >= 40
+                    ? 'bg-yellow-500 text-black'
+                    : 'bg-red-600 text-white'
+                }`}
+              >
+                {amenity.amenity_score}
+              </div>
             )}
-            {amenity.nearest_coffee_m && (
-              <div>☕ Coffee: {amenity.nearest_coffee_m}m</div>
+          </div>
+          <div className="space-y-2 text-sm text-gray-300">
+            {amenity.nearest_park_m != null && (
+              <div className="flex justify-between">
+                <span>🌳 Nearest Park</span>
+                <span className="text-white">{amenity.nearest_park_m}m</span>
+              </div>
             )}
-            {amenity.nearest_dog_park_m && (
-              <div>🐕 Dog Park: {amenity.nearest_dog_park_m}m</div>
+            {amenity.nearest_coffee_m != null && (
+              <div className="flex justify-between">
+                <span>☕ Nearest Coffee</span>
+                <span className="text-white">{amenity.nearest_coffee_m}m</span>
+              </div>
             )}
-            {amenity.walkability_score && (
-              <div className="font-medium mt-2">
-                Walkability: {amenity.walkability_score}/100
+            {amenity.nearest_dog_park_m != null && (
+              <div className="flex justify-between">
+                <span>🐕 Nearest Dog Park</span>
+                <span className="text-white">{amenity.nearest_dog_park_m}m</span>
+              </div>
+            )}
+            {amenity.walkability_score != null && (
+              <div className="flex justify-between border-t border-gray-600 pt-2 mt-2">
+                <span>🚶 Walkability</span>
+                <span className="text-white font-medium">{amenity.walkability_score}/100</span>
               </div>
             )}
           </div>

@@ -6,20 +6,26 @@ import type { ListingFilters, Listing } from '../types';
 /**
  * Hook for streaming listings with progressive loading
  * Returns listings as they arrive from the server for a snappier UX
+ *
+ * Only fetches when bbox is provided to avoid fetching all listings.
  */
 export function useListings(filters: ListingFilters = {}) {
   const [streamedListings, setStreamedListings] = useState<Listing[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const filtersRef = useRef(filters);
 
-  // Update filters ref when filters change
-  useEffect(() => {
-    filtersRef.current = filters;
-  }, [filters]);
+  // Serialize filters to a stable string for comparison
+  const filtersKey = JSON.stringify(filters);
 
   useEffect(() => {
+    // Don't fetch if no bbox provided - would fetch all listings
+    if (!filters.bbox) {
+      setStreamedListings([]);
+      setIsStreaming(false);
+      return;
+    }
+
     // Abort previous stream if filters changed
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -27,32 +33,24 @@ export function useListings(filters: ListingFilters = {}) {
 
     // Create new abort controller for this stream
     abortControllerRef.current = new AbortController();
-    const currentFilters = filtersRef.current;
+    const currentFiltersKey = filtersKey;
 
     setIsStreaming(true);
     setStreamError(null);
     setStreamedListings([]); // Clear previous results
 
     api.streamListings(
-      currentFilters,
+      filters,
       (chunk) => {
         // Only update if filters haven't changed
-        if (JSON.stringify(filtersRef.current) === JSON.stringify(currentFilters)) {
-          setStreamedListings((prev) => [...prev, ...chunk]);
-        }
+        setStreamedListings((prev) => [...prev, ...chunk]);
       },
       () => {
-        // Only update if filters haven't changed
-        if (JSON.stringify(filtersRef.current) === JSON.stringify(currentFilters)) {
-          setIsStreaming(false);
-        }
+        setIsStreaming(false);
       },
       (error) => {
-        // Only update if filters haven't changed and not aborted
-        if (
-          JSON.stringify(filtersRef.current) === JSON.stringify(currentFilters) &&
-          error.name !== 'AbortError'
-        ) {
+        // Only update if not aborted
+        if (error.name !== 'AbortError') {
           setStreamError(error);
           setIsStreaming(false);
         }
@@ -64,7 +62,8 @@ export function useListings(filters: ListingFilters = {}) {
         abortControllerRef.current.abort();
       }
     };
-  }, [filters]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
 
   return {
     data: streamedListings,

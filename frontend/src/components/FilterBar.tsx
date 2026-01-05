@@ -89,6 +89,24 @@ export default function FilterBar({ filters, onChange }: FilterBarProps) {
               />
             </div>
 
+            <div>
+              <label className="block text-sm font-medium mb-1">Min Score</label>
+              <select
+                value={filters.min_score ?? 1}
+                onChange={(e) =>
+                  handleChange('min_score', e.target.value ? Number(e.target.value) : undefined)
+                }
+                className="w-full p-2 border rounded text-sm"
+              >
+                <option value="">Any (include 0)</option>
+                <option value="1">1+ (exclude 0)</option>
+                <option value="20">20+</option>
+                <option value="40">40+</option>
+                <option value="60">60+</option>
+                <option value="80">80+</option>
+              </select>
+            </div>
+
             <div className="flex gap-4">
               <label className="flex items-center gap-2 text-sm">
                 <input

@@ -29,7 +29,7 @@ export function usePersistedFilters() {
       console.error('Failed to load filters from localStorage:', error);
     }
 
-    return {};
+    return { min_score: 1 };
   });
 
   // Update both localStorage and URL params when filters change
@@ -87,6 +87,9 @@ function parseFiltersFromURL(searchParams: URLSearchParams): ListingFilters {
 
   const favoritesOnly = searchParams.get('favorites_only');
   if (favoritesOnly) filters.favorites_only = favoritesOnly === 'true';
+
+  const minScore = searchParams.get('min_score');
+  if (minScore) filters.min_score = Number(minScore);
 
   return filters;
 }
