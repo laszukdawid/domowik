@@ -16,8 +16,12 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/housesearch
+      OVERPASS_URL: http://overpass:80/api/interpreter
     depends_on:
-      - db
+      db:
+        condition: service_started
+      overpass:
+        condition: service_healthy
     volumes:
       - ./backend:/app
     command: uv run uvicorn app.main:app --host 0.0.0.0 --reload
@@ -29,5 +33,20 @@ services:
     environment:
       - VITE_API_URL=http://localhost:8000
 
+  overpass:
+    image: wiktorn/overpass-api
+    volumes:
+      - overpass_db:/db
+    ports:
+      - "12345:80"
+    environment:
+      - OVERPASS_MODE=run
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   postgres_data:
+  overpass_db:
