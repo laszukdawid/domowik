@@ -14,6 +14,7 @@ from scraper.enricher import (
     calculate_walkability_score,
     haversine_distance,
 )
+from app.config import settings
 
 
 class TestHaversineDistance:
@@ -242,7 +243,7 @@ class TestOverpassParksParsing:
     @respx.mock
     async def test_parses_parks_with_center_coordinates(self, overpass_parks_response):
         """Should extract parks with center coordinates (for ways/relations)."""
-        respx.post("https://overpass-api.de/api/interpreter").mock(
+        respx.post(settings.overpass_url).mock(
             return_value=Response(200, json=overpass_parks_response)
         )
 
@@ -260,7 +261,7 @@ class TestOverpassParksParsing:
     @respx.mock
     async def test_sorts_parks_by_distance(self, overpass_parks_response):
         """Parks should be sorted by distance, nearest first."""
-        respx.post("https://overpass-api.de/api/interpreter").mock(
+        respx.post(settings.overpass_url).mock(
             return_value=Response(200, json=overpass_parks_response)
         )
 
@@ -286,7 +287,7 @@ class TestOverpassParksParsing:
                 }
             ]
         }
-        respx.post("https://overpass-api.de/api/interpreter").mock(
+        respx.post(settings.overpass_url).mock(
             return_value=Response(200, json=response)
         )
 
@@ -308,7 +309,7 @@ class TestOverpassCoffeeShopsParsing:
         self, overpass_coffee_shops_response
     ):
         """Should extract coffee shops using direct lat/lon (for nodes)."""
-        respx.post("https://overpass-api.de/api/interpreter").mock(
+        respx.post(settings.overpass_url).mock(
             return_value=Response(200, json=overpass_coffee_shops_response)
         )
 
@@ -329,7 +330,7 @@ class TestOverpassDogParksParsing:
     @respx.mock
     async def test_parses_dog_parks(self, overpass_dog_parks_response):
         """Should extract dog parks from response."""
-        respx.post("https://overpass-api.de/api/interpreter").mock(
+        respx.post(settings.overpass_url).mock(
             return_value=Response(200, json=overpass_dog_parks_response)
         )
 
@@ -349,7 +350,7 @@ class TestOverpassEmptyResponse:
     @respx.mock
     async def test_returns_empty_list_when_no_results(self, overpass_empty_response):
         """Should return empty list when no amenities found."""
-        respx.post("https://overpass-api.de/api/interpreter").mock(
+        respx.post(settings.overpass_url).mock(
             return_value=Response(200, json=overpass_empty_response)
         )
 
@@ -367,7 +368,7 @@ class TestOverpassErrorHandling:
     @respx.mock
     async def test_returns_empty_list_on_http_error(self):
         """Should return empty list when Overpass API fails."""
-        respx.post("https://overpass-api.de/api/interpreter").mock(
+        respx.post(settings.overpass_url).mock(
             return_value=Response(503)
         )
 
@@ -391,7 +392,7 @@ class TestEnrichCombined:
     ):
         """Should query all amenity types and compute scores."""
         # Mock all three queries (they'll all hit the same endpoint)
-        route = respx.post("https://overpass-api.de/api/interpreter")
+        route = respx.post(settings.overpass_url)
         route.side_effect = [
             Response(200, json=overpass_parks_response),
             Response(200, json=overpass_coffee_shops_response),
@@ -434,7 +435,7 @@ class TestEnrichCombined:
             ]
         }
 
-        route = respx.post("https://overpass-api.de/api/interpreter")
+        route = respx.post(settings.overpass_url)
         route.side_effect = [
             Response(200, json=many_parks),
             Response(200, json=overpass_coffee_shops_response),
@@ -448,5 +449,46 @@ class TestEnrichCombined:
             assert len(data.parks) <= 10
             assert len(data.coffee_shops) <= 10
             assert len(data.dog_parks) <= 5
+        finally:
+            await enricher.close()
+
+
+class TestParallelQueries:
+    """Tests for parallel query execution."""
+
+    @respx.mock
+    async def test_enrich_runs_queries_in_parallel(
+        self,
+        overpass_parks_response,
+        overpass_coffee_shops_response,
+        overpass_dog_parks_response,
+    ):
+        """All three queries should run concurrently."""
+        import time
+
+        call_times = []
+
+        def record_call(request):
+            call_times.append(time.time())
+            # Determine which response to return based on query content
+            query = request.content.decode()
+            if "leisure" in query and "park" in query and "dog_park" not in query:
+                return Response(200, json=overpass_parks_response)
+            elif "amenity" in query and "cafe" in query:
+                return Response(200, json=overpass_coffee_shops_response)
+            else:
+                return Response(200, json=overpass_dog_parks_response)
+
+        respx.post(settings.overpass_url).mock(side_effect=record_call)
+
+        enricher = AmenityEnricher()
+        try:
+            start = time.time()
+            await enricher.enrich(49.2827, -123.1207)
+            elapsed = time.time() - start
+
+            # All 3 calls should happen nearly simultaneously (within 0.5s of each other)
+            assert len(call_times) == 3
+            assert max(call_times) - min(call_times) < 0.5
         finally:
             await enricher.close()

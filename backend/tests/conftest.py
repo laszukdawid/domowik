@@ -166,3 +166,9 @@ def overpass_dog_parks_response() -> dict:
 def overpass_empty_response() -> dict:
     """Mock Overpass API response with no results."""
     return {"elements": []}
+
+
+@pytest.fixture
+def local_overpass_url() -> str:
+    """Local Overpass API URL for testing."""
+    return "http://localhost:12345/api/interpreter"
