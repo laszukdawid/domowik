@@ -153,28 +153,47 @@ tasks:
     desc: Run scraper locally (requires venv)
     dir: backend
     cmds:
-      - python -m scraper.run
+      - uv run scraper.run
 
   scraper:enrich:
     desc: Enrich all listings that don't have amenity scores
     cmds:
-      - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.enrich"
+      - "{{.DOCKER_COMPOSE}} exec backend uv run python -m scraper.enrich"
 
   # =============================================================================
   # Overpass (Local OSM)
   # =============================================================================
   overpass:init:
-    desc: "Download BC data and initialize Overpass volume (one-time, ~20 min)"
+    desc: "Download Vancouver data and initialize Overpass (~5 min)"
     cmds:
-      - echo "Initializing Overpass database with British Columbia data..."
-      - echo "This downloads ~1.1GB and takes ~20 minutes. Please wait..."
+      - echo "Initializing Overpass database with Vancouver area data..."
+      - echo "This downloads ~57MB and takes ~5 minutes. Please wait..."
       - |
         {{.DOCKER_COMPOSE}} --profile enrichment run --rm \
           -e OVERPASS_MODE=init \
+          -e OVERPASS_META=yes \
+          -e OVERPASS_PLANET_URL=https://download.bbbike.org/osm/bbbike/Vancouver/Vancouver.osm.pbf \
+          -e OVERPASS_PLANET_PREPROCESS="mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat -o /db/planet.osm.bz2 /db/planet.osm.pbf && rm /db/planet.osm.pbf" \
+          overpass
+      - echo "Fixing permissions..."
+      - docker run --rm -v domowik_overpass_db:/db alpine chmod 755 /db
+      - "echo 'Done! Overpass is ready. Start it with: task overpass:up'"
+
+  overpass:init:bc:
+    desc: "Download full BC data and initialize Overpass (~30 min)"
+    cmds:
+      - echo "Initializing Overpass database with British Columbia data..."
+      - echo "This downloads ~1.1GB and takes ~30 minutes. Please wait..."
+      - |
+        {{.DOCKER_COMPOSE}} --profile enrichment run --rm \
+          -e OVERPASS_MODE=init \
+          -e OVERPASS_META=yes \
           -e OVERPASS_PLANET_URL=https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf \
           -e OVERPASS_PLANET_PREPROCESS="mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat -o /db/planet.osm.bz2 /db/planet.osm.pbf && rm /db/planet.osm.pbf" \
           overpass
-      - echo "Done! Overpass is ready. Start it with: task overpass:up"
+      - echo "Fixing permissions..."
+      - docker run --rm -v domowik_overpass_db:/db alpine chmod 755 /db
+      - "echo 'Done! Overpass is ready. Start it with: task overpass:up'"
 
   overpass:up:
     desc: Start Overpass service (requires overpass:init first)
@@ -186,18 +205,30 @@ tasks:
     cmds:
       - "{{.DOCKER_COMPOSE}} --profile enrichment stop overpass"
 
+  overpass:logs:
+    desc: Tail Overpass logs
+    cmds:
+      - "{{.DOCKER_COMPOSE}} --profile enrichment logs -f overpass"
+
   overpass:status:
     desc: Check Overpass API status
     cmds:
-      - curl -s http://localhost:12345/api/status
+      - curl -s http://localhost:12345/api/status || echo "Overpass not responding"
 
   overpass:test:
-    desc: Test Overpass with a sample query
+    desc: Test Overpass with a sample query (cafes near downtown Vancouver)
     cmds:
       - |
         curl -s -X POST http://localhost:12345/api/interpreter \
           -d 'data=[out:json][timeout:5];node["amenity"="cafe"](around:500,49.2827,-123.1207);out;' \
           | head -c 500
+
+  overpass:clean:
+    desc: "⚠️  Remove Overpass volume (requires re-init)"
+    cmds:
+      - "{{.DOCKER_COMPOSE}} --profile enrichment stop overpass || true"
+      - "{{.DOCKER_COMPOSE}} --profile enrichment rm -f overpass || true"
+      - docker volume rm domowik_overpass_db || true
 
   # =============================================================================
   # Development

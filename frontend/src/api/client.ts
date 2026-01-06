@@ -24,7 +24,8 @@ class ApiClient {
 
   private async request<T>(
     path: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    signal?: AbortSignal
   ): Promise<T> {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
@@ -38,6 +39,7 @@ class ApiClient {
     const response = await fetch(`${API_URL}${path}`, {
       ...options,
       headers,
+      signal,
     });
 
     if (!response.ok) {
@@ -219,7 +221,8 @@ class ApiClient {
   async getClusters(
     bbox: string,
     zoom: number,
-    filters: ListingFilters = {}
+    filters: ListingFilters = {},
+    signal?: AbortSignal
   ): Promise<ClusterResponse> {
     const params = new URLSearchParams();
     params.append('bbox', bbox);
@@ -235,7 +238,7 @@ class ApiClient {
       }
     });
 
-    return this.request<ClusterResponse>(`/api/clusters?${params.toString()}`);
+    return this.request<ClusterResponse>(`/api/clusters?${params.toString()}`, {}, signal);
   }
 }
 

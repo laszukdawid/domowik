@@ -8,12 +8,15 @@ import type { ListingFilters, Listing } from '../types';
  * Returns listings as they arrive from the server for a snappier UX
  *
  * Only fetches when bbox is provided to avoid fetching all listings.
+ * Includes internal debouncing to prevent rapid refetches during map navigation.
  */
 export function useListings(filters: ListingFilters = {}) {
   const [streamedListings, setStreamedListings] = useState<Listing[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const debounceTimeoutRef = useRef<number | null>(null);
+  const lastFetchedKeyRef = useRef<string | null>(null);
 
   // Serialize filters to a stable string for comparison
   const filtersKey = JSON.stringify(filters);
@@ -21,43 +24,77 @@ export function useListings(filters: ListingFilters = {}) {
   useEffect(() => {
     // Don't fetch if no bbox provided - would fetch all listings
     if (!filters.bbox) {
+      // Clear any pending debounce
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+        debounceTimeoutRef.current = null;
+      }
+      // Abort any in-flight request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       setStreamedListings([]);
       setIsStreaming(false);
       return;
     }
 
-    // Abort previous stream if filters changed
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
+    // Skip if we've already fetched this exact filter set
+    if (filtersKey === lastFetchedKeyRef.current) {
+      return;
     }
 
-    // Create new abort controller for this stream
-    abortControllerRef.current = new AbortController();
-    const currentFiltersKey = filtersKey;
+    // Clear any pending debounce
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
 
-    setIsStreaming(true);
-    setStreamError(null);
-    setStreamedListings([]); // Clear previous results
-
-    api.streamListings(
-      filters,
-      (chunk) => {
-        // Only update if filters haven't changed
-        setStreamedListings((prev) => [...prev, ...chunk]);
-      },
-      () => {
-        setIsStreaming(false);
-      },
-      (error) => {
-        // Only update if not aborted
-        if (error.name !== 'AbortError') {
-          setStreamError(error);
-          setIsStreaming(false);
-        }
+    // Debounce the fetch to prevent rapid requests during map navigation
+    debounceTimeoutRef.current = window.setTimeout(() => {
+      // Abort previous stream if still running
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
-    );
+
+      // Create new abort controller for this stream
+      abortControllerRef.current = new AbortController();
+      lastFetchedKeyRef.current = filtersKey;
+
+      setIsStreaming(true);
+      setStreamError(null);
+      // Keep previous results visible while new ones load
+      // setStreamedListings([]); // Don't clear - show stale data until new arrives
+
+      let isFirstChunk = true;
+
+      api.streamListings(
+        filters,
+        (chunk) => {
+          // Clear previous results only on first chunk of new data
+          if (isFirstChunk) {
+            setStreamedListings(chunk);
+            isFirstChunk = false;
+          } else {
+            setStreamedListings((prev) => [...prev, ...chunk]);
+          }
+        },
+        () => {
+          setIsStreaming(false);
+        },
+        (error) => {
+          // Only update if not aborted
+          if (error.name !== 'AbortError') {
+            setStreamError(error);
+            setIsStreaming(false);
+          }
+        }
+      );
+    }, 300); // 300ms debounce
 
     return () => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }

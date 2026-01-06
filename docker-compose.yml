@@ -39,12 +39,13 @@ services:
     ports:
       - "12345:80"
     environment:
-      - OVERPASS_MODE=run
+      - OVERPASS_META=yes
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/api/status"]
+      test: ["CMD-SHELL", "curl -sf 'http://localhost/api/interpreter' -d 'data=[out:json];node(1);out;'"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
 volumes:
   postgres_data:
