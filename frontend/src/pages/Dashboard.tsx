@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { useListings } from '../hooks/useListings';
+import { useListings, useListing } from '../hooks/useListings';
 import { useClusters } from '../hooks/useClusters';
 import { usePersistedFilters } from '../hooks/usePersistedFilters';
 import type { Listing, BBox, Cluster, ClusterOutlier } from '../types';
@@ -13,8 +13,22 @@ export default function Dashboard() {
   const { user, logout } = useAuth();
   const [filters, setFilters] = usePersistedFilters();
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
+  const [selectedOutlierId, setSelectedOutlierId] = useState<number | null>(null);
   const [mapBounds, setMapBounds] = useState<{ bbox: BBox; zoom: number } | null>(null);
   const [expandedCluster, setExpandedCluster] = useState<Cluster | null>(null);
+  const [hoveredListingId, setHoveredListingId] = useState<number | null>(null);
+  const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
+
+  // Fetch individual listing when an outlier is clicked
+  const { data: fetchedListing } = useListing(selectedOutlierId ?? 0);
+
+  // Update selectedListing when the fetched listing arrives
+  useEffect(() => {
+    if (fetchedListing && selectedOutlierId) {
+      setSelectedListing(fetchedListing);
+      setSelectedOutlierId(null);
+    }
+  }, [fetchedListing, selectedOutlierId]);
 
   // Only fetch clusters - this is lightweight
   const {
@@ -30,8 +44,12 @@ export default function Dashboard() {
   // Only fetch full listings when zoomed in far enough OR when a cluster is expanded
   const shouldFetchListings = (mapBounds && mapBounds.zoom >= 15) || expandedCluster !== null;
 
+  // Add a small buffer to cluster bounds to ensure all edge points are captured
+  // ST_Within may exclude points exactly on the boundary due to floating-point precision
+  const CLUSTER_BBOX_BUFFER = 0.0001; // ~11 meters at equator
+
   const listingsBbox = expandedCluster
-    ? `${expandedCluster.bounds.west},${expandedCluster.bounds.south},${expandedCluster.bounds.east},${expandedCluster.bounds.north}`
+    ? `${expandedCluster.bounds.west - CLUSTER_BBOX_BUFFER},${expandedCluster.bounds.south - CLUSTER_BBOX_BUFFER},${expandedCluster.bounds.east + CLUSTER_BBOX_BUFFER},${expandedCluster.bounds.north + CLUSTER_BBOX_BUFFER}`
     : mapBounds
       ? `${mapBounds.bbox.minLng},${mapBounds.bbox.minLat},${mapBounds.bbox.maxLng},${mapBounds.bbox.maxLat}`
       : undefined;
@@ -52,11 +70,17 @@ export default function Dashboard() {
   }, []);
 
   const handleSelect = (item: Listing | ClusterOutlier) => {
-    // If it's an outlier, try to find full listing data
-    if ('address' in item && !('amenity_score' in item && typeof item.amenity_score === 'object')) {
+    // Check if it's an outlier (has lat/lng instead of latitude/longitude, and amenity_score is a number not object)
+    const isOutlier = 'lat' in item && 'lng' in item;
+
+    if (isOutlier) {
+      // Try to find full listing data in already-loaded listings
       const fullListing = listings.find(l => l.id === item.id);
       if (fullListing) {
         setSelectedListing(fullListing);
+      } else {
+        // Fetch the full listing on-demand
+        setSelectedOutlierId(item.id);
       }
     } else {
       setSelectedListing(item as Listing);
@@ -111,6 +135,9 @@ export default function Dashboard() {
             clusters={mapBounds && mapBounds.zoom < 15 ? clusters : []}
             outliers={mapBounds && mapBounds.zoom < 15 ? outliers : []}
             selectedId={selectedListing?.id}
+            hoveredId={hoveredListingId}
+            hoveredClusterId={hoveredClusterId}
+            focusCluster={expandedCluster}
             onSelect={handleSelect}
             onBoundsChange={handleBoundsChange}
             onClusterClick={handleClusterClick}
@@ -135,6 +162,8 @@ export default function Dashboard() {
               onClusterClick={handleClusterClick}
               expandedCluster={expandedCluster}
               onBack={handleClusterCollapse}
+              onHover={setHoveredListingId}
+              onClusterHover={setHoveredClusterId}
             />
           )}
         </div>

@@ -95,6 +95,7 @@ export interface ClusterOutlier {
   price: number;
   bedrooms: number | null;
   address: string;
+  url: string;
   amenity_score: number | null;
   is_favorite: boolean;
 }

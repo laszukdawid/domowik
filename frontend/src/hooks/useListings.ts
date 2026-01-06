@@ -141,7 +141,12 @@ export function useUpdateStatus() {
       listingId: number;
       status: { is_favorite?: boolean; is_hidden?: boolean };
     }) => api.updateStatus(listingId, status),
-    onSuccess: () => {
+    onSuccess: (_, { listingId }) => {
+      // Invalidate the individual listing cache
+      queryClient.invalidateQueries({ queryKey: ['listing', listingId] });
+      // Invalidate clusters so hidden listings are removed from view
+      queryClient.invalidateQueries({ queryKey: ['clusters'] });
+      // Invalidate listings for legacy hook
       queryClient.invalidateQueries({ queryKey: ['listings'] });
     },
   });

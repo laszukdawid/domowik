@@ -1,4 +1,5 @@
 import type { Listing } from '../types';
+import { getScoreBadgeClasses } from '../utils/scoreColors';
 
 interface ListingCardProps {
   listing: Listing;
@@ -27,14 +28,7 @@ export default function ListingCard({ listing, onClick, compact }: ListingCardPr
           </div>
         </div>
         {score !== null && score !== undefined && (
-          <div
-            className={`
-              text-xs font-semibold px-2 py-1 rounded ml-2
-              ${score >= 70 ? 'bg-green-100 text-green-800' : ''}
-              ${score >= 40 && score < 70 ? 'bg-yellow-100 text-yellow-800' : ''}
-              ${score < 40 ? 'bg-red-100 text-red-800' : ''}
-            `}
-          >
+          <div className={`text-xs font-semibold px-2 py-1 rounded ml-2 ${getScoreBadgeClasses(score)}`}>
             {score}
           </div>
         )}

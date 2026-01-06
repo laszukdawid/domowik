@@ -36,6 +36,7 @@ def build_lightweight_query(
             Listing.price,
             Listing.bedrooms,
             Listing.address,
+            Listing.url,
             ST_X(Listing.location).label("lng"),
             ST_Y(Listing.location).label("lat"),
             UserListingStatus.is_favorite,
@@ -156,6 +157,7 @@ async def get_clusters(
                     "price": row.price,
                     "bedrooms": row.bedrooms,
                     "address": row.address,
+                    "url": row.url,
                     "amenity_score": row.amenity_score,
                     "is_favorite": row.is_favorite or False,
                 })
@@ -172,6 +174,7 @@ async def get_clusters(
                 "price": row.price,
                 "bedrooms": row.bedrooms,
                 "address": row.address,
+                "url": row.url,
                 "amenity_score": row.amenity_score,
                 "is_favorite": row.is_favorite or False,
                 "lng": row.lng,
@@ -206,6 +209,7 @@ async def get_clusters(
                 "price": data["price"],
                 "bedrooms": data["bedrooms"],
                 "address": data["address"],
+                "url": data["url"],
                 "amenity_score": data["amenity_score"],
                 "is_favorite": data["is_favorite"],
             })

@@ -1,16 +1,21 @@
 import { useState } from 'react';
 import type { Listing } from '../types';
-import { useUpdateStatus, useNotes, useCreateNote } from '../hooks/useListings';
+import { useUpdateStatus, useNotes, useCreateNote, useListing } from '../hooks/useListings';
 
 interface ListingDetailProps {
   listing: Listing;
   onClose: () => void;
 }
 
-export default function ListingDetail({ listing, onClose }: ListingDetailProps) {
+export default function ListingDetail({ listing: initialListing, onClose }: ListingDetailProps) {
   const [noteText, setNoteText] = useState('');
   const updateStatus = useUpdateStatus();
   const createNote = useCreateNote();
+
+  // Always fetch fresh listing data to ensure we have the latest status
+  const { data: freshListing } = useListing(initialListing.id);
+  const listing = freshListing ?? initialListing;
+
   const { data: notes = [] } = useNotes(listing.id);
 
   const handleFavorite = () => {
@@ -20,12 +25,15 @@ export default function ListingDetail({ listing, onClose }: ListingDetailProps) 
     });
   };
 
-  const handleHide = () => {
+  const handleToggleHidden = () => {
     updateStatus.mutate({
       listingId: listing.id,
-      status: { is_hidden: true },
+      status: { is_hidden: !listing.is_hidden },
     });
-    onClose();
+    // Only close if hiding (not unhiding)
+    if (!listing.is_hidden) {
+      onClose();
+    }
   };
 
   const handleAddNote = () => {
@@ -120,10 +128,14 @@ export default function ListingDetail({ listing, onClose }: ListingDetailProps) 
           {listing.is_favorite ? '★ Favorited' : '☆ Favorite'}
         </button>
         <button
-          onClick={handleHide}
-          className="flex-1 py-2 rounded text-sm bg-gray-100 hover:bg-gray-200"
+          onClick={handleToggleHidden}
+          className={`flex-1 py-2 rounded text-sm ${
+            listing.is_hidden
+              ? 'bg-orange-100 text-orange-800 hover:bg-orange-200'
+              : 'bg-gray-100 hover:bg-gray-200'
+          }`}
         >
-          Hide
+          {listing.is_hidden ? 'Unhide' : 'Hide'}
         </button>
         <a
           href={listing.url}

@@ -3,9 +3,10 @@ import type { Cluster } from '../types';
 interface ClusterCardProps {
   cluster: Cluster;
   onClick: () => void;
+  onHover: (id: string | null) => void;
 }
 
-export default function ClusterCard({ cluster, onClick }: ClusterCardProps) {
+export default function ClusterCard({ cluster, onClick, onHover }: ClusterCardProps) {
   const { stats } = cluster;
 
   const formatPrice = (price: number) => {
@@ -24,6 +25,8 @@ export default function ClusterCard({ cluster, onClick }: ClusterCardProps) {
   return (
     <div
       onClick={onClick}
+      onMouseEnter={() => onHover(cluster.id)}
+      onMouseLeave={() => onHover(null)}
       className="p-3 rounded-lg border cursor-pointer transition-colors border-gray-200 hover:border-gray-300 bg-white hover:bg-gray-50"
     >
       <div className="flex items-center justify-between mb-1">

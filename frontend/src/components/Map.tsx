@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, CircleMarker } from 'react-leaflet';
 import L from 'leaflet';
 import type { Listing, BBox, Cluster, ClusterOutlier } from '../types';
+import { getMarkerColor, getScoreBadgeSolidClasses } from '../utils/scoreColors';
 
 // Icon cache to prevent recreating icons on every render
 const iconCache: Record<string, L.DivIcon> = {};
@@ -9,20 +10,33 @@ const iconCache: Record<string, L.DivIcon> = {};
 function getIconCacheKey(
   color: string,
   size: number,
-  isFavorite: boolean
+  isFavorite: boolean,
+  isHighlighted: boolean
 ): string {
-  return `${color}-${size}-${isFavorite}`;
+  return `${color}-${size}-${isFavorite}-${isHighlighted}`;
 }
 
 function getCachedIcon(
   color: string,
   size: number,
-  isFavorite: boolean
+  isFavorite: boolean,
+  isHighlighted: boolean = false
 ): L.DivIcon {
-  const key = getIconCacheKey(color, size, isFavorite);
+  const key = getIconCacheKey(color, size, isFavorite, isHighlighted);
   let icon = iconCache[key];
   if (!icon) {
-    const border = isFavorite ? '3px solid #FFD700' : '2px solid white';
+    let border: string;
+    let boxShadow: string;
+    if (isHighlighted) {
+      border = '3px solid #3B82F6'; // Blue highlight border
+      boxShadow = '0 0 0 4px rgba(59, 130, 246, 0.4), 0 2px 4px rgba(0,0,0,0.3)';
+    } else if (isFavorite) {
+      border = '3px solid #FFD700';
+      boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+    } else {
+      border = '2px solid white';
+      boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+    }
     icon = L.divIcon({
       className: 'custom-marker',
       html: `<div style="
@@ -31,7 +45,8 @@ function getCachedIcon(
         background: ${color};
         border-radius: 50%;
         border: ${border};
-        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        box-shadow: ${boxShadow};
+        transition: all 0.15s ease-out;
       "></div>`,
       iconSize: [size, size],
       iconAnchor: [size / 2, size / 2],
@@ -49,24 +64,17 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-function getMarkerColor(score: number | null | undefined): string {
-  if (!score) return '#6B7280'; // gray
-  if (score >= 80) return '#22C55E'; // green
-  if (score >= 60) return '#84CC16'; // lime
-  if (score >= 40) return '#EAB308'; // yellow
-  if (score >= 20) return '#F97316'; // orange
-  return '#EF4444'; // red
-}
 
-function createOutlierIcon(outlier: ClusterOutlier): L.DivIcon {
+function createOutlierIcon(outlier: ClusterOutlier, isHovered: boolean): L.DivIcon {
   const color = getMarkerColor(outlier.amenity_score);
-  return getCachedIcon(color, 12, outlier.is_favorite ?? false);
+  const size = isHovered ? 20 : 12;
+  return getCachedIcon(color, size, outlier.is_favorite ?? false, isHovered);
 }
 
-function createMarkerIcon(listing: Listing, isSelected: boolean): L.DivIcon {
+function createMarkerIcon(listing: Listing, isSelected: boolean, isHovered: boolean): L.DivIcon {
   const color = getMarkerColor(listing.amenity_score?.amenity_score);
-  const size = isSelected ? 16 : 12;
-  return getCachedIcon(color, size, listing.is_favorite ?? false);
+  const size = isHovered ? 20 : isSelected ? 16 : 12;
+  return getCachedIcon(color, size, listing.is_favorite ?? false, isHovered);
 }
 
 interface MapBoundsTrackerProps {
@@ -167,22 +175,24 @@ interface ClusterMarkerProps {
   center: { lat: number; lng: number };
   count: number;
   label: string;
+  isHovered: boolean;
   onClick: () => void;
 }
 
-function ClusterMarker({ center, count, label, onClick }: ClusterMarkerProps) {
-  // Size based on count
-  const size = Math.min(60, Math.max(30, 20 + Math.log10(count) * 15));
+function ClusterMarker({ center, count, label, isHovered, onClick }: ClusterMarkerProps) {
+  // Size based on count, larger when hovered
+  const baseSize = Math.min(60, Math.max(30, 20 + Math.log10(count) * 15));
+  const size = isHovered ? baseSize * 1.4 : baseSize;
 
   return (
     <CircleMarker
       center={[center.lat, center.lng]}
       radius={size / 2}
       pathOptions={{
-        fillColor: '#3B82F6',
-        fillOpacity: 0.8,
-        color: '#1D4ED8',
-        weight: 2,
+        fillColor: isHovered ? '#2563EB' : '#3B82F6',
+        fillOpacity: isHovered ? 1 : 0.8,
+        color: isHovered ? '#1E40AF' : '#1D4ED8',
+        weight: isHovered ? 4 : 2,
       }}
       eventHandlers={{ click: onClick }}
     >
@@ -201,9 +211,49 @@ interface MapProps {
   clusters?: Cluster[];
   outliers?: ClusterOutlier[];
   selectedId?: number;
+  hoveredId?: number | null;
+  hoveredClusterId?: string | null;
+  focusCluster?: Cluster | null;
   onSelect: (listing: Listing | ClusterOutlier) => void;
   onBoundsChange?: (bbox: BBox, zoom: number) => void;
   onClusterClick?: (cluster: Cluster) => void;
+}
+
+/**
+ * Component that pans/zooms the map to fit a cluster's bounds
+ */
+function ClusterFocus({ cluster }: { cluster: Cluster | null }) {
+  const map = useMap();
+  const lastFocusedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!cluster) {
+      lastFocusedRef.current = null;
+      return;
+    }
+
+    // Avoid re-focusing the same cluster
+    if (lastFocusedRef.current === cluster.id) {
+      return;
+    }
+    lastFocusedRef.current = cluster.id;
+
+    const { bounds } = cluster;
+    const leafletBounds = L.latLngBounds(
+      [bounds.south, bounds.west],
+      [bounds.north, bounds.east]
+    );
+
+    // Fit the map to the cluster bounds with some padding
+    map.fitBounds(leafletBounds, {
+      padding: [50, 50],
+      maxZoom: 16, // Don't zoom in too far
+      animate: true,
+      duration: 0.5,
+    });
+  }, [cluster, map]);
+
+  return null;
 }
 
 // Removed MapUpdater - it was calling setView on every render when listings=0,
@@ -218,6 +268,8 @@ interface DeferredMarkersProps {
   clusters: Cluster[];
   outliers: ClusterOutlier[];
   selectedId?: number;
+  hoveredId?: number | null;
+  hoveredClusterId?: string | null;
   onSelect: (listing: Listing | ClusterOutlier) => void;
   onClusterClick?: (cluster: Cluster) => void;
 }
@@ -227,6 +279,8 @@ interface DisplayedState {
   clusters: Cluster[];
   outliers: ClusterOutlier[];
   selectedId?: number;
+  hoveredId?: number | null;
+  hoveredClusterId?: string | null;
 }
 
 function DeferredMarkers({
@@ -234,6 +288,8 @@ function DeferredMarkers({
   clusters,
   outliers,
   selectedId,
+  hoveredId,
+  hoveredClusterId,
   onSelect,
   onClusterClick,
 }: DeferredMarkersProps) {
@@ -241,11 +297,11 @@ function DeferredMarkers({
   const pendingUpdate = useRef(false);
 
   // Store the latest props in refs so we can use them after interaction ends
-  const propsRef = useRef<DisplayedState>({ listings, clusters, outliers, selectedId });
-  propsRef.current = { listings, clusters, outliers, selectedId };
+  const propsRef = useRef<DisplayedState>({ listings, clusters, outliers, selectedId, hoveredId, hoveredClusterId });
+  propsRef.current = { listings, clusters, outliers, selectedId, hoveredId, hoveredClusterId };
 
   // Track displayed state separately to defer updates during interaction
-  const [displayed, setDisplayed] = useState<DisplayedState>({ listings, clusters, outliers, selectedId });
+  const [displayed, setDisplayed] = useState<DisplayedState>({ listings, clusters, outliers, selectedId, hoveredId, hoveredClusterId });
 
   useMapEvents({
     dragstart: () => {
@@ -280,13 +336,14 @@ function DeferredMarkers({
   });
 
   // Update displayed markers when props change, but defer if interacting
+  // Exception: hoveredId changes should update immediately for responsiveness
   useEffect(() => {
     if (isInteracting.current) {
       pendingUpdate.current = true;
     } else {
-      setDisplayed({ listings, clusters, outliers, selectedId });
+      setDisplayed({ listings, clusters, outliers, selectedId, hoveredId, hoveredClusterId });
     }
-  }, [listings, clusters, outliers, selectedId]);
+  }, [listings, clusters, outliers, selectedId, hoveredId, hoveredClusterId]);
 
   const validListings = displayed.listings.filter((l) => l.latitude && l.longitude);
 
@@ -299,6 +356,7 @@ function DeferredMarkers({
           center={cluster.center}
           count={cluster.count}
           label={cluster.label}
+          isHovered={cluster.id === displayed.hoveredClusterId}
           onClick={() => onClusterClick?.(cluster)}
         />
       ))}
@@ -308,15 +366,42 @@ function DeferredMarkers({
         <Marker
           key={`outlier-${outlier.id}`}
           position={[outlier.lat, outlier.lng]}
-          icon={createOutlierIcon(outlier)}
+          icon={createOutlierIcon(outlier, outlier.id === displayed.hoveredId)}
           eventHandlers={{
             click: () => onSelect(outlier as unknown as Listing),
           }}
         >
           <Popup>
-            <div className="text-sm">
-              <div className="font-semibold">{outlier.address}</div>
-              <div className="text-gray-600">${outlier.price.toLocaleString()}</div>
+            <div className="text-sm min-w-[180px]">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{outlier.address}</div>
+                  <div className="text-green-600 font-medium">${outlier.price.toLocaleString()}</div>
+                </div>
+                {outlier.url && (
+                  <a
+                    href={outlier.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 flex-shrink-0"
+                    title="View on Realtor"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                      <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                    </svg>
+                  </a>
+                )}
+              </div>
+              {outlier.amenity_score != null && (
+                <div className="mt-1 flex items-center gap-1">
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium text-white ${getScoreBadgeSolidClasses(outlier.amenity_score)}`}>
+                    {outlier.amenity_score}
+                  </span>
+                  <span className="text-xs text-gray-500">score</span>
+                </div>
+              )}
             </div>
           </Popup>
         </Marker>
@@ -327,20 +412,42 @@ function DeferredMarkers({
         <Marker
           key={listing.id}
           position={[listing.latitude!, listing.longitude!]}
-          icon={createMarkerIcon(listing, listing.id === displayed.selectedId)}
+          icon={createMarkerIcon(listing, listing.id === displayed.selectedId, listing.id === displayed.hoveredId)}
           eventHandlers={{
             click: () => onSelect(listing),
           }}
         >
           <Popup>
-            <div className="text-sm">
-              <div className="font-semibold">{listing.address}</div>
-              <div className="text-gray-600">
-                ${listing.price.toLocaleString()}
+            <div className="text-sm min-w-[180px]">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{listing.address}</div>
+                  <div className="text-green-600 font-medium">
+                    ${listing.price.toLocaleString()}
+                  </div>
+                </div>
+                {listing.url && (
+                  <a
+                    href={listing.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 flex-shrink-0"
+                    title="View on Realtor"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
+                      <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
+                    </svg>
+                  </a>
+                )}
               </div>
-              {listing.amenity_score && (
-                <div className="text-xs text-gray-500">
-                  Score: {listing.amenity_score.amenity_score}
+              {listing.amenity_score?.amenity_score != null && (
+                <div className="mt-1 flex items-center gap-1">
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-medium text-white ${getScoreBadgeSolidClasses(listing.amenity_score.amenity_score)}`}>
+                    {listing.amenity_score.amenity_score}
+                  </span>
+                  <span className="text-xs text-gray-500">score</span>
                 </div>
               )}
             </div>
@@ -356,6 +463,9 @@ export default function Map({
   clusters = [],
   outliers = [],
   selectedId,
+  hoveredId,
+  hoveredClusterId,
+  focusCluster,
   onSelect,
   onBoundsChange,
   onClusterClick,
@@ -371,11 +481,14 @@ export default function Map({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       {onBoundsChange && <MapBoundsTracker onBoundsChange={onBoundsChange} />}
+      <ClusterFocus cluster={focusCluster ?? null} />
       <DeferredMarkers
         listings={listings}
         clusters={clusters}
         outliers={outliers}
         selectedId={selectedId}
+        hoveredId={hoveredId}
+        hoveredClusterId={hoveredClusterId}
         onSelect={onSelect}
         onClusterClick={onClusterClick}
       />
