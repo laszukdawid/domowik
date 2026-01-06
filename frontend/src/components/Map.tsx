@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, CircleMar
 import L from 'leaflet';
 import type { Listing, BBox, Cluster, ClusterOutlier } from '../types';
 import { getMarkerColor, getScoreBadgeSolidClasses } from '../utils/scoreColors';
+import { POILayer } from './POILayer';
 
 // Icon cache to prevent recreating icons on every render
 const iconCache: Record<string, L.DivIcon> = {};
@@ -214,6 +215,7 @@ interface MapProps {
   hoveredId?: number | null;
   hoveredClusterId?: string | null;
   focusCluster?: Cluster | null;
+  selectedPoiIds?: number[];
   onSelect: (listing: Listing | ClusterOutlier) => void;
   onBoundsChange?: (bbox: BBox, zoom: number) => void;
   onClusterClick?: (cluster: Cluster) => void;
@@ -466,6 +468,7 @@ export default function Map({
   hoveredId,
   hoveredClusterId,
   focusCluster,
+  selectedPoiIds,
   onSelect,
   onBoundsChange,
   onClusterClick,
@@ -492,6 +495,9 @@ export default function Map({
         onSelect={onSelect}
         onClusterClick={onClusterClick}
       />
+      {selectedPoiIds && selectedPoiIds.length > 0 && (
+        <POILayer poiIds={selectedPoiIds} />
+      )}
     </MapContainer>
   );
 }
