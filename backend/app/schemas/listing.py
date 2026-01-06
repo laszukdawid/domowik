@@ -35,6 +35,7 @@ class ListingResponse(BaseModel):
     is_favorite: bool = False
     is_hidden: bool = False
     is_new: bool = False
+    poi_ids: list[int] = []
 
     class Config:
         from_attributes = True

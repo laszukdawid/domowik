@@ -30,6 +30,8 @@ def listing_to_response(
     if listing.amenity_score:
         amenity = AmenityScoreResponse.model_validate(listing.amenity_score)
 
+    poi_ids = [link.poi_id for link in listing.poi_links] if listing.poi_links else []
+
     return ListingResponse(
         id=listing.id,
         mls_id=listing.mls_id,
@@ -50,6 +52,7 @@ def listing_to_response(
         is_favorite=user_status.is_favorite if user_status else False,
         is_hidden=user_status.is_hidden if user_status else False,
         is_new=last_visit is not None and listing.first_seen > last_visit,
+        poi_ids=poi_ids,
     )
 
 
@@ -79,7 +82,7 @@ def build_listings_query(
             ),
         )
         .outerjoin(AmenityScore, AmenityScore.listing_id == Listing.id)
-        .options(selectinload(Listing.amenity_score))
+        .options(selectinload(Listing.amenity_score), selectinload(Listing.poi_links))
         .where(Listing.status == "active")
     )
 
@@ -246,7 +249,7 @@ async def get_listing(
                 UserListingStatus.user_id == user.id,
             ),
         )
-        .options(selectinload(Listing.amenity_score))
+        .options(selectinload(Listing.amenity_score), selectinload(Listing.poi_links))
         .where(Listing.id == listing_id)
     )
 
