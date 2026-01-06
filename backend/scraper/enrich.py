@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.config import settings
 from app.models import Listing, AmenityScore
+from app.services.poi_service import upsert_pois_for_listing
 from scraper.enricher import AmenityEnricher
 
 
@@ -44,7 +45,12 @@ async def enrich_listing(session, listing: Listing, enricher: AmenityEnricher) -
             amenity_score=data.amenity_score,
         )
         session.add(amenity_score)
-        print(f"  Score: {data.amenity_score}")
+
+        # Upsert POIs and create listing links
+        all_pois = data.parks + data.coffee_shops + data.dog_parks
+        poi_ids = await upsert_pois_for_listing(session, listing.id, all_pois)
+
+        print(f"  Score: {data.amenity_score}, POIs: {len(poi_ids)}")
         return True
 
     except Exception as e:
