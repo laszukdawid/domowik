@@ -1,4 +1,4 @@
-import type { Listing, Note, Preferences, ListingFilters, ClusterResponse } from '../types';
+import type { Listing, Note, Preferences, ListingFilters, ClusterResponse, POI } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -239,6 +239,16 @@ class ApiClient {
     });
 
     return this.request<ClusterResponse>(`/api/clusters?${params.toString()}`, {}, signal);
+  }
+
+  // POIs
+  async getPOIs(ids: number[]): Promise<POI[]> {
+    if (ids.length === 0) return [];
+
+    const params = new URLSearchParams();
+    ids.forEach(id => params.append('ids', String(id)));
+
+    return this.request<POI[]>(`/api/pois?${params.toString()}`);
   }
 }
 
