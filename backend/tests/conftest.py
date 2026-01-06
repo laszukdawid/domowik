@@ -105,20 +105,29 @@ def realtor_ca_search_response(realtor_ca_listing_standard, realtor_ca_listing_m
 
 @pytest.fixture
 def overpass_parks_response() -> dict:
-    """Mock Overpass API response for parks query."""
+    """Mock Overpass API response for parks query with geometry."""
     return {
         "elements": [
             {
                 "type": "way",
                 "id": 123456,
-                "center": {"lat": 49.2830, "lon": -123.1200},
                 "tags": {"name": "Stanley Park", "leisure": "park"},
+                "geometry": [
+                    {"lat": 49.2830, "lon": -123.1200},
+                    {"lat": 49.2835, "lon": -123.1190},
+                    {"lat": 49.2825, "lon": -123.1185},
+                    {"lat": 49.2820, "lon": -123.1195},
+                ],
             },
             {
                 "type": "way",
                 "id": 123457,
-                "center": {"lat": 49.2850, "lon": -123.1250},
                 "tags": {"name": "Victory Square", "leisure": "park"},
+                "geometry": [
+                    {"lat": 49.2850, "lon": -123.1250},
+                    {"lat": 49.2855, "lon": -123.1240},
+                    {"lat": 49.2845, "lon": -123.1235},
+                ],
             },
         ]
     }
@@ -149,14 +158,18 @@ def overpass_coffee_shops_response() -> dict:
 
 @pytest.fixture
 def overpass_dog_parks_response() -> dict:
-    """Mock Overpass API response for dog parks query."""
+    """Mock Overpass API response for dog parks query with geometry."""
     return {
         "elements": [
             {
                 "type": "way",
                 "id": 456789,
-                "center": {"lat": 49.2900, "lon": -123.1100},
                 "tags": {"name": "Canine Commons", "leisure": "dog_park"},
+                "geometry": [
+                    {"lat": 49.2900, "lon": -123.1100},
+                    {"lat": 49.2905, "lon": -123.1090},
+                    {"lat": 49.2895, "lon": -123.1085},
+                ],
             },
         ]
     }
