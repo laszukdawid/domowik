@@ -3,6 +3,7 @@ from app.models.user import User, UserPreferences
 from app.models.listing import Listing
 from app.models.amenity import AmenityScore
 from app.models.note import UserNote, UserListingStatus
+from app.models.poi import PointOfInterest, ListingPOI
 
 __all__ = [
     "Base",
@@ -15,4 +16,6 @@ __all__ = [
     "AmenityScore",
     "UserNote",
     "UserListingStatus",
+    "PointOfInterest",
+    "ListingPOI",
 ]
