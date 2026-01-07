@@ -1,16 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { ListingFilters, Listing } from '../types';
+import type { FilterGroups, Listing } from '../types';
 
 /**
- * Hook for streaming listings with progressive loading
+ * Hook for streaming listings with progressive loading using filter groups
  * Returns listings as they arrive from the server for a snappier UX
  *
  * Only fetches when bbox is provided to avoid fetching all listings.
  * Includes internal debouncing to prevent rapid refetches during map navigation.
  */
-export function useListings(filters: ListingFilters = {}) {
+export function useListings(filterGroups: FilterGroups, bbox?: string) {
   const [streamedListings, setStreamedListings] = useState<Listing[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamError, setStreamError] = useState<Error | null>(null);
@@ -19,11 +19,11 @@ export function useListings(filters: ListingFilters = {}) {
   const lastFetchedKeyRef = useRef<string | null>(null);
 
   // Serialize filters to a stable string for comparison
-  const filtersKey = JSON.stringify(filters);
+  const filtersKey = JSON.stringify({ filterGroups, bbox });
 
   useEffect(() => {
     // Don't fetch if no bbox provided - would fetch all listings
-    if (!filters.bbox) {
+    if (!bbox) {
       // Clear any pending debounce
       if (debounceTimeoutRef.current) {
         clearTimeout(debounceTimeoutRef.current);
@@ -62,13 +62,12 @@ export function useListings(filters: ListingFilters = {}) {
 
       setIsStreaming(true);
       setStreamError(null);
-      // Keep previous results visible while new ones load
-      // setStreamedListings([]); // Don't clear - show stale data until new arrives
 
       let isFirstChunk = true;
 
-      api.streamListings(
-        filters,
+      api.streamListingsWithGroups(
+        filterGroups,
+        bbox,
         (chunk) => {
           // Clear previous results only on first chunk of new data
           if (isFirstChunk) {
@@ -108,18 +107,6 @@ export function useListings(filters: ListingFilters = {}) {
     isStreaming,
     error: streamError,
   };
-}
-
-/**
- * Legacy hook using React Query (non-streaming)
- * Kept for compatibility if needed
- */
-export function useListingsLegacy(filters: ListingFilters = {}) {
-  return useQuery({
-    queryKey: ['listings', filters],
-    queryFn: () => api.getListings(filters),
-    placeholderData: (previousData) => previousData, // Keep showing previous results while fetching
-  });
 }
 
 export function useListing(id: number) {

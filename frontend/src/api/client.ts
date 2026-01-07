@@ -1,4 +1,4 @@
-import type { Listing, Note, Preferences, ListingFilters, ClusterResponse, POI } from '../types';
+import type { Listing, Note, Preferences, ListingFilters, ClusterResponse, POI, FilterGroups } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -176,6 +176,79 @@ class ApiClient {
     return this.request<Listing>(`/api/listings/${id}`);
   }
 
+  /**
+   * Stream listings with OR filter groups in chunks for progressive loading
+   */
+  async streamListingsWithGroups(
+    filterGroups: FilterGroups,
+    bbox?: string,
+    onChunk?: (listings: Listing[]) => void,
+    onComplete?: () => void,
+    onError?: (error: Error) => void
+  ): Promise<void> {
+    const params = new URLSearchParams();
+    if (bbox) {
+      params.append('bbox', bbox);
+    }
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/listings/stream-groups${params.toString() ? `?${params.toString()}` : ''}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(filterGroups),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          onComplete?.();
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const chunk = JSON.parse(line) as Listing[];
+              onChunk?.(chunk);
+            } catch (e) {
+              console.error('Failed to parse chunk:', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      onError?.(error instanceof Error ? error : new Error('Streaming failed'));
+    }
+  }
+
   // Status
   async updateStatus(listingId: number, status: { is_favorite?: boolean; is_hidden?: boolean }) {
     return this.request<{ is_favorite: boolean; is_hidden: boolean }>(
@@ -239,6 +312,41 @@ class ApiClient {
     });
 
     return this.request<ClusterResponse>(`/api/clusters?${params.toString()}`, {}, signal);
+  }
+
+  async getClustersWithGroups(
+    bbox: string,
+    zoom: number,
+    filterGroups: FilterGroups,
+    signal?: AbortSignal
+  ): Promise<ClusterResponse> {
+    const params = new URLSearchParams();
+    params.append('bbox', bbox);
+    params.append('zoom', String(zoom));
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(
+      `${API_URL}/api/clusters/groups?${params.toString()}`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(filterGroups),
+        signal,
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Request failed' }));
+      throw new Error(error.detail || 'Request failed');
+    }
+
+    return response.json();
   }
 
   // POIs

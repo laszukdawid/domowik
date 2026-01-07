@@ -1,16 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import { api } from '../api/client';
-import type { ListingFilters, BBox, ClusterResponse } from '../types';
+import type { FilterGroups, BBox, ClusterResponse } from '../types';
 
 interface UseClusterParams {
   bbox: BBox | null;
   zoom: number;
-  filters: ListingFilters;
+  filterGroups: FilterGroups;
   enabled?: boolean;
 }
 
-export function useClusters({ bbox, zoom, filters, enabled = true }: UseClusterParams) {
+export function useClusters({ bbox, zoom, filterGroups, enabled = true }: UseClusterParams) {
   const queryClient = useQueryClient();
   const previousQueryKeyRef = useRef<string | null>(null);
 
@@ -19,7 +19,7 @@ export function useClusters({ bbox, zoom, filters, enabled = true }: UseClusterP
     : null;
 
   // Serialize filters to stable string for queryKey
-  const filtersKey = JSON.stringify(filters);
+  const filtersKey = JSON.stringify(filterGroups);
   const currentQueryKey = `clusters-${bboxString}-${zoom}-${filtersKey}`;
 
   // Cancel previous query when a new one starts
@@ -36,7 +36,7 @@ export function useClusters({ bbox, zoom, filters, enabled = true }: UseClusterP
 
   return useQuery<ClusterResponse>({
     queryKey: ['clusters', bboxString, zoom, filtersKey],
-    queryFn: ({ signal }) => api.getClusters(bboxString!, zoom, filters, signal),
+    queryFn: ({ signal }) => api.getClustersWithGroups(bboxString!, zoom, filterGroups, signal),
     enabled: enabled && !!bboxString,
     staleTime: 30000, // 30 seconds - clusters don't change often
     placeholderData: (prev) => prev, // Keep previous while fetching
