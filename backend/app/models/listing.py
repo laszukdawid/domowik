@@ -39,8 +39,14 @@ class Listing(Base):
     user_statuses: Mapped[list["UserListingStatus"]] = relationship(
         back_populates="listing"
     )
+    poi_links: Mapped[list["ListingPOI"]] = relationship(
+        "ListingPOI",
+        primaryjoin="Listing.id == ListingPOI.listing_id",
+        foreign_keys="ListingPOI.listing_id",
+    )
 
 
 # Forward references
 from app.models.amenity import AmenityScore  # noqa: E402, F401
 from app.models.note import UserNote, UserListingStatus  # noqa: E402, F401
+from app.models.poi import ListingPOI  # noqa: E402, F401

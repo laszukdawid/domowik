@@ -138,6 +138,7 @@ export default function Dashboard() {
             hoveredId={hoveredListingId}
             hoveredClusterId={hoveredClusterId}
             focusCluster={expandedCluster}
+            selectedPoiIds={selectedListing?.poi_ids}
             onSelect={handleSelect}
             onBoundsChange={handleBoundsChange}
             onClusterClick={handleClusterClick}

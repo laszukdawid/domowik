@@ -28,6 +28,17 @@ export interface Listing {
   is_favorite: boolean;
   is_hidden: boolean;
   is_new: boolean;
+  poi_ids: number[];
+}
+
+export type POIType = 'coffee_shop' | 'dog_park' | 'park' | 'garden' | 'playground';
+
+export interface POI {
+  id: number;
+  osm_id: number;
+  type: POIType;
+  name: string | null;
+  geometry: GeoJSON.Point | GeoJSON.Polygon;
 }
 
 export interface Note {

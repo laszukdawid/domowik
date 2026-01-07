@@ -121,38 +121,81 @@ class AmenityEnricher:
             print(f"Overpass query error: {e}")
             return []
 
+    def _extract_geometry(
+        self, el: dict
+    ) -> tuple[dict | None, float | None, float | None]:
+        """
+        Extract geometry and centroid from an Overpass element.
+
+        Returns:
+            Tuple of (geometry_dict, centroid_lat, centroid_lng)
+        """
+        el_type = el.get("type")
+        geometry = None
+        centroid_lat, centroid_lng = None, None
+
+        if el_type == "way" and "geometry" in el:
+            # Way with geometry - build polygon coordinates
+            coords = [[pt["lon"], pt["lat"]] for pt in el["geometry"]]
+            if coords and coords[0] != coords[-1]:
+                coords.append(coords[0])  # Close polygon
+            geometry = {"type": "Polygon", "coordinates": [coords]}
+            # Calculate centroid
+            lats = [pt["lat"] for pt in el["geometry"]]
+            lngs = [pt["lon"] for pt in el["geometry"]]
+            centroid_lat = sum(lats) / len(lats)
+            centroid_lng = sum(lngs) / len(lngs)
+        elif el_type == "relation" and "bounds" in el:
+            # Relation - use bounds center as approximation
+            bounds = el["bounds"]
+            centroid_lat = (bounds["minlat"] + bounds["maxlat"]) / 2
+            centroid_lng = (bounds["minlon"] + bounds["maxlon"]) / 2
+            geometry = {"type": "Point", "coordinates": [centroid_lng, centroid_lat]}
+        elif el_type == "node":
+            centroid_lat, centroid_lng = el.get("lat"), el.get("lon")
+            if centroid_lat and centroid_lng:
+                geometry = {"type": "Point", "coordinates": [centroid_lng, centroid_lat]}
+        elif "center" in el:
+            center = el["center"]
+            centroid_lat, centroid_lng = center["lat"], center["lon"]
+            geometry = {"type": "Point", "coordinates": [centroid_lng, centroid_lat]}
+
+        return geometry, centroid_lat, centroid_lng
+
     async def get_nearby_parks(
         self, lat: float, lng: float, radius_m: int = 1000
     ) -> list[dict]:
-        """Get parks within radius."""
+        """Get parks within radius with full geometry."""
         query = f"""
-        [out:json][timeout:5];
+        [out:json][timeout:10];
         (
           way["leisure"="park"](around:{radius_m},{lat},{lng});
           relation["leisure"="park"](around:{radius_m},{lat},{lng});
           way["leisure"="garden"](around:{radius_m},{lat},{lng});
+          way["leisure"="playground"](around:{radius_m},{lat},{lng});
         );
-        out center;
+        out body geom;
         """
 
         elements = await self._query_overpass(query)
         parks = []
 
         for el in elements:
-            center = el.get("center", {})
-            el_lat = center.get("lat") or el.get("lat")
-            el_lng = center.get("lon") or el.get("lon")
+            osm_id = el.get("id")
+            geometry, centroid_lat, centroid_lng = self._extract_geometry(el)
 
-            if el_lat and el_lng:
-                distance = haversine_distance(lat, lng, el_lat, el_lng)
-                parks.append(
-                    {
-                        "name": el.get("tags", {}).get("name", "Unnamed Park"),
-                        "distance_m": int(distance),
-                        "lat": el_lat,
-                        "lng": el_lng,
-                    }
-                )
+            if centroid_lat and centroid_lng and osm_id and geometry:
+                distance = haversine_distance(lat, lng, centroid_lat, centroid_lng)
+                leisure_type = el.get("tags", {}).get("leisure", "park")
+                parks.append({
+                    "osm_id": osm_id,
+                    "name": el.get("tags", {}).get("name", f"Unnamed {leisure_type.title()}"),
+                    "type": leisure_type,  # park, garden, playground
+                    "distance_m": int(distance),
+                    "geometry": geometry,
+                    "centroid_lat": centroid_lat,
+                    "centroid_lng": centroid_lng,
+                })
 
         return sorted(parks, key=lambda x: x["distance_m"])
 
@@ -174,20 +217,20 @@ class AmenityEnricher:
         cafes = []
 
         for el in elements:
-            center = el.get("center", {})
-            el_lat = center.get("lat") or el.get("lat")
-            el_lng = center.get("lon") or el.get("lon")
+            osm_id = el.get("id")
+            geometry, centroid_lat, centroid_lng = self._extract_geometry(el)
 
-            if el_lat and el_lng:
-                distance = haversine_distance(lat, lng, el_lat, el_lng)
-                cafes.append(
-                    {
-                        "name": el.get("tags", {}).get("name", "Unnamed Cafe"),
-                        "distance_m": int(distance),
-                        "lat": el_lat,
-                        "lng": el_lng,
-                    }
-                )
+            if centroid_lat and centroid_lng and osm_id and geometry:
+                distance = haversine_distance(lat, lng, centroid_lat, centroid_lng)
+                cafes.append({
+                    "osm_id": osm_id,
+                    "name": el.get("tags", {}).get("name", "Unnamed Cafe"),
+                    "type": "coffee_shop",
+                    "distance_m": int(distance),
+                    "geometry": geometry,
+                    "centroid_lat": centroid_lat,
+                    "centroid_lng": centroid_lng,
+                })
 
         return sorted(cafes, key=lambda x: x["distance_m"])
 
@@ -201,27 +244,27 @@ class AmenityEnricher:
           node["leisure"="dog_park"](around:{radius_m},{lat},{lng});
           way["leisure"="dog_park"](around:{radius_m},{lat},{lng});
         );
-        out center;
+        out body geom;
         """
 
         elements = await self._query_overpass(query)
         dog_parks = []
 
         for el in elements:
-            center = el.get("center", {})
-            el_lat = center.get("lat") or el.get("lat")
-            el_lng = center.get("lon") or el.get("lon")
+            osm_id = el.get("id")
+            geometry, centroid_lat, centroid_lng = self._extract_geometry(el)
 
-            if el_lat and el_lng:
-                distance = haversine_distance(lat, lng, el_lat, el_lng)
-                dog_parks.append(
-                    {
-                        "name": el.get("tags", {}).get("name", "Unnamed Dog Park"),
-                        "distance_m": int(distance),
-                        "lat": el_lat,
-                        "lng": el_lng,
-                    }
-                )
+            if centroid_lat and centroid_lng and osm_id and geometry:
+                distance = haversine_distance(lat, lng, centroid_lat, centroid_lng)
+                dog_parks.append({
+                    "osm_id": osm_id,
+                    "name": el.get("tags", {}).get("name", "Unnamed Dog Park"),
+                    "type": "dog_park",
+                    "distance_m": int(distance),
+                    "geometry": geometry,
+                    "centroid_lat": centroid_lat,
+                    "centroid_lng": centroid_lng,
+                })
 
         return sorted(dog_parks, key=lambda x: x["distance_m"])
 
