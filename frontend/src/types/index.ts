@@ -80,6 +80,22 @@ export interface ListingFilters {
   bbox?: string;
 }
 
+export interface FilterGroup {
+  min_price?: number;
+  max_price?: number;
+  min_bedrooms?: number;
+  min_sqft?: number;
+  cities?: string[];
+  property_types?: string[];
+  min_score?: number;
+}
+
+export interface FilterGroups {
+  groups: FilterGroup[];
+  include_hidden?: boolean;
+  favorites_only?: boolean;
+}
+
 export interface ClusterStats {
   price_min: number;
   price_max: number;

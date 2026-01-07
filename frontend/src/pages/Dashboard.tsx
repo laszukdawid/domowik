@@ -11,7 +11,7 @@ import FilterBar from '../components/FilterBar';
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
-  const [filters, setFilters] = usePersistedFilters();
+  const [filterGroups, setFilterGroups] = usePersistedFilters();
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [selectedOutlierId, setSelectedOutlierId] = useState<number | null>(null);
   const [mapBounds, setMapBounds] = useState<{ bbox: BBox; zoom: number } | null>(null);
@@ -37,7 +37,7 @@ export default function Dashboard() {
   } = useClusters({
     bbox: mapBounds?.bbox ?? null,
     zoom: mapBounds?.zoom ?? 11,
-    filters,
+    filterGroups,
     enabled: !!mapBounds,
   });
 
@@ -54,10 +54,10 @@ export default function Dashboard() {
       ? `${mapBounds.bbox.minLng},${mapBounds.bbox.minLat},${mapBounds.bbox.maxLng},${mapBounds.bbox.maxLat}`
       : undefined;
 
-  const { data: listings = [], isStreaming } = useListings({
-    ...filters,
-    bbox: shouldFetchListings ? listingsBbox : undefined,
-  });
+  const { data: listings = [], isStreaming } = useListings(
+    filterGroups,
+    shouldFetchListings ? listingsBbox : undefined
+  );
 
   const clusters = clusterData?.clusters ?? [];
   const outliers = clusterData?.outliers ?? [];
@@ -115,7 +115,7 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          <FilterBar filters={filters} onChange={setFilters} />
+          <FilterBar filterGroups={filterGroups} onChange={setFilterGroups} />
           <span className="text-sm text-gray-600">{user?.name}</span>
           <button
             onClick={logout}

@@ -51,3 +51,21 @@ class ListingFilters(BaseModel):
     max_park_distance: int | None = None
     include_hidden: bool = False
     favorites_only: bool = False
+
+
+class FilterGroup(BaseModel):
+    """A single filter group with AND conditions"""
+    min_price: int | None = None
+    max_price: int | None = None
+    min_bedrooms: int | None = None
+    min_sqft: int | None = None
+    cities: list[str] | None = None
+    property_types: list[str] | None = None
+    min_score: int | None = None
+
+
+class FilterGroups(BaseModel):
+    """Multiple filter groups combined with OR logic"""
+    groups: list[FilterGroup]
+    include_hidden: bool = False
+    favorites_only: bool = False
