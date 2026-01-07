@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, CircleMarker } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, CircleMarker, Polygon, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import type { Listing, BBox, Cluster, ClusterOutlier } from '../types';
 import { getMarkerColor, getScoreBadgeSolidClasses } from '../utils/scoreColors';
@@ -219,6 +219,10 @@ interface MapProps {
   onSelect: (listing: Listing | ClusterOutlier) => void;
   onBoundsChange?: (bbox: BBox, zoom: number) => void;
   onClusterClick?: (cluster: Cluster) => void;
+  isDrawing?: boolean;
+  currentPolygon?: number[][];
+  polygons?: number[][][];
+  onMapClick?: (latlng: { lat: number; lng: number }) => void;
 }
 
 /**
@@ -460,6 +464,74 @@ function DeferredMarkers({
   );
 }
 
+/**
+ * Component to handle map clicks for polygon drawing
+ */
+function PolygonDrawHandler({ isDrawing, onMapClick }: { isDrawing: boolean; onMapClick?: (latlng: { lat: number; lng: number }) => void }) {
+  useMapEvents({
+    click: (e) => {
+      if (isDrawing && onMapClick) {
+        onMapClick(e.latlng);
+      }
+    },
+  });
+  return null;
+}
+
+/**
+ * Component to display completed and in-progress polygons
+ */
+function PolygonDisplay({ polygons, currentPolygon }: { polygons?: number[][][]; currentPolygon?: number[][] }) {
+  return (
+    <>
+      {/* Display completed polygons */}
+      {polygons && polygons.map((polygon, idx) => {
+        const positions = polygon.map(([lng, lat]) => [lat, lng] as [number, number]);
+        return (
+          <Polygon
+            key={`polygon-${idx}`}
+            positions={positions}
+            pathOptions={{
+              color: '#3B82F6',
+              fillColor: '#3B82F6',
+              fillOpacity: 0.1,
+              weight: 2,
+            }}
+          />
+        );
+      })}
+
+      {/* Display current polygon being drawn */}
+      {currentPolygon && currentPolygon.length > 0 && (
+        <>
+          <Polyline
+            positions={currentPolygon.map(([lng, lat]) => [lat, lng] as [number, number])}
+            pathOptions={{
+              color: '#10B981',
+              weight: 3,
+              dashArray: '10, 10',
+            }}
+          />
+          {/* Show markers for polygon vertices */}
+          {currentPolygon.map(([lng, lat], idx) => (
+            <CircleMarker
+              key={`vertex-${idx}`}
+              center={[lat, lng]}
+              radius={5}
+              pathOptions={{
+                color: '#10B981',
+                fillColor: '#10B981',
+                fillOpacity: 0.8,
+                weight: 2,
+              }}
+            />
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
 export default function Map({
   listings,
   clusters = [],
@@ -472,6 +544,10 @@ export default function Map({
   onSelect,
   onBoundsChange,
   onClusterClick,
+  isDrawing = false,
+  currentPolygon = [],
+  polygons = [],
+  onMapClick,
 }: MapProps) {
   return (
     <MapContainer
@@ -485,6 +561,8 @@ export default function Map({
       />
       {onBoundsChange && <MapBoundsTracker onBoundsChange={onBoundsChange} />}
       <ClusterFocus cluster={focusCluster ?? null} />
+      <PolygonDrawHandler isDrawing={isDrawing} onMapClick={onMapClick} />
+      <PolygonDisplay polygons={polygons} currentPolygon={currentPolygon} />
       <DeferredMarkers
         listings={listings}
         clusters={clusters}

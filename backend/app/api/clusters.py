@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within
+from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within, ST_MakePolygon, ST_MakeLine, ST_Point, ST_Contains
 from sklearn.cluster import DBSCAN
 import numpy as np
 
@@ -119,8 +119,9 @@ def build_lightweight_query_with_groups(
     include_hidden: bool = False,
     favorites_only: bool = False,
     bbox: str | None = None,
+    polygons: list[list[list[float]]] | None = None,
 ):
-    """Build a lightweight query for clustering with OR filter groups."""
+    """Build a lightweight query for clustering with OR filter groups and polygon filtering."""
     query = (
         select(
             Listing.id,
@@ -165,6 +166,36 @@ def build_lightweight_query_with_groups(
         )
     if favorites_only:
         query = query.where(UserListingStatus.is_favorite == True)  # noqa: E712
+
+    # Apply polygon filtering (properties must be within ANY of the polygons)
+    if polygons:
+        try:
+            polygon_conditions = []
+            for polygon_coords in polygons:
+                if len(polygon_coords) < 3:
+                    continue  # Need at least 3 points for a polygon
+
+                # Ensure polygon is closed (first and last point are the same)
+                if polygon_coords[0] != polygon_coords[-1]:
+                    polygon_coords = polygon_coords + [polygon_coords[0]]
+
+                # Create points from coordinates
+                points = [ST_Point(lng, lat, 4326) for lng, lat in polygon_coords]
+
+                # Create a linestring from the points
+                linestring = ST_MakeLine(*points)
+
+                # Create a polygon from the linestring
+                polygon = ST_MakePolygon(linestring)
+
+                # Add condition: listing location must be within this polygon
+                polygon_conditions.append(ST_Contains(polygon, Listing.location))
+
+            # Combine polygon conditions with OR (property can be in ANY polygon)
+            if polygon_conditions:
+                query = query.where(or_(*polygon_conditions))
+        except Exception as e:
+            logger.warning(f"Invalid polygon data: {e}")
 
     if bbox:
         try:
@@ -387,7 +418,7 @@ async def get_clusters_with_groups(
     # Fetch listings in bbox using lightweight query with groups
     query = build_lightweight_query_with_groups(
         user, filter_groups.groups, filter_groups.include_hidden,
-        filter_groups.favorites_only, bbox
+        filter_groups.favorites_only, bbox, filter_groups.polygons
     )
 
     result = await db.execute(query)

@@ -18,6 +18,8 @@ export default function Dashboard() {
   const [expandedCluster, setExpandedCluster] = useState<Cluster | null>(null);
   const [hoveredListingId, setHoveredListingId] = useState<number | null>(null);
   const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
+  const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
+  const [currentPolygon, setCurrentPolygon] = useState<number[][]>([]);
 
   // Fetch individual listing when an outlier is clicked
   const { data: fetchedListing } = useListing(selectedOutlierId ?? 0);
@@ -96,6 +98,34 @@ export default function Dashboard() {
     setExpandedCluster(null);
   };
 
+  const handleStartDrawing = () => {
+    setIsDrawingPolygon(true);
+    setCurrentPolygon([]);
+  };
+
+  const handleMapClick = useCallback((latlng: { lat: number; lng: number }) => {
+    if (isDrawingPolygon) {
+      setCurrentPolygon(prev => [...prev, [latlng.lng, latlng.lat]]);
+    }
+  }, [isDrawingPolygon]);
+
+  const handleFinishPolygon = () => {
+    if (currentPolygon.length >= 3) {
+      const existingPolygons = filterGroups.polygons || [];
+      setFilterGroups({
+        ...filterGroups,
+        polygons: [...existingPolygons, currentPolygon]
+      });
+    }
+    setIsDrawingPolygon(false);
+    setCurrentPolygon([]);
+  };
+
+  const handleCancelDrawing = () => {
+    setIsDrawingPolygon(false);
+    setCurrentPolygon([]);
+  };
+
   // Filter listings for expanded cluster
   const expandedListings = expandedCluster
     ? listings.filter(l => expandedCluster.listing_ids.includes(l.id))
@@ -115,7 +145,38 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex items-center gap-4">
-          <FilterBar filterGroups={filterGroups} onChange={setFilterGroups} />
+          {isDrawingPolygon ? (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-blue-600 font-medium">
+                  Drawing polygon ({currentPolygon.length} points)
+                </span>
+                <button
+                  onClick={handleFinishPolygon}
+                  disabled={currentPolygon.length < 3}
+                  className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Finish
+                </button>
+                <button
+                  onClick={handleCancelDrawing}
+                  className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={handleStartDrawing}
+                className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+              >
+                Draw Polygon
+              </button>
+              <FilterBar filterGroups={filterGroups} onChange={setFilterGroups} />
+            </>
+          )}
           <span className="text-sm text-gray-600">{user?.name}</span>
           <button
             onClick={logout}
@@ -142,6 +203,10 @@ export default function Dashboard() {
             onSelect={handleSelect}
             onBoundsChange={handleBoundsChange}
             onClusterClick={handleClusterClick}
+            isDrawing={isDrawingPolygon}
+            currentPolygon={currentPolygon}
+            polygons={filterGroups.polygons}
+            onMapClick={handleMapClick}
           />
         </div>
 

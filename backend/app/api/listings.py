@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within
+from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within, ST_MakePolygon, ST_MakeLine, ST_Point, ST_Contains
 import json
 
 logger = logging.getLogger(__name__)
@@ -163,8 +163,9 @@ def build_listings_query_with_groups(
     include_hidden: bool = False,
     favorites_only: bool = False,
     bbox: str | None = None,
+    polygons: list[list[list[float]]] | None = None,
 ):
-    """Build the listings query with OR filter groups"""
+    """Build the listings query with OR filter groups and polygon filtering"""
     query = (
         select(
             Listing, UserListingStatus, ST_X(Listing.location), ST_Y(Listing.location)
@@ -202,6 +203,36 @@ def build_listings_query_with_groups(
         )
     if favorites_only:
         query = query.where(UserListingStatus.is_favorite == True)  # noqa: E712
+
+    # Apply polygon filtering (properties must be within ANY of the polygons)
+    if polygons:
+        try:
+            polygon_conditions = []
+            for polygon_coords in polygons:
+                if len(polygon_coords) < 3:
+                    continue  # Need at least 3 points for a polygon
+
+                # Ensure polygon is closed (first and last point are the same)
+                if polygon_coords[0] != polygon_coords[-1]:
+                    polygon_coords = polygon_coords + [polygon_coords[0]]
+
+                # Create points from coordinates
+                points = [ST_Point(lng, lat, 4326) for lng, lat in polygon_coords]
+
+                # Create a linestring from the points
+                linestring = ST_MakeLine(*points)
+
+                # Create a polygon from the linestring
+                polygon = ST_MakePolygon(linestring)
+
+                # Add condition: listing location must be within this polygon
+                polygon_conditions.append(ST_Contains(polygon, Listing.location))
+
+            # Combine polygon conditions with OR (property can be in ANY polygon)
+            if polygon_conditions:
+                query = query.where(or_(*polygon_conditions))
+        except Exception as e:
+            logger.warning(f"Invalid polygon data: {e}")
 
     if bbox:
         try:
@@ -344,7 +375,7 @@ async def stream_listings_with_groups(
     async def generate_chunks():
         query = build_listings_query_with_groups(
             user, filter_groups.groups, filter_groups.include_hidden,
-            filter_groups.favorites_only, bbox
+            filter_groups.favorites_only, bbox, filter_groups.polygons
         )
 
         result = await db.execute(query)
@@ -391,7 +422,7 @@ async def get_listings_with_groups(
     """Get all listings with OR filter groups at once"""
     query = build_listings_query_with_groups(
         user, filter_groups.groups, filter_groups.include_hidden,
-        filter_groups.favorites_only, bbox
+        filter_groups.favorites_only, bbox, filter_groups.polygons
     )
 
     result = await db.execute(query)

@@ -94,6 +94,7 @@ export interface FilterGroups {
   groups: FilterGroup[];
   include_hidden?: boolean;
   favorites_only?: boolean;
+  polygons?: number[][][]; // List of polygons, each polygon is a list of [lng, lat] coordinates
 }
 
 export interface ClusterStats {

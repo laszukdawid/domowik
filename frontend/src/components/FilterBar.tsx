@@ -200,6 +200,25 @@ export default function FilterBar({ filterGroups, onChange }: FilterBarProps) {
             </button>
 
             <div className="border-t pt-3 space-y-2">
+              <h4 className="text-xs font-semibold text-gray-700">Polygon Filters</h4>
+              {filterGroups.polygons && filterGroups.polygons.length > 0 ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-600">
+                    {filterGroups.polygons.length} polygon{filterGroups.polygons.length > 1 ? 's' : ''} drawn
+                  </p>
+                  <button
+                    onClick={() => onChange({ ...filterGroups, polygons: [] })}
+                    className="text-xs text-red-600 hover:text-red-800"
+                  >
+                    Clear all polygons
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500">No polygons drawn</p>
+              )}
+            </div>
+
+            <div className="border-t pt-3 space-y-2">
               <h4 className="text-xs font-semibold text-gray-700">Global Filters</h4>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 text-xs">
