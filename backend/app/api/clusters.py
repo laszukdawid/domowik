@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within, ST_MakePolygon, ST_MakeLine, ST_Point, ST_Contains
+from geoalchemy2.functions import ST_X, ST_Y, ST_MakeEnvelope, ST_Within, ST_Contains, ST_GeomFromText
 from sklearn.cluster import DBSCAN
 import numpy as np
 
@@ -179,14 +179,12 @@ def build_lightweight_query_with_groups(
                 if polygon_coords[0] != polygon_coords[-1]:
                     polygon_coords = polygon_coords + [polygon_coords[0]]
 
-                # Create points from coordinates
-                points = [ST_Point(lng, lat, 4326) for lng, lat in polygon_coords]
+                # Build WKT polygon string: POLYGON((lng1 lat1, lng2 lat2, ...))
+                coords_str = ", ".join(f"{lng} {lat}" for lng, lat in polygon_coords)
+                wkt = f"POLYGON(({coords_str}))"
 
-                # Create a linestring from the points
-                linestring = ST_MakeLine(*points)
-
-                # Create a polygon from the linestring
-                polygon = ST_MakePolygon(linestring)
+                # Create polygon from WKT
+                polygon = ST_GeomFromText(wkt, 4326)
 
                 # Add condition: listing location must be within this polygon
                 polygon_conditions.append(ST_Contains(polygon, Listing.location))
