@@ -13,31 +13,57 @@ spec:
         app: overpass
     spec:
       initContainers:
-        - name: init-data
-          image: curlimages/curl:latest
+        # Step 1: Download PBF file if not initialized
+        - name: download-data
+          image: alpine/curl:latest
+          securityContext:
+            runAsUser: 0
           command:
             - /bin/sh
             - -c
             - |
               if [ ! -f /db/initialized ]; then
-                echo "Downloading BC OSM data..."
+                echo "Downloading BC OSM data (PBF format)..."
                 curl -L -o /db/region.osm.pbf https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf
+                touch /db/needs_convert
+              fi
+          volumeMounts:
+            - name: overpass-data
+              mountPath: /db
+        # Step 2: Convert PBF to osm.bz2 using osmium
+        - name: convert-pbf
+          image: wiktorn/overpass-api
+          securityContext:
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -f /db/needs_convert ]; then
+                echo "Converting PBF to osm.bz2 format..."
+                osmium cat -o /db/region.osm.bz2 /db/region.osm.pbf
+                rm /db/region.osm.pbf /db/needs_convert
                 touch /db/needs_init
               fi
           volumeMounts:
             - name: overpass-data
               mountPath: /db
+        # Step 3: Initialize Overpass database
         - name: init-overpass
           image: wiktorn/overpass-api
+          securityContext:
+            runAsUser: 0
           command:
             - /bin/sh
             - -c
             - |
               if [ -f /db/needs_init ]; then
                 echo "Initializing Overpass database..."
-                /app/bin/init_osm3s.sh /db/region.osm.pbf /db/db /app
-                rm /db/needs_init
+                /app/bin/init_osm3s.sh /db/region.osm.bz2 /db/db /app
+                rm /db/needs_init /db/region.osm.bz2
                 touch /db/initialized
+                # Fix permissions so nginx/fcgiwrap can access sockets
+                chmod 755 /db
               fi
           volumeMounts:
             - name: overpass-data
@@ -48,17 +74,30 @@ spec:
           ports:
             - containerPort: 80
           env:
-            - name: OVERPASS_MODE
-              value: run
+            - name: OVERPASS_META
+              value: "yes"
           volumeMounts:
             - name: overpass-data
               mountPath: /db
+          # Use a simple query instead of /api/status (which crashes)
           readinessProbe:
-            httpGet:
-              path: /api/status
-              port: 80
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "curl -sf 'http://localhost/api/interpreter' -d 'data=[out:json];node(1);out;'"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "curl -sf 'http://localhost/api/interpreter' -d 'data=[out:json];node(1);out;'"
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 10
           resources:
             requests:
               memory: "1Gi"

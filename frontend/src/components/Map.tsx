@@ -8,49 +8,67 @@ import { POILayer } from './POILayer';
 // Icon cache to prevent recreating icons on every render
 const iconCache: Record<string, L.DivIcon> = {};
 
-function getIconCacheKey(
-  color: string,
-  size: number,
+function getScoreBadgeCacheKey(
+  score: number | null | undefined,
   isFavorite: boolean,
   isHighlighted: boolean
 ): string {
-  return `${color}-${size}-${isFavorite}-${isHighlighted}`;
+  return `badge-${score ?? 'null'}-${isFavorite}-${isHighlighted}`;
 }
 
-function getCachedIcon(
-  color: string,
-  size: number,
+function createScoreBadgeIcon(
+  score: number | null | undefined,
   isFavorite: boolean,
   isHighlighted: boolean = false
 ): L.DivIcon {
-  const key = getIconCacheKey(color, size, isFavorite, isHighlighted);
+  const key = getScoreBadgeCacheKey(score, isFavorite, isHighlighted);
   let icon = iconCache[key];
   if (!icon) {
+    const color = getMarkerColor(score);
+    const displayScore = score != null ? Math.round(score) : '?';
+
     let border: string;
     let boxShadow: string;
+    let transform: string;
     if (isHighlighted) {
-      border = '3px solid #3B82F6'; // Blue highlight border
-      boxShadow = '0 0 0 4px rgba(59, 130, 246, 0.4), 0 2px 4px rgba(0,0,0,0.3)';
+      border = '2px solid #3B82F6';
+      boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.4), 0 2px 6px rgba(0,0,0,0.3)';
+      transform = 'scale(1.15)';
     } else if (isFavorite) {
-      border = '3px solid #FFD700';
+      border = '2px solid #FFD700';
       boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+      transform = 'scale(1)';
     } else {
-      border = '2px solid white';
-      boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+      border = '1px solid rgba(255,255,255,0.8)';
+      boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
+      transform = 'scale(1)';
     }
+
+    const width = 28;
+    const height = 20;
+
     icon = L.divIcon({
-      className: 'custom-marker',
+      className: 'score-badge-marker',
       html: `<div style="
-        width: ${size}px;
-        height: ${size}px;
+        min-width: ${width}px;
+        height: ${height}px;
+        padding: 0 4px;
         background: ${color};
-        border-radius: 50%;
+        border-radius: 4px;
         border: ${border};
         box-shadow: ${boxShadow};
+        transform: ${transform};
         transition: all 0.15s ease-out;
-      "></div>`,
-      iconSize: [size, size],
-      iconAnchor: [size / 2, size / 2],
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+        text-shadow: 0 1px 1px rgba(0,0,0,0.3);
+      ">${displayScore}</div>`,
+      iconSize: [width, height],
+      iconAnchor: [width / 2, height / 2],
     });
     iconCache[key] = icon;
   }
@@ -67,15 +85,15 @@ L.Icon.Default.mergeOptions({
 
 
 function createOutlierIcon(outlier: ClusterOutlier, isHovered: boolean): L.DivIcon {
-  const color = getMarkerColor(outlier.amenity_score);
-  const size = isHovered ? 20 : 12;
-  return getCachedIcon(color, size, outlier.is_favorite ?? false, isHovered);
+  return createScoreBadgeIcon(outlier.amenity_score, outlier.is_favorite ?? false, isHovered);
 }
 
 function createMarkerIcon(listing: Listing, isSelected: boolean, isHovered: boolean): L.DivIcon {
-  const color = getMarkerColor(listing.amenity_score?.amenity_score);
-  const size = isHovered ? 20 : isSelected ? 16 : 12;
-  return getCachedIcon(color, size, listing.is_favorite ?? false, isHovered);
+  return createScoreBadgeIcon(
+    listing.amenity_score?.amenity_score,
+    listing.is_favorite ?? false,
+    isHovered || isSelected
+  );
 }
 
 interface MapBoundsTrackerProps {

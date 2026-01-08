@@ -11,7 +11,7 @@ from app.api import (
     pois_router,
 )
 
-app = FastAPI(title="HomeHero API", version="0.1.0")
+app = FastAPI(title="Domowik API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

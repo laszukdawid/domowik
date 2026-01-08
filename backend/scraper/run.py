@@ -105,17 +105,23 @@ async def enrich_listing(session, listing: Listing, enricher: AmenityEnricher):
 
 async def mark_delisted(session, seen_mls_ids: set[str]):
     """Mark listings as delisted if not seen in scrape."""
+    # Query for active listings not in the seen set
+    # Use chunks to avoid issues with large IN clauses
     result = await session.execute(
         select(Listing).where(
             Listing.status == "active",
-            ~Listing.mls_id.in_(seen_mls_ids),
         )
     )
-    missing = result.scalars().all()
+    active_listings = result.scalars().all()
 
-    for listing in missing:
-        # Only delist after 2 consecutive misses
-        hours_since_seen = (datetime.now(UTC) - listing.last_seen).total_seconds() / 3600
+    now = datetime.now(UTC)
+    for listing in active_listings:
+        if listing.mls_id in seen_mls_ids:
+            continue
+        # Only delist after 2 consecutive misses (48 hours)
+        if listing.last_seen is None:
+            continue
+        hours_since_seen = (now - listing.last_seen).total_seconds() / 3600
         if hours_since_seen > 48:
             listing.status = "delisted"
             print(f"Delisted: {listing.mls_id}")

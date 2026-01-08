@@ -156,23 +156,31 @@ async def stream_listings(
     chunk_size: int = 25,  # Number of listings per chunk
 ):
     """Stream listings in chunks for progressive loading"""
+    # Execute DB query BEFORE returning StreamingResponse to avoid connection leak.
+    # FastAPI's dependency injection closes the session after the route returns,
+    # but StreamingResponse's generator executes AFTER that - causing orphaned connections.
+    query = build_listings_query(
+        user, min_price, max_price, min_bedrooms, min_sqft,
+        cities, property_types, include_hidden, favorites_only, min_score, bbox
+    )
 
-    async def generate_chunks():
-        query = build_listings_query(
-            user, min_price, max_price, min_bedrooms, min_sqft,
-            cities, property_types, include_hidden, favorites_only, min_score, bbox
-        )
+    result = await db.execute(query)
+    rows = result.all()
 
-        result = await db.execute(query)
-        rows = result.all()
+    # Get user's last visit time
+    last_visit = datetime.now(UTC) - timedelta(days=1)
 
-        # Get user's last visit time
-        last_visit = datetime.now(UTC) - timedelta(days=1)
+    # Pre-convert all listings to response format while session is still valid
+    listings_data = [
+        listing_to_response(listing, lng, lat, status, last_visit).model_dump(mode='json')
+        for listing, status, lng, lat in rows
+    ]
 
+    def generate_chunks():
+        """Generator that chunks pre-fetched data (no DB access needed)"""
         chunk = []
-        for listing, status, lng, lat in rows:
-            resp = listing_to_response(listing, lng, lat, status, last_visit)
-            chunk.append(resp.model_dump(mode='json'))
+        for item in listings_data:
+            chunk.append(item)
 
             # Yield chunk when it reaches chunk_size
             if len(chunk) >= chunk_size:

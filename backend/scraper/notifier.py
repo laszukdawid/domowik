@@ -41,7 +41,7 @@ EMAIL_TEMPLATE = """
 <body>
     <div class="container">
         <div class="header">
-            <h1 style="margin: 0;">HomeHero</h1>
+            <h1 style="margin: 0;">Domowik</h1>
             <p style="margin: 8px 0 0; opacity: 0.9;">{{ count }} new listing{{ 's' if count != 1 else '' }} match your search</p>
         </div>
         <div class="content">
@@ -71,7 +71,7 @@ EMAIL_TEMPLATE = """
         </div>
         <div class="footer">
             <p>You're receiving this because you have email notifications enabled.</p>
-            <p>Update your preferences at <a href="{{ app_base_url }}">HomeHero</a></p>
+            <p>Update your preferences at <a href="{{ app_base_url }}">Domowik</a></p>
         </div>
     </div>
 </body>
