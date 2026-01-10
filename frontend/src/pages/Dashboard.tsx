@@ -3,11 +3,20 @@ import { useAuth } from '../hooks/useAuth';
 import { useListings, useListing } from '../hooks/useListings';
 import { useClusters } from '../hooks/useClusters';
 import { usePersistedFilters } from '../hooks/usePersistedFilters';
+import {
+  useCustomLists,
+  useCreateCustomList,
+  useUpdateCustomList,
+  useDeleteCustomList,
+  useAddListingToCustomList,
+  useRemoveListingFromCustomList,
+} from '../hooks/useCustomLists';
 import type { Listing, BBox, Cluster, ClusterOutlier } from '../types';
 import Map from '../components/Map';
 import ListingSidebar from '../components/ListingSidebar';
 import ListingDetail from '../components/ListingDetail';
 import FilterBar from '../components/FilterBar';
+import ListSelector from '../components/ListSelector';
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
@@ -20,6 +29,7 @@ export default function Dashboard() {
   const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   const [currentPolygon, setCurrentPolygon] = useState<number[][]>([]);
+  const [selectedListId, setSelectedListId] = useState<number | null>(null);
 
   // Fetch individual listing when an outlier is clicked
   const { data: fetchedListing } = useListing(selectedOutlierId ?? 0);
@@ -32,6 +42,18 @@ export default function Dashboard() {
     }
   }, [fetchedListing, selectedOutlierId]);
 
+  const { data: customLists = [] } = useCustomLists();
+  const createListMutation = useCreateCustomList();
+  const updateListMutation = useUpdateCustomList();
+  const deleteListMutation = useDeleteCustomList();
+  const addListingMutation = useAddListingToCustomList();
+  const removeListingMutation = useRemoveListingFromCustomList();
+
+  const effectiveFilterGroups = {
+    ...filterGroups,
+    custom_list_id: selectedListId ?? undefined,
+  };
+
   // Only fetch clusters - this is lightweight
   const {
     data: clusterData,
@@ -39,7 +61,7 @@ export default function Dashboard() {
   } = useClusters({
     bbox: mapBounds?.bbox ?? null,
     zoom: mapBounds?.zoom ?? 11,
-    filterGroups,
+    filterGroups: effectiveFilterGroups,
     enabled: !!mapBounds,
   });
 
@@ -57,7 +79,7 @@ export default function Dashboard() {
       : undefined;
 
   const { data: listings = [], isStreaming } = useListings(
-    filterGroups,
+    effectiveFilterGroups,
     shouldFetchListings ? listingsBbox : undefined
   );
 
@@ -130,6 +152,31 @@ export default function Dashboard() {
   const expandedListings = expandedCluster
     ? listings.filter(l => expandedCluster.listing_ids.includes(l.id))
     : [];
+
+  const handleCreateList = () => {
+    createListMutation.mutate(undefined);
+  };
+
+  const handleRenameList = (id: number, name: string) => {
+    updateListMutation.mutate({ id, name });
+  };
+
+  const handleDeleteList = (id: number) => {
+    deleteListMutation.mutate(id);
+    if (selectedListId === id) {
+      setSelectedListId(null);
+    }
+  };
+
+  const handleAddListing = async (input: string) => {
+    if (selectedListId === null) return;
+    await addListingMutation.mutateAsync({ listId: selectedListId, input });
+  };
+
+  const handleRemoveListing = (listingId: number) => {
+    if (selectedListId === null) return;
+    removeListingMutation.mutate({ listId: selectedListId, listingId });
+  };
 
   return (
     <div className="h-screen flex flex-col">
@@ -211,27 +258,47 @@ export default function Dashboard() {
         </div>
 
         {/* Sidebar */}
-        <div className="w-80 bg-white border-l overflow-hidden">
-          {selectedListing ? (
-            <ListingDetail
-              listing={selectedListing}
-              onClose={() => setSelectedListing(null)}
+        <div className="w-80 bg-white border-l overflow-hidden flex flex-col">
+          {/* List selector header */}
+          <div className="p-3 border-b bg-gray-50">
+            <ListSelector
+              customLists={customLists}
+              selectedListId={selectedListId}
+              onSelect={setSelectedListId}
+              onCreateList={handleCreateList}
+              onRenameList={handleRenameList}
+              onDeleteList={handleDeleteList}
             />
-          ) : (
-            <ListingSidebar
-              clusters={clusters}
-              outliers={outliers}
-              listings={expandedListings}
-              isLoading={clustersLoading || (expandedCluster !== null && isStreaming)}
-              totalCount={totalCount}
-              onSelect={handleSelect}
-              onClusterClick={handleClusterClick}
-              expandedCluster={expandedCluster}
-              onBack={handleClusterCollapse}
-              onHover={setHoveredListingId}
-              onClusterHover={setHoveredClusterId}
-            />
-          )}
+          </div>
+
+          {/* Sidebar content */}
+          <div className="flex-1 overflow-hidden">
+            {selectedListing ? (
+              <ListingDetail
+                listing={selectedListing}
+                onClose={() => setSelectedListing(null)}
+              />
+            ) : (
+              <ListingSidebar
+                clusters={clusters}
+                outliers={outliers}
+                listings={expandedListings}
+                isLoading={clustersLoading || (expandedCluster !== null && isStreaming)}
+                totalCount={totalCount}
+                onSelect={handleSelect}
+                onClusterClick={handleClusterClick}
+                expandedCluster={expandedCluster}
+                onBack={handleClusterCollapse}
+                onHover={setHoveredListingId}
+                onClusterHover={setHoveredClusterId}
+                selectedListId={selectedListId}
+                onAddListing={selectedListId !== null ? handleAddListing : undefined}
+                onRemoveListing={selectedListId !== null ? handleRemoveListing : undefined}
+                addListingLoading={addListingMutation.isPending}
+                addListingError={addListingMutation.error?.message ?? null}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
