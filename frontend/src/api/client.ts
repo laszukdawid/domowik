@@ -1,4 +1,4 @@
-import type { Listing, Note, Preferences, ListingFilters, ClusterResponse, POI, FilterGroups } from '../types';
+import type { Listing, Note, Preferences, ListingFilters, ClusterResponse, POI, FilterGroups, CustomList, AddListingResult } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -357,6 +357,44 @@ class ApiClient {
     ids.forEach(id => params.append('ids', String(id)));
 
     return this.request<POI[]>(`/api/pois?${params.toString()}`);
+  }
+
+  // Custom Lists
+  async getCustomLists(): Promise<CustomList[]> {
+    return this.request<CustomList[]>('/api/custom-lists');
+  }
+
+  async createCustomList(name?: string): Promise<CustomList> {
+    return this.request<CustomList>('/api/custom-lists', {
+      method: 'POST',
+      body: JSON.stringify(name ? { name } : {}),
+    });
+  }
+
+  async updateCustomList(id: number, name: string): Promise<CustomList> {
+    return this.request<CustomList>(`/api/custom-lists/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  async deleteCustomList(id: number): Promise<void> {
+    await this.request(`/api/custom-lists/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async addListingToCustomList(listId: number, input: string): Promise<AddListingResult> {
+    return this.request<AddListingResult>(`/api/custom-lists/${listId}/listings`, {
+      method: 'POST',
+      body: JSON.stringify({ input }),
+    });
+  }
+
+  async removeListingFromCustomList(listId: number, listingId: number): Promise<void> {
+    await this.request(`/api/custom-lists/${listId}/listings/${listingId}`, {
+      method: 'DELETE',
+    });
   }
 }
 
