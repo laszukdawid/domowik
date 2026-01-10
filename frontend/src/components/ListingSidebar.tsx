@@ -3,6 +3,7 @@ import { FixedSizeList as List } from 'react-window';
 import type { Listing, Cluster, ClusterOutlier } from '../types';
 import ListingCard from './ListingCard';
 import ClusterCard from './ClusterCard';
+import CustomListingInput from './CustomListingInput';
 import { getScoreBadgeClasses } from '../utils/scoreColors';
 
 type SortField = 'score' | 'price';
@@ -58,6 +59,12 @@ interface ListingSidebarProps {
   onBack: () => void;
   onHover: (id: number | null) => void;
   onClusterHover: (id: string | null) => void;
+  // New props for custom lists
+  selectedListId: number | null;
+  onAddListing?: (input: string) => Promise<void>;
+  onRemoveListing?: (listingId: number) => void;
+  addListingLoading?: boolean;
+  addListingError?: string | null;
 }
 
 export default function ListingSidebar({
@@ -72,6 +79,11 @@ export default function ListingSidebar({
   onBack,
   onHover,
   onClusterHover,
+  selectedListId,
+  onAddListing,
+  onRemoveListing,
+  addListingLoading,
+  addListingError,
 }: ListingSidebarProps) {
   const [sortField, setSortField] = useState<SortField>('score');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -169,6 +181,39 @@ export default function ListingSidebar({
         </h2>
       </div>
 
+      {/* Empty state for custom lists */}
+      {selectedListId !== null && totalCount === 0 && !isLoading && (
+        <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+          <div className="w-16 h-16 mb-4 text-gray-300">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No listings yet</h3>
+          <p className="text-sm text-gray-500 mb-6">
+            Add listings from realtor.ca to build your custom list
+          </p>
+          <div className="w-full max-w-sm">
+            <CustomListingInput
+              onSubmit={onAddListing!}
+              isLoading={addListingLoading}
+              error={addListingError}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Add listing input for custom lists with items */}
+      {selectedListId !== null && totalCount > 0 && onAddListing && (
+        <div className="mb-4">
+          <CustomListingInput
+            onSubmit={onAddListing}
+            isLoading={addListingLoading}
+            error={addListingError}
+          />
+        </div>
+      )}
+
       {clusters.length > 0 && (
         <div className="space-y-2 mb-4">
           {clusters.map((cluster) => (
@@ -226,7 +271,7 @@ export default function ListingSidebar({
                 onClick={() => onSelect(outlier)}
                 onMouseEnter={() => onHover(outlier.id)}
                 onMouseLeave={() => onHover(null)}
-                className="p-2 rounded border border-gray-200 hover:border-gray-300 cursor-pointer bg-white hover:bg-gray-50"
+                className="relative p-2 rounded border border-gray-200 hover:border-gray-300 cursor-pointer bg-white hover:bg-gray-50"
               >
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0">
@@ -242,6 +287,20 @@ export default function ListingSidebar({
                     </div>
                   )}
                 </div>
+                {selectedListId !== null && onRemoveListing && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveListing(outlier.id);
+                    }}
+                    className="absolute top-1 right-1 p-1 text-gray-400 hover:text-red-600 bg-white rounded-full shadow"
+                    title="Remove from list"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
               </div>
             ))}
             {outliers.length > 10 && (
