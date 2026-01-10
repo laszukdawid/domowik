@@ -263,18 +263,17 @@ class RealtorCaScraper:
 
         return all_listings
 
-    async def fetch_single(self, mls_id: str) -> ScrapedListing | None:
-        """Fetch a single listing by MLS ID.
+    async def fetch_by_mls(self, mls_number: str) -> ScrapedListing | None:
+        """Fetch a single listing by MLS number (e.g., R2828123).
 
         Args:
-            mls_id: The MLS number to search for
+            mls_number: The MLS number to search for
 
         Returns:
             ScrapedListing if found, None otherwise
         """
         token = await self._fetch_reese84_token()
 
-        # Use MLS number search params
         params = {
             "Version": "7.0",
             "ApplicationId": "1",
@@ -284,7 +283,7 @@ class RealtorCaScraper:
             "MaximumResults": "1",
             "PropertyTypeGroupID": "1",
             "TransactionTypeId": "2",
-            "ReferenceNumber": mls_id,  # Search by MLS number
+            "ReferenceNumber": mls_number,
         }
 
         try:
@@ -303,5 +302,44 @@ class RealtorCaScraper:
             return self._parse_listing(results[0])
 
         except httpx.HTTPError as e:
-            print(f"HTTP error fetching MLS {mls_id}: {e}")
+            print(f"HTTP error fetching MLS {mls_number}: {e}")
             return None
+
+    async def fetch_by_property_id(
+        self, property_id: str, max_pages: int = 30
+    ) -> ScrapedListing | None:
+        """Fetch a single listing by property ID (from URL).
+
+        This searches through paginated results to find the listing with matching ID.
+        The realtor.ca API doesn't support direct property ID lookup, so we scan
+        through results to find the listing.
+
+        Args:
+            property_id: The numeric property ID from realtor.ca URL
+            max_pages: Maximum pages to search through
+
+        Returns:
+            ScrapedListing if found, None otherwise
+        """
+        target_id = str(property_id)  # IDs in API response are strings
+
+        for page in range(1, max_pages + 1):
+            try:
+                listings, total = await self.fetch_page(page)
+
+                for listing in listings:
+                    if str(listing.raw_data.get("Id")) == target_id:
+                        return listing
+
+                # If we've searched through all available results
+                if page * 200 >= total:
+                    break
+
+                # Rate limiting between pages
+                await asyncio.sleep(random.uniform(2.0, 3.0))
+
+            except Exception as e:
+                print(f"Error fetching page {page}: {e}")
+                await asyncio.sleep(5)
+
+        return None

@@ -271,7 +271,7 @@ export default function ListingSidebar({
                 onClick={() => onSelect(outlier)}
                 onMouseEnter={() => onHover(outlier.id)}
                 onMouseLeave={() => onHover(null)}
-                className="relative p-2 rounded border border-gray-200 hover:border-gray-300 cursor-pointer bg-white hover:bg-gray-50"
+                className="p-2 rounded border border-gray-200 hover:border-gray-300 cursor-pointer bg-white hover:bg-gray-50"
               >
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0">
@@ -281,26 +281,28 @@ export default function ListingSidebar({
                       {outlier.bedrooms && ` · ${outlier.bedrooms} bd`}
                     </div>
                   </div>
-                  {outlier.amenity_score != null && (
-                    <div className={`text-xs font-semibold px-2 py-1 rounded ml-2 flex-shrink-0 ${getScoreBadgeClasses(outlier.amenity_score)}`}>
-                      {Math.round(outlier.amenity_score)}
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                    {outlier.amenity_score != null && (
+                      <div className={`text-xs font-semibold px-2 py-1 rounded ${getScoreBadgeClasses(outlier.amenity_score)}`}>
+                        {Math.round(outlier.amenity_score)}
+                      </div>
+                    )}
+                    {selectedListId !== null && onRemoveListing && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveListing(outlier.id);
+                        }}
+                        className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
+                        title="Remove from list"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
-                {selectedListId !== null && onRemoveListing && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onRemoveListing(outlier.id);
-                    }}
-                    className="absolute top-1 right-1 p-1 text-gray-400 hover:text-red-600 bg-white rounded-full shadow"
-                    title="Remove from list"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
               </div>
             ))}
             {outliers.length > 10 && (

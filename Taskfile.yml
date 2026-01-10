@@ -4,14 +4,14 @@ vars:
   DOCKER_COMPOSE: docker compose
 
 tasks:
-  # =============================================================================
-  # Full Stack
-  # =============================================================================
   default:
     desc: Show available tasks
     cmds:
       - task --list
 
+  # =============================================================================
+  # Core Commands
+  # =============================================================================
   up:
     desc: Start all services (db, backend, frontend)
     cmds:
@@ -27,35 +27,19 @@ tasks:
     cmds:
       - "{{.DOCKER_COMPOSE}} logs -f"
 
-  restart:
-    desc: Restart all services
-    cmds:
-      - task: down
-      - task: up
-
   build:
     desc: Build all Docker images
     cmds:
       - "{{.DOCKER_COMPOSE}} build"
 
   clean:
-    desc: "⚠️  DESTRUCTIVE: Stop services and DELETE ALL DATA (removes volumes)"
+    desc: "Stop services and DELETE ALL DATA (removes volumes)"
     cmds:
       - "{{.DOCKER_COMPOSE}} down -v"
 
   # =============================================================================
   # Database
   # =============================================================================
-  db:up:
-    desc: Start only the database
-    cmds:
-      - "{{.DOCKER_COMPOSE}} up -d db"
-
-  db:logs:
-    desc: Tail database logs
-    cmds:
-      - "{{.DOCKER_COMPOSE}} logs -f db"
-
   db:shell:
     desc: Open psql shell
     cmds:
@@ -64,21 +48,16 @@ tasks:
   db:migrate:
     desc: Run database migrations
     cmds:
-      - "{{.DOCKER_COMPOSE}} exec backend alembic upgrade head"
+      - "{{.DOCKER_COMPOSE}} exec backend uv run alembic upgrade head"
 
   db:migrate:create:
     desc: "Create a new migration (usage: task db:migrate:create -- 'migration name')"
     cmds:
-      - "{{.DOCKER_COMPOSE}} exec backend alembic revision --autogenerate -m '{{.CLI_ARGS}}'"
+      - "{{.DOCKER_COMPOSE}} exec backend uv run alembic revision --autogenerate -m '{{.CLI_ARGS}}'"
 
   # =============================================================================
   # Backend
   # =============================================================================
-  backend:up:
-    desc: Start backend and database
-    cmds:
-      - "{{.DOCKER_COMPOSE}} up -d db backend"
-
   backend:logs:
     desc: Tail backend logs
     cmds:
@@ -90,16 +69,11 @@ tasks:
       - "{{.DOCKER_COMPOSE}} exec backend bash"
 
   backend:test:
-    desc: Run tests
+    desc: Run backend tests locally
     dir: backend
     cmds:
       - uv sync --extra test
       - uv run pytest tests/ -v
-
-  backend:build:
-    desc: Build backend Docker image
-    cmds:
-      - "{{.DOCKER_COMPOSE}} build backend"
 
   backend:restart:
     desc: Restart backend service
@@ -109,25 +83,10 @@ tasks:
   # =============================================================================
   # Frontend
   # =============================================================================
-  frontend:up:
-    desc: Start frontend only
-    cmds:
-      - "{{.DOCKER_COMPOSE}} up -d frontend"
-
   frontend:logs:
     desc: Tail frontend logs
     cmds:
       - "{{.DOCKER_COMPOSE}} logs -f frontend"
-
-  frontend:build:
-    desc: Build frontend Docker image
-    cmds:
-      - "{{.DOCKER_COMPOSE}} build frontend"
-
-  frontend:restart:
-    desc: Restart frontend service
-    cmds:
-      - "{{.DOCKER_COMPOSE}} restart frontend"
 
   frontend:dev:
     desc: Run frontend locally with npm (outside Docker)
@@ -136,27 +95,26 @@ tasks:
       - npm install
       - npm run dev
 
+  frontend:restart:
+    desc: Restart frontend service
+    cmds:
+      - "{{.DOCKER_COMPOSE}} restart frontend"
+
   # =============================================================================
   # Scraper
   # =============================================================================
   scraper:run:
-    desc: Run the scraper manually
+    desc: Run the scraper
     cmds:
-      - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.run"
+      - "{{.DOCKER_COMPOSE}} exec backend uv run python -m scraper.run"
 
   scraper:run:full:
-    desc: Run the scraper manually (full)
+    desc: Run the scraper (full mode)
     cmds:
-      - "{{.DOCKER_COMPOSE}} exec backend python -m scraper.run --full"
-
-  scraper:run:local:
-    desc: Run scraper locally (requires venv)
-    dir: backend
-    cmds:
-      - uv run python -m scraper.run
+      - "{{.DOCKER_COMPOSE}} exec backend uv run python -m scraper.run --full"
 
   scraper:enrich:
-    desc: Enrich all listings that don't have amenity scores
+    desc: Enrich listings with amenity scores
     cmds:
       - "{{.DOCKER_COMPOSE}} exec backend uv run python -m scraper.enrich"
 
@@ -166,8 +124,7 @@ tasks:
   overpass:init:
     desc: "Download Vancouver data and initialize Overpass (~5 min)"
     cmds:
-      - echo "Initializing Overpass database with Vancouver area data..."
-      - echo "This downloads ~57MB and takes ~5 minutes. Please wait..."
+      - echo "Initializing Overpass with Vancouver area data (~57MB, ~5 min)..."
       - |
         {{.DOCKER_COMPOSE}} --profile enrichment run --rm \
           -e OVERPASS_MODE=init \
@@ -175,15 +132,13 @@ tasks:
           -e OVERPASS_PLANET_URL=https://download.bbbike.org/osm/bbbike/Vancouver/Vancouver.osm.pbf \
           -e OVERPASS_PLANET_PREPROCESS="mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat -o /db/planet.osm.bz2 /db/planet.osm.pbf && rm /db/planet.osm.pbf" \
           overpass
-      - echo "Fixing permissions..."
       - docker run --rm -v domowik_overpass_db:/db alpine chmod 755 /db
-      - "echo 'Done! Overpass is ready. Start it with: task overpass:up'"
+      - "echo 'Done! Start Overpass with: task overpass:up'"
 
   overpass:init:bc:
-    desc: "Download full BC data and initialize Overpass (~30 min)"
+    desc: "Download BC data and initialize Overpass (~30 min)"
     cmds:
-      - echo "Initializing Overpass database with British Columbia data..."
-      - echo "This downloads ~1.1GB and takes ~30 minutes. Please wait..."
+      - echo "Initializing Overpass with British Columbia data (~1.1GB, ~30 min)..."
       - |
         {{.DOCKER_COMPOSE}} --profile enrichment run --rm \
           -e OVERPASS_MODE=init \
@@ -191,12 +146,11 @@ tasks:
           -e OVERPASS_PLANET_URL=https://download.geofabrik.de/north-america/canada/british-columbia-latest.osm.pbf \
           -e OVERPASS_PLANET_PREPROCESS="mv /db/planet.osm.bz2 /db/planet.osm.pbf && osmium cat -o /db/planet.osm.bz2 /db/planet.osm.pbf && rm /db/planet.osm.pbf" \
           overpass
-      - echo "Fixing permissions..."
       - docker run --rm -v domowik_overpass_db:/db alpine chmod 755 /db
-      - "echo 'Done! Overpass is ready. Start it with: task overpass:up'"
+      - "echo 'Done! Start Overpass with: task overpass:up'"
 
   overpass:up:
-    desc: Start Overpass service (requires overpass:init first)
+    desc: Start Overpass service
     cmds:
       - "{{.DOCKER_COMPOSE}} --profile enrichment up -d overpass"
 
@@ -205,76 +159,12 @@ tasks:
     cmds:
       - "{{.DOCKER_COMPOSE}} --profile enrichment stop overpass"
 
-  overpass:logs:
-    desc: Tail Overpass logs
-    cmds:
-      - "{{.DOCKER_COMPOSE}} --profile enrichment logs -f overpass"
-
-  overpass:status:
-    desc: Check Overpass API status
-    cmds:
-      - curl -s http://localhost:12345/api/status || echo "Overpass not responding"
-
-  overpass:test:
-    desc: Test Overpass with a sample query (cafes near downtown Vancouver)
-    cmds:
-      - |
-        curl -s -X POST http://localhost:12345/api/interpreter \
-          -d 'data=[out:json][timeout:5];node["amenity"="cafe"](around:500,49.2827,-123.1207);out;' \
-          | head -c 500
-
   overpass:clean:
-    desc: "⚠️  Remove Overpass volume (requires re-init)"
+    desc: "Remove Overpass volume (requires re-init)"
     cmds:
       - "{{.DOCKER_COMPOSE}} --profile enrichment stop overpass || true"
       - "{{.DOCKER_COMPOSE}} --profile enrichment rm -f overpass || true"
       - docker volume rm domowik_overpass_db || true
-
-  # =============================================================================
-  # Development
-  # =============================================================================
-  dev:
-    desc: Start all services in development mode with logs
-    cmds:
-      - "{{.DOCKER_COMPOSE}} up"
-
-  dev:watch:
-    desc: Start all services with hot reload (rebuilds images if needed)
-    cmds:
-      - "{{.DOCKER_COMPOSE}} -f docker-compose.yml -f docker-compose.dev.yml up"
-
-  dev:backend:
-    desc: Start db + backend with logs
-    cmds:
-      - "{{.DOCKER_COMPOSE}} up db backend"
-
-  dev:frontend:
-    desc: Start frontend with logs
-    cmds:
-      - "{{.DOCKER_COMPOSE}} up frontend"
-
-  dev:frontend:watch:
-    desc: Start frontend with hot reload
-    cmds:
-      - "{{.DOCKER_COMPOSE}} -f docker-compose.yml -f docker-compose.dev.yml up frontend"
-
-  install:
-    desc: Install all dependencies (backend + frontend)
-    cmds:
-      - task: install:backend
-      - task: install:frontend
-
-  install:backend:
-    desc: Install backend Python dependencies
-    dir: backend
-    cmds:
-      - pip install -r requirements.txt
-
-  install:frontend:
-    desc: Install frontend npm dependencies
-    dir: frontend
-    cmds:
-      - npm install
 
   # =============================================================================
   # Kubernetes
@@ -303,33 +193,3 @@ tasks:
     desc: Tail frontend pod logs
     cmds:
       - kubectl logs -f -l app=frontend -n domowik
-
-  k8s:scraper:trigger:
-    desc: Manually trigger the scraper CronJob
-    cmds:
-      - kubectl create job --from=cronjob/scraper scraper-manual-$(date +%s) -n domowik
-
-  # =============================================================================
-  # Docker Image Build (Production)
-  # =============================================================================
-  docker:build:
-    desc: Build production Docker images
-    cmds:
-      - task: docker:build:backend
-      - task: docker:build:frontend
-
-  docker:build:backend:
-    desc: Build backend production image
-    cmds:
-      - docker build -t domowik/backend:latest ./backend
-
-  docker:build:frontend:
-    desc: Build frontend production image
-    cmds:
-      - docker build -t domowik/frontend:latest ./frontend
-
-  docker:push:
-    desc: Push images to registry
-    cmds:
-      - docker push domowik/backend:latest
-      - docker push domowik/frontend:latest

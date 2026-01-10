@@ -30,14 +30,15 @@ async def get_next_list_number(db: AsyncSession) -> int:
     return result.scalar() + 1
 
 
-def parse_mls_from_url(url: str) -> str | None:
-    """Extract MLS ID from a realtor.ca URL.
+def parse_property_id_from_url(url: str) -> str | None:
+    """Extract property ID from a realtor.ca URL.
 
     Handles formats like:
     - https://www.realtor.ca/real-estate/12345678/123-main-st-vancouver
     - https://realtor.ca/real-estate/12345678/...
+
+    Note: This returns the property ID (numeric), not the MLS number.
     """
-    # Match the numeric ID after /real-estate/
     match = re.search(r'realtor\.ca/real-estate/(\d+)', url)
     if match:
         return match.group(1)
@@ -206,7 +207,8 @@ async def add_listing_to_list(
         raise HTTPException(status_code=404, detail="List not found")
 
     input_value = body.input.strip()
-    mls_id: str | None = None
+    property_id: str | None = None
+    mls_number: str | None = None
     source_url: str | None = None
 
     # Determine if input is URL or MLS number
@@ -218,8 +220,8 @@ async def add_listing_to_list(
                 detail="Only realtor.ca listing URLs are supported"
             )
 
-        mls_id = parse_mls_from_url(input_value)
-        if not mls_id:
+        property_id = parse_property_id_from_url(input_value)
+        if not property_id:
             raise HTTPException(
                 status_code=400,
                 detail="Couldn't find listing ID in URL"
@@ -232,27 +234,76 @@ async def add_listing_to_list(
                 status_code=400,
                 detail="Please enter a valid MLS number"
             )
-        mls_id = input_value.upper()
+        mls_number = input_value.upper()
 
     # Check if listing already exists in database
-    result = await db.execute(
-        select(Listing).where(Listing.mls_id == mls_id)
-    )
-    listing = result.scalar_one_or_none()
+    listing = None
+    if mls_number:
+        result = await db.execute(
+            select(Listing).where(Listing.mls_id == mls_number)
+        )
+        listing = result.scalar_one_or_none()
+    elif property_id:
+        # Check by URL match first (source_url might contain the property ID)
+        result = await db.execute(
+            select(Listing).where(Listing.url.contains(f"/real-estate/{property_id}/"))
+        )
+        listing = result.scalar_one_or_none()
+
     status = "existing"
 
     if listing:
         # Listing exists, just add to list
         pass
-    elif source_url:
-        # Need to fetch from realtor.ca API
+    elif source_url and property_id:
+        # Need to fetch from realtor.ca API by property ID
         scraper = RealtorCaScraper()
         try:
-            scraped = await scraper.fetch_single(mls_id)
+            logger.info(f"Fetching listing by property ID: {property_id}")
+            scraped = await scraper.fetch_by_property_id(property_id, max_pages=30)
             if not scraped:
                 raise HTTPException(
                     status_code=404,
-                    detail="Listing not found - it may have been removed"
+                    detail="Listing not found - it may have been sold, removed, or is too old. Try a more recent listing."
+                )
+
+            # Insert new listing
+            from geoalchemy2.functions import ST_SetSRID, ST_MakePoint
+
+            listing = Listing(
+                mls_id=scraped.mls_id,
+                url=scraped.url,
+                address=scraped.address,
+                city=scraped.city,
+                location=ST_SetSRID(ST_MakePoint(scraped.longitude, scraped.latitude), 4326),
+                price=scraped.price,
+                bedrooms=scraped.bedrooms,
+                bathrooms=scraped.bathrooms,
+                sqft=scraped.sqft,
+                property_type=scraped.property_type,
+                listing_date=scraped.listing_date.date() if scraped.listing_date else None,
+                raw_data=scraped.raw_data,
+            )
+            db.add(listing)
+            await db.commit()
+            await db.refresh(listing)
+            status = "created"
+
+            # Trigger background enrichment
+            background_tasks.add_task(enrich_listing_background, listing.id)
+
+        finally:
+            await scraper.close()
+    elif mls_number:
+        # MLS number provided but not in database - try to fetch it
+        scraper = RealtorCaScraper()
+        try:
+            logger.info(f"Fetching listing by MLS number: {mls_number}")
+            scraped = await scraper.fetch_by_mls(mls_number)
+            if not scraped:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Listing not found. Try pasting the full realtor.ca URL instead."
                 )
 
             # Insert new listing
@@ -283,10 +334,9 @@ async def add_listing_to_list(
         finally:
             await scraper.close()
     else:
-        # MLS number only, but not in database
         raise HTTPException(
-            status_code=404,
-            detail="Listing not found. Try pasting the full realtor.ca URL instead."
+            status_code=400,
+            detail="Please provide a realtor.ca URL or MLS number"
         )
 
     # Check if already in this list

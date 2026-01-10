@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useListings, useListing } from '../hooks/useListings';
 import { useClusters } from '../hooks/useClusters';
 import { usePersistedFilters } from '../hooks/usePersistedFilters';
+import { usePersistedListSelection } from '../hooks/usePersistedListSelection';
 import {
   useCustomLists,
   useCreateCustomList,
@@ -29,7 +30,7 @@ export default function Dashboard() {
   const [hoveredClusterId, setHoveredClusterId] = useState<string | null>(null);
   const [isDrawingPolygon, setIsDrawingPolygon] = useState(false);
   const [currentPolygon, setCurrentPolygon] = useState<number[][]>([]);
-  const [selectedListId, setSelectedListId] = useState<number | null>(null);
+  const [selectedListId, setSelectedListId] = usePersistedListSelection();
 
   // Fetch individual listing when an outlier is clicked
   const { data: fetchedListing } = useListing(selectedOutlierId ?? 0);
