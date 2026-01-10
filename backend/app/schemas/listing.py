@@ -70,3 +70,4 @@ class FilterGroups(BaseModel):
     include_hidden: bool = False
     favorites_only: bool = False
     polygons: list[list[list[float]]] | None = None  # List of polygons, each polygon is a list of [lng, lat] coordinates
+    custom_list_id: int | None = None

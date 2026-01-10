@@ -164,6 +164,7 @@ def build_listings_query_with_groups(
     favorites_only: bool = False,
     bbox: str | None = None,
     polygons: list[list[list[float]]] | None = None,
+    custom_list_id: int | None = None,
 ):
     """Build the listings query with OR filter groups and polygon filtering"""
     query = (
@@ -181,6 +182,14 @@ def build_listings_query_with_groups(
         .options(selectinload(Listing.amenity_score), selectinload(Listing.poi_links))
         .where(Listing.status == "active")
     )
+
+    # Filter by custom list if specified
+    if custom_list_id is not None:
+        from app.models import CustomListListing
+        query = query.join(
+            CustomListListing,
+            CustomListListing.listing_id == Listing.id
+        ).where(CustomListListing.custom_list_id == custom_list_id)
 
     # Build OR conditions from filter groups
     if filter_groups:
@@ -381,7 +390,8 @@ async def stream_listings_with_groups(
     async def generate_chunks():
         query = build_listings_query_with_groups(
             user, filter_groups.groups, filter_groups.include_hidden,
-            filter_groups.favorites_only, bbox, filter_groups.polygons
+            filter_groups.favorites_only, bbox, filter_groups.polygons,
+            filter_groups.custom_list_id
         )
 
         result = await db.execute(query)
@@ -428,7 +438,8 @@ async def get_listings_with_groups(
     """Get all listings with OR filter groups at once"""
     query = build_listings_query_with_groups(
         user, filter_groups.groups, filter_groups.include_hidden,
-        filter_groups.favorites_only, bbox, filter_groups.polygons
+        filter_groups.favorites_only, bbox, filter_groups.polygons,
+        filter_groups.custom_list_id
     )
 
     result = await db.execute(query)
