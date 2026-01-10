@@ -95,6 +95,7 @@ export interface FilterGroups {
   include_hidden?: boolean;
   favorites_only?: boolean;
   polygons?: number[][][]; // List of polygons, each polygon is a list of [lng, lat] coordinates
+  custom_list_id?: number;
 }
 
 export interface ClusterStats {
@@ -138,4 +139,16 @@ export interface BBox {
   minLat: number;
   maxLng: number;
   maxLat: number;
+}
+
+export interface CustomList {
+  id: number;
+  name: string;
+  count: number;
+  created_at: string;
+}
+
+export interface AddListingResult {
+  listing_id: number;
+  status: 'created' | 'existing';
 }
