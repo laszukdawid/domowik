@@ -262,3 +262,46 @@ class RealtorCaScraper:
             print(f"Page {page}/{total_pages}: {len(listings)} listings")
 
         return all_listings
+
+    async def fetch_single(self, mls_id: str) -> ScrapedListing | None:
+        """Fetch a single listing by MLS ID.
+
+        Args:
+            mls_id: The MLS number to search for
+
+        Returns:
+            ScrapedListing if found, None otherwise
+        """
+        token = await self._fetch_reese84_token()
+
+        # Use MLS number search params
+        params = {
+            "Version": "7.0",
+            "ApplicationId": "1",
+            "CultureId": "1",
+            "Currency": "CAD",
+            "RecordsPerPage": "1",
+            "MaximumResults": "1",
+            "PropertyTypeGroupID": "1",
+            "TransactionTypeId": "2",
+            "ReferenceNumber": mls_id,  # Search by MLS number
+        }
+
+        try:
+            response = await self.client.post(
+                self.BASE_URL,
+                data=params,
+                headers=self._get_headers(token),
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            results = data.get("Results", [])
+            if not results:
+                return None
+
+            return self._parse_listing(results[0])
+
+        except httpx.HTTPError as e:
+            print(f"HTTP error fetching MLS {mls_id}: {e}")
+            return None
