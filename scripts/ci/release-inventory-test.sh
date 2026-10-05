@@ -13,7 +13,8 @@
 # startup, which is how a gate quietly stops gating.
 #
 # Usage: release-inventory-test.sh [work dir]
-# Requires cargo and python3 on PATH. Nothing here builds, publishes or fetches.
+# Requires cargo and python3 on PATH. Nothing builds or publishes. The pinned
+# spike-only licence fixture may fetch ryu 1.0.23 if absent from Cargo's cache.
 set -euo pipefail
 
 REPO_ROOT=$(cd -P "$(dirname "$0")/../.." && pwd -P)
@@ -365,11 +366,18 @@ json.dump(record, open("docs/third-party/assets.json", "w", encoding="utf-8"),
           indent=2, ensure_ascii=False)
 
 with_isc = generate()
-assert "Copyright © 2015, Simonas Kazlauskas" in with_isc, \
+def fixture_notice(text):
+    # Runtime crates may carry the same ISC text. Assert only this asset's
+    # section so their retained notices cannot hide this fixture's omission.
+    section = text.split("ISC fixture 0.0.0\n", 1)[1]
+    return section.split("========================================================================", 1)[0]
+
+with_isc_asset = fixture_notice(with_isc)
+assert "Copyright © 2015, Simonas Kazlauskas" in with_isc_asset, \
     "the ISC copyright notice is absent from the generated NOTICE"
-assert "this permission notice appear" in with_isc, \
+assert "this permission notice appear" in with_isc_asset, \
     "the ISC permission notice is absent from the generated NOTICE"
-assert "Declared licence: ISC" in with_isc
+assert "Declared licence: ISC" in with_isc_asset
 
 # Omission must go red: drop the text pointer and the notice must lose the text
 # AND say so, rather than silently omitting it.
@@ -377,10 +385,11 @@ record["assets"][-1].pop("licenseTextPath")
 json.dump(record, open("docs/third-party/assets.json", "w", encoding="utf-8"),
           indent=2, ensure_ascii=False)
 omitted = generate()
-assert "this permission notice appear" not in omitted, \
+omitted_asset = fixture_notice(omitted)
+assert "this permission notice appear" not in omitted_asset, \
     "the ISC text survived removal of its licenceTextPath; the assertion " \
     "above cannot fail"
-assert "No licence text is committed beside this asset" in omitted
+assert "No licence text is committed beside this asset" in omitted_asset
 sys.exit(0)
 NOTICEPY
 ); then
@@ -407,8 +416,9 @@ break_spike_only_licence() {
   #
   # `ryu` 1.0.23 declares "Apache-2.0 OR BSL-1.0", which is not on the reviewed
   # allow-list, and it is in no closure here: serde_json switched to `zmij`, so
-  # neither the CLI nor the spike pulls it. It is in the local registry cache,
-  # so adding it needs no network.
+  # neither the CLI nor the spike pulls it. A fresh CI runner need not have this
+  # historical version cached, so lock resolution may fetch it. The exact pin
+  # is fixture-only: none of its code is built or distributed with Domowik.
   #
   # IT MUST BE A REGISTRY CRATE. The first draft created a local crate and took
   # a path dependency on it, which proved nothing: `check_licences` skips any
@@ -422,12 +432,13 @@ text = open(path, encoding="utf-8").read()
 anchor = "[dependencies]\n"
 assert anchor in text
 open(path, "w", encoding="utf-8").write(
-    text.replace(anchor, anchor + 'ryu = "1.0.23"\n', 1))
+    text.replace(anchor, anchor + 'ryu = "=1.0.23"\n', 1))
 SPIKEPY
   # The generators run `cargo metadata --locked`, so the spike's lockfile has to
-  # learn about the crate. Offline: it is already in the cache.
+  # learn about the crate. Try offline first, then permit the pinned fixture
+  # fetch; do not assume the maintainer's cache exists on a clean CI runner.
   ( cd "$1/spikes/0024-flutter-rust-bridge" &&
-    cargo generate-lockfile --offline >/dev/null 2>&1 )
+    { cargo generate-lockfile --offline >/dev/null 2>&1 || cargo generate-lockfile; } )
 }
 
 echo
@@ -465,7 +476,7 @@ PASSED=$((PASSED + 2))
 
 rc=0
 ( cd "$DET" && python3 scripts/release-sbom.py artifact --id domowik-gui-macos \
-    --release-grade >/dev/null 2>"$WORK/grade.err" ) || rc=$?
+    --target aarch64-apple-darwin --release-grade >/dev/null 2>"$WORK/grade.err" ) || rc=$?
 if [ "$rc" -ne 0 ] && grep -q 'release-grade refused' "$WORK/grade.err"; then
   pass "--release-grade refuses the incomplete GUI inventory"
 else

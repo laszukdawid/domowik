@@ -12,7 +12,7 @@ HERE=$(cd -P "$(dirname "$0")" && pwd -P)
 SUMMARY="$HERE/verify-job-summary.sh"
 [ -x "$SUMMARY" ] || { echo "no summary script at $SUMMARY" >&2; exit 2; }
 
-WORK=$(mktemp -d -t domowik-summary-test)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/domowik-summary-test.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
 failures=0

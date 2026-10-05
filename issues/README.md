@@ -135,3 +135,4 @@ The clean-room rules apply fully to specification and spike issues.
 | [0062](0062-retire-go-toolchain.md) | 2 | Retire the Go toolchain | In Progress (partial scope) |
 | [0063](done/0063-native-close-test-synchronization.md) | 2 | Make native close quiescence tests deterministic | Done |
 | [0064](0064-empty-universe-package-profile.md) | 1 | Decide the package profile of a plan with no assets | In Progress |
+| [0090](0090-ci-main-repair.md) | 2 | Repair hosted main CI preflight failures | In Progress |
