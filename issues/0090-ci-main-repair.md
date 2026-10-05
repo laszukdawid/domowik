@@ -49,3 +49,10 @@ The first repaired macOS run passed 225 widget tests, both CPU harnesses,
 bundle probes, Bash 3.2 banner regression, and all packaging rejection tests,
 then failed at P13 clean tree. Add file-status and lockfile diagnostics to that
 gate without relaxing it; the existing assertion concealed the changed paths.
+
+Diagnostic run 37258856090 identified exactly one changed file:
+`flutter_app/macos/Podfile.lock`. CocoaPods 1.17.0 regenerated our local
+`domowik_bridge_plugin` checksum as `e06a52bf53804cd29a39192a5ab98acd577afb39`,
+replacing the stale `56b2190ab1cb1f16ae267954764bc5ffb1a671c5` recorded before
+the current podspec. Record the runner-generated checksum; no dependencies,
+versions, sources, or licence scope change. The clean-tree gate remains intact.
