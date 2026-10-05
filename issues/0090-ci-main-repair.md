@@ -44,3 +44,8 @@ The isolated follow-up snapshot passed all 27 inventory checks and canonical
 verification (`=== VERIFICATION PASSED === all stages`) on Linux. Dart,
 Flutter, macOS application, and Bash 3.2 coverage were explicitly skipped on
 that host; hosted macOS verification remains required.
+
+The first repaired macOS run passed 225 widget tests, both CPU harnesses,
+bundle probes, Bash 3.2 banner regression, and all packaging rejection tests,
+then failed at P13 clean tree. Add file-status and lockfile diagnostics to that
+gate without relaxing it; the existing assertion concealed the changed paths.

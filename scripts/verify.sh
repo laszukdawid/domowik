@@ -851,6 +851,15 @@ fi
 
 # P13: full-run clean-tree assertion
 stage "P13 clean tree"
-test -z "$(git status --porcelain)"
+tree_status=$(git status --porcelain)
+if [ -n "$tree_status" ]; then
+  printf 'Verification left a dirty tree (or started with one):\n%s\n' "$tree_status" >&2
+  git diff --stat >&2
+  # Lockfile changes distinguish resolver/toolchain drift from build output.
+  # Keep the gate fail-closed; do not restore or ignore changed inputs.
+  git diff -- 'spikes/0024-flutter-rust-bridge/*/pubspec.lock' \
+    spikes/0024-flutter-rust-bridge/flutter_app/macos/Podfile.lock >&2
+  false
+fi
 
 printf "\n=== VERIFICATION PASSED === all stages\n"
