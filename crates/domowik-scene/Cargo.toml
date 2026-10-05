@@ -1,0 +1,22 @@
+[package]
+name = "domowik-scene"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+domowik-format = { path = "../domowik-format" }
+domowik-geometry = { path = "../domowik-geometry" }
+domowik-models = { path = "../domowik-models" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+earcutr = "=0.5.0"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "scene"
+harness = false

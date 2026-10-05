@@ -35,10 +35,10 @@ compatibility before treating them as settled.
 | `crates/domowik-models` / `domowik-scene` | Bounded model decode and renderer-neutral 3D data |
 | `crates/domowik-cli` | Headless command workflows and SVG/PNG export |
 | `crates/domowik-devtools` / `domowik-bench` | Repository checks and measurement harnesses |
-| `spikes/0024-flutter-rust-bridge/src` and `include/` | Separate Rust workspace and C ABI |
-| `spikes/0024-flutter-rust-bridge/dart_harness` | Hand-written Dart bindings and boundary probes |
-| `spikes/0024-flutter-rust-bridge/flutter_app/lib` | Editor interaction, UI and painting |
-| `flutter_app/linux/runner` / `macos/Runner` | Native pickers, lifecycle and platform surfaces |
+| `frontend/native/src` and `frontend/native/include/` | Separate Rust workspace and C ABI |
+| `frontend/dart_harness` | Hand-written Dart bindings and boundary probes |
+| `frontend/lib` | Editor interaction, UI and painting |
+| `frontend/linux/runner` / `frontend/macos/Runner` | Native pickers, lifecycle and platform surfaces |
 | `crates/domowik-devtools/src/corpusgen` | Rust malformed-file fixture generator and corpus gates |
 
 The former `_reference/` archive was removed on 2026-10-05. Historical Go code
@@ -78,15 +78,14 @@ cargo test --workspace --locked
 cargo bench --no-run --locked
 ```
 
-For bridge/editor changes, also build and test the separate spike:
+For bridge/editor changes, also build and test the separate frontend workspace:
 
 ```sh
-cd spikes/0024-flutter-rust-bridge
+cd frontend
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 cargo build --release --locked
-cd flutter_app
 flutter pub get
 flutter analyze
 flutter test
@@ -98,7 +97,7 @@ ownership as well as the successful path. For documentation changes, check
 local links, command working directories and claims against code/evidence.
 
 New geometry code must include its benchmark and documented numerical
-guarantees. Editor CPU harnesses can be run from `flutter_app`:
+guarantees. Editor CPU harnesses can be run from `frontend/`:
 
 ```sh
 flutter test benchmark/viewport_benchmark.dart

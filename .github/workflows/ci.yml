@@ -9,13 +9,13 @@ on:
 permissions:
   contents: read
 
-env:
-  GOTOOLCHAIN: local
-
 jobs:
   verify:
-    name: verify (rust core + go corpus generator)
+    name: verify (linux + flutter + rust core)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOMOWIK_REQUIRE_LINUX_EDITOR: '1'
     steps:
       # Issue 0061 acceptance: runner cost and wall-clock impact are RECORDED,
       # per run, so the choice to pay for a macOS runner can be revisited
@@ -27,14 +27,6 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      # verify.sh needs BOTH toolchains: the core is Rust, and the surviving
-      # issue-0028 corpus generator (internal/corpusgen) is still Go. The other
-      # hygiene tools moved to Rust under issue 0062.
-      - name: Set up Go
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
-        with:
-          go-version: '1.27.0'
-          check-latest: false
       # No toolchain version here: rust-toolchain.toml pins it, and naming a
       # version in both places lets them drift apart silently. rustup honours
       # the file, so this installs exactly what the repository asks for.
@@ -43,6 +35,25 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup component add rustfmt clippy
           cargo --version && rustc --version
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0; same reviewed MIT pin as macOS
+        with:
+          channel: stable
+          flutter-version: 3.41.6
+          cache: false
+          pub-cache: false
+      - name: Install Linux editor prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libepoxy-dev xvfb xauth libgl1-mesa-dri
+          flutter config --enable-linux-desktop
+      - name: Confirm Linux editor prerequisites are present
+        run: |
+          bash scripts/ci/linux-editor-prerequisites-test.sh
+          bash scripts/check-linux-editor-prerequisites.sh
+          flutter --version
+          dart --version
+          pkg-config --modversion gtk+-3.0 epoxy
       # NOTE: no cargo cache step. Every other action here is pinned to a SHA
       # that already existed in this repository's history; adding actions/cache
       # would mean pinning a SHA that has not been verified, and an unverified
@@ -168,13 +179,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
-      # Same pin as the verify job; setup-go supports macOS runners directly.
-      - name: Set up Go
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
-        with:
-          go-version: '1.27.0'
-          check-latest: false
-
       # Same pin/rationale as the verify job; macos-15 already ships
       # rustup/cargo/rustc 1.98.0 matching rust-toolchain.toml (confirmed
       # 2026-09-07).
@@ -245,7 +249,6 @@ jobs:
           xcodebuild -version
           rustc --version
           cargo --version
-          go version
 
       # Same RUNNER_TEMP/shell:bash/exit-status contract as the verify job's
       # step above.
@@ -304,7 +307,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          APP=spikes/0024-flutter-rust-bridge/flutter_app/build/macos/Build/Products/Release/domowik_spike_app.app
+          APP=frontend/build/macos/Build/Products/Release/domowik_editor.app
           verify_rc=$(cat "$RUNNER_TEMP/verify-exit.txt" 2>/dev/null || echo missing)
           if [ ! -d "$APP" ]; then
             # A passing verify.sh that left no bundle behind means the stage

@@ -23,13 +23,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SPIKE="$REPO_ROOT/spikes/0024-flutter-rust-bridge"
-APP="$SPIKE/flutter_app"
+SPIKE="$REPO_ROOT/frontend"
+APP="$SPIKE"
 PKG="invalid.domowik_spike.domowik_spike_app"
 PROBE_LOG="/sdcard/Android/data/$PKG/files/domowik-probe.log"
 APK="$APP/build/app/outputs/flutter-apk/app-release.apk"
 
-# ONE ABI. See flutter_app/android/app/build.gradle.kts for why this is passed
+# ONE ABI. See frontend/android/app/build.gradle.kts for why this is passed
 # here rather than set as an abiFilter.
 TARGET_PLATFORM="android-arm64"
 ABI="arm64-v8a"
@@ -58,12 +58,12 @@ fail() { printf '\n=== ANDROID PROBE FAILED === %s\n' "$1" >&2; exit 1; }
 # self-test line that a reader could easily take for the known provenance
 # failure. Refuses rather than repairs: this is a tracked source file, and a
 # script that silently rewrites one is worse than a script that stops.
-if git -C "$REPO_ROOT" diff --quiet -- "$SPIKE/src/lib.rs"; then
+if git -C "$REPO_ROOT" diff --quiet -- "$SPIKE/native/src/lib.rs"; then
     :
 else
-    printf 'spikes/0024-flutter-rust-bridge/src/lib.rs has uncommitted changes.\n' >&2
+    printf 'frontend/native/src/lib.rs has uncommitted changes.\n' >&2
     printf 'If a --mutate-abi run was killed, restore it with:\n' >&2
-    printf '  git checkout -- spikes/0024-flutter-rust-bridge/src/lib.rs\n' >&2
+    printf '  git checkout -- frontend/native/src/lib.rs\n' >&2
     fail "refusing to build from a modified bridge source"
 fi
 
@@ -179,21 +179,21 @@ if [ "$MUTATE_ABI" = "1" ]; then
     # only convincing proof that this build graph cannot do the same is to
     # change the Rust source and require the installed app to notice.
     step "mutation: ABI_VERSION -> 99"
-    ORIGINAL="$(grep -n '^const ABI_VERSION: i32 = ' "$SPIKE/src/lib.rs")"
-    BEFORE="$(git -C "$REPO_ROOT" hash-object "$SPIKE/src/lib.rs")"
+    ORIGINAL="$(grep -n '^const ABI_VERSION: i32 = ' "$SPIKE/native/src/lib.rs")"
+    BEFORE="$(git -C "$REPO_ROOT" hash-object "$SPIKE/native/src/lib.rs")"
     # EXIT, INT and TERM. The EXIT trap alone was TESTED and does already run
     # on SIGINT in this bash, so naming the signals is hardening for other
     # shells rather than a fix for an observed failure -- said plainly because
     # a comment claiming to fix a bug nobody saw is how a file fills up with
     # cargo. Nothing traps SIGKILL, which is what the startup guard is for.
-    trap 'git -C "$REPO_ROOT" checkout -- "$SPIKE/src/lib.rs"; echo "mutation reverted"' EXIT INT TERM
+    trap 'git -C "$REPO_ROOT" checkout -- "$SPIKE/native/src/lib.rs"; echo "mutation reverted"' EXIT INT TERM
     printf 'was: %s\n' "$ORIGINAL"
     # perl, not `sed -i`. BSD and GNU sed disagree about how `-i` takes its
     # backup suffix, and the BSD reading of `-i'' -e` left a `src/lib.rs-e`
     # file behind in the source tree -- which the repository's clean-tree
     # verification stage would fail on, from a script whose whole purpose is to
     # leave the tree exactly as it found it. Observed, then fixed.
-    /usr/bin/perl -pi -e 's/^const ABI_VERSION: i32 = \d+;$/const ABI_VERSION: i32 = 99;/' "$SPIKE/src/lib.rs"
+    /usr/bin/perl -pi -e 's/^const ABI_VERSION: i32 = \d+;$/const ABI_VERSION: i32 = 99;/' "$SPIKE/native/src/lib.rs"
     (cd "$APP" && flutter build apk --release --target-platform "$TARGET_PLATFORM" >/dev/null)
     adb install -r "$APK" >/dev/null
     adb shell rm -f "$PROBE_LOG" >/dev/null 2>&1 || true
@@ -205,9 +205,9 @@ if [ "$MUTATE_ABI" = "1" ]; then
     [ "$REPORTED" = "99" ] || \
         fail "the installed app reported ABI $REPORTED, not 99: the APK carried a STALE core"
     printf 'the installed app reported ABI %s: the build graph cannot serve a stale core\n' "$REPORTED"
-    git -C "$REPO_ROOT" checkout -- "$SPIKE/src/lib.rs"
+    git -C "$REPO_ROOT" checkout -- "$SPIKE/native/src/lib.rs"
     trap - EXIT
-    AFTER="$(git -C "$REPO_ROOT" hash-object "$SPIKE/src/lib.rs")"
+    AFTER="$(git -C "$REPO_ROOT" hash-object "$SPIKE/native/src/lib.rs")"
     [ "$BEFORE" = "$AFTER" ] || fail "src/lib.rs was not restored ($BEFORE -> $AFTER)"
     printf 'src/lib.rs restored, hash %s\n' "$AFTER"
     printf '\n=== ANDROID MUTATION TEST PASSED ===\n'

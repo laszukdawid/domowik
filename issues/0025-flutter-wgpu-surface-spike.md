@@ -10,6 +10,20 @@
 Validate a real Flutter rendering surface and native packaging; Dart FFI calls
 to wgpu-native alone do not display a frame.
 
+### Current integration assessment — 2026-10-05
+
+Issue 0092 promotes the working application to `frontend/`; it is the place
+to integrate a future GPU backend, not a second Flutter application.
+`spikes/0025-flutter-wgpu-surface` currently holds a Cargo manifest/lockfile
+and placeholder `src/lib.rs`, with no rendering implementation to merge.
+The dated feasibility inventory below is a design reference, not execution
+evidence on the current Linux host. The interface already has a working Linux
+native GL texture backend; renderer-neutral scene payloads live in
+`crates/domowik-scene`. A wgpu backend could reuse those payloads and the
+frontend's view/control separation, but still needs its own texture interop,
+lifecycle, ownership, licensing and platform tests. No new runtime dependency
+is adopted by promoting the application.
+
 ## Acceptance criteria
 
 - [ ] Linux and Android render into a Flutter-owned surface/texture with

@@ -1490,6 +1490,7 @@ mod tests {
         let door = Opening {
             id: Uuid::now_v7(),
             kind: OpeningKind::Door,
+            mechanism: None,
             host_wall_id: first_id,
             u: 0.5,
             width_mm: 900.0,

@@ -112,7 +112,12 @@ contract is broken.
   match the Go originals byte-for-byte. The two DEFLATE streams are pinned
   inputs with recorded provenance, checked by inflating them; the generator
   does not recompress them. The former Go archive is available only in Git history.
-- Proposed GUI: Dart/Flutter, subject to the FFI feasibility gate.
+- **Frontend:** the actively developed Dart/Flutter editor lives at
+  `frontend/`; its native adapter is `frontend/native/`, packaged by
+  `frontend/plugin/`. `frontend/Cargo.toml` owns a separate Cargo workspace.
+  Display name: Domowik; Dart package/executable: `domowik_editor`. Platform
+  IDs and FFI symbols remain stable. ADR 0003 stays Proposed until its gates
+  pass; the remaining wgpu experiment is not an implemented renderer.
 - Document exported APIs, ownership, concurrency, errors, numerical
   guarantees, and FFI safety. Avoid comments that merely restate code.
 - Geometry APIs must state units, coordinate bounds, tolerance or exactness,

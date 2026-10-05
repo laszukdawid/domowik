@@ -1,0 +1,22 @@
+[package]
+name = "domowik-models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+domowik-format = { path = "../domowik-format" }
+domowik-geometry = { path = "../domowik-geometry" }
+serde.workspace = true
+serde_json.workspace = true
+zip.workspace = true
+tiny-skia.workspace = true
+draco-core = { version = "=2.2.1", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "preview"
+harness = false

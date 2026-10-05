@@ -1,0 +1,25 @@
+version: '3'
+
+tasks:
+  run:
+    desc: Build and run the domowik CLI
+    cmds:
+      - cargo run --locked --bin domowik -- {{.CLI_ARGS}}
+
+  run:gui:linux:
+    desc: Run the Domowik editor on Linux desktop
+    dir: frontend
+    cmds:
+      - flutter run -d linux
+
+  run:gui:web:
+    desc: Planned web editor (deferred; issue 0088)
+    dir: frontend
+    cmds:
+      - 'echo "Web editor support is planned in issue 0088; the native editor has no browser backend yet."'
+      - exit 1
+
+  test:
+    desc: Run all Rust tests
+    cmds:
+      - cargo test --workspace --locked

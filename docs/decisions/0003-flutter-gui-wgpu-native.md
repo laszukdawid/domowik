@@ -76,6 +76,13 @@ Proposed with its gates unchanged**.
 
 ## Evidence — issue 0024 bridge spike, macOS/arm64 slice (2026-09-01)
 
+**Location update (2026-10-05, issue 0092):** the actively developed interface
+now lives at `frontend/`, with the native adapter at `frontend/native/`.
+[Its README](../../frontend/README.md) maps historical paths. This promotion
+does not change this ADR's Proposed status or its validation gates. The
+issue-0025 crate still contains only dependency setup and a placeholder;
+no wgpu surface renderer has been implemented or merged into the interface.
+
 `spikes/0024-flutter-rust-bridge/` carries the run and its numbers. **The gate
 is not passed** and this ADR stays Proposed; what follows is what the slice
 does and does not establish.

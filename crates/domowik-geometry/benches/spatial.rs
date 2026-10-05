@@ -37,7 +37,7 @@
 //! trade. Recorded as a known gap rather than quietly dropped.
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use domowik_format::{Document, Point, Wall};
+use domowik_format::{Document, Opening, Point, Wall};
 use domowik_geometry::hit::{hit_test, marquee, HitIndex};
 use domowik_geometry::spatial::{Aabb, QueryScratch, SpatialIndex};
 use domowik_geometry::walls::WallSolid;
@@ -137,6 +137,30 @@ fn point_hit(c: &mut Criterion) {
         let index = HitIndex::build(&doc, level);
         group.bench_function(format!("indexed/grid-{n}x{n}"), |b| {
             b.iter(|| index.hit_test(black_box(p), 240.0))
+        });
+    }
+    group.finish();
+}
+
+/// Apertures are indexed at each committed edit, then queried on every click.
+fn opening_hit(c: &mut Criterion) {
+    let mut group = c.benchmark_group("spatial/opening-hit");
+    for n in [4, 10, 20] {
+        let (mut doc, level) = grid(n);
+        for wall in &doc.walls {
+            if (wall.end().y - wall.start().y).abs() < f64::EPSILON {
+                doc.openings.push(Opening::window(
+                    wall.id, 0.5, 1200.0, 1400.0, 900.0, THICKNESS,
+                ));
+            }
+        }
+        let point = Point::new(ROOM_W * 1.5, ROOM_H);
+        group.bench_function(format!("build/grid-{n}x{n}"), |b| {
+            b.iter(|| HitIndex::build(black_box(&doc), level))
+        });
+        let index = HitIndex::build(&doc, level);
+        group.bench_function(format!("indexed/grid-{n}x{n}"), |b| {
+            b.iter(|| index.hit_test(black_box(point), 240.0))
         });
     }
     group.finish();
@@ -360,6 +384,7 @@ criterion_group!(
     build,
     cull,
     point_hit,
+    opening_hit,
     tied_regions,
     dense_endpoints,
     preview,

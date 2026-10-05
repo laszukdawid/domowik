@@ -34,3 +34,6 @@ coverage.out
 # Python (scripts/releaselib.py is imported, not run, so it caches)
 __pycache__/
 *.pyc
+
+# Owner-imported model library, not reviewed bundled assets under crates/.
+/assets/

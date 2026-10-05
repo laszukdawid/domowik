@@ -1,0 +1,11 @@
+# Platform/FFI workspace for the actively developed Domowik frontend.
+[workspace]
+resolver = "2"
+members = ["native"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# FFI transports panics rather than aborting the host application.
+panic = "unwind"

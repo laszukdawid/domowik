@@ -121,8 +121,8 @@ that wrote it.
 
 ## The GUI bundle, and what "staged" means
 
-A spike is not the same as unshipped for a licence inventory. The issue-0024
-macOS bundle runs locally and redistributes a Flutter engine, an AOT-compiled
+The actively developed frontend is not yet a release, but its locally runnable
+macOS bundle redistributes a Flutter engine, an AOT-compiled
 Dart runtime, plugin frameworks, and a Material icon font. Declaring the
 artifact `staged` in `release/rust-manifest.json` makes that obligation
 countable instead of invisible.
@@ -130,7 +130,7 @@ countable instead of invisible.
 Implemented and running today: the bridge crate's resolved graph, read from its
 own Cargo workspace because it is excluded from the root one; the standard
 library from the toolchain record; and all 26 packages in
-`flutter_app/pubspec.lock`, classified by dependency class and source.
+`frontend/pubspec.lock`, classified by dependency class and source.
 
 Not covered without a built bundle: the Flutter engine framework and its
 version, the plugin and platform frameworks actually embedded with their

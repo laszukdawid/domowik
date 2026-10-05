@@ -11,7 +11,7 @@
 # checker's stable `BUNDLE CHECK FAILED: <tag>` line. A negative test that
 # accepts any non-zero exit would pass on a checker that always crashed.
 #
-# Usage: macos-bundle-negative-proof.sh <path to domowik_spike_app.app>
+# Usage: macos-bundle-negative-proof.sh <path to domowik_editor.app>
 #
 # The mutated copies live under a temp directory outside the checkout, so
 # verify.sh's clean-tree assertion is unaffected, and none of them is ever

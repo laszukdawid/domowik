@@ -1,7 +1,7 @@
 # Flutter template files and launcher artwork
 
 The committed Flutter-generated platform scaffolding and default launcher
-icons in `spikes/0024-flutter-rust-bridge/flutter_app/` originate in the Flutter
+icons in `frontend/` originate in the Flutter
 SDK templates, not in Domowik's independent implementation. This includes
 Android manifest/resources/icons, macOS runner/project/icon scaffolding and
 Linux runner/build scaffolding. Domowik modifications remain Apache-2.0;

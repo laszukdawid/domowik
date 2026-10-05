@@ -46,7 +46,7 @@ architecture decisions.
 
 Issue closures and `docs/evidence/` record tests, measurements and provenance
 for a particular increment and host. They are not a continuously updated
-platform-support matrix. The [bridge spike README](../spikes/0024-flutter-rust-bridge/README.md)
+platform-support matrix. The [native bridge README](../frontend/native/README.md)
 documents the native contract, probes and platform experiments.
 
 The former `_reference/go/` archive was removed from the source tree on

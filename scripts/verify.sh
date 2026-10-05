@@ -2,9 +2,9 @@
 # Canonical verification entry point for issue 0008 (contract v4, section 5),
 # extended by issue 0036 with dynamic release-inventory checks. Runs every
 # hard check locally; ci.yml invokes the same script. All issue-0008 baseline
-# steps are preserved verbatim; the 0036 checks are additive.
+# product checks are retained; issue 0062 replaces the Go corpus gates with
+# their Rust counterparts and retires the now-empty Go module guards.
 set -euo pipefail
-export GOTOOLCHAIN=local
 
 # Resolved from this script's own location, not from $PWD: several stages `cd`
 # into subdirectories inside a subshell, and one of them needs to invoke a
@@ -58,40 +58,14 @@ trap 'rc=$?; printf "\n=== VERIFICATION FAILED ===\nSTAGE: %s\nline:  %s\nexit: 
   "$CURRENT_STAGE" "$LINENO" "$rc" >&2; exit "$rc"' ERR
 # END FAILURE-REPORTING PREAMBLE
 
-stage "go build"
-go build ./...
-stage "go test"
-go test ./...
-stage "gofmt"
-test -z "$(gofmt -l .)"
-stage "go vet"
-go vet ./...
+if [ "${DOMOWIK_REQUIRE_LINUX_EDITOR:-0}" = 1 ]; then
+  stage "mandatory Linux editor prerequisites"
+  bash "$REPO_ROOT/scripts/check-linux-editor-prerequisites.sh"
+fi
 
-# Issue 0028: the corpus's own gates — deterministic artifact regeneration,
-# machine-readable expectation-manifest completeness, and the inert-artifact
-# size cap (all implemented inside internal/corpusgen as dev-only checks;
-# no reader/writer/validator behavior).
-#
-# The two `jsoncheck` stages that used to sit here moved BELOW the Rust build
-# (issue 0062): the checker is now a Rust binary, so it cannot run before the
-# workspace compiles. Nothing else about them changed.
-stage "corpusgen gates"
-go test ./internal/corpusgen
-
-# P5: dependency-drift guard
-stage "dependency drift"
-go mod tidy && git diff --exit-code -- go.mod go.sum
-
-# F1/P6: license guard - the module graph must contain ONLY the canonical
-# module. Empirically (go1.27.0, 'go 1.27', GOTOOLCHAIN=local),
-# `go list -m all` prints exactly one line; go@/toolchain@ edges appear only
-# in `go mod graph`. The expected value is derived via `go list -m` rather
-# than hardcoded so this script stays free of the provisional URL token
-# (contract sections 3 and 6).
-stage "module graph size"
-test "$(go list -m all | wc -l)" -eq 1
-stage "module graph identity"
-test "$(go list -m all)" = "$(go list -m)"
+# Issue 0062 / ED-0104: the last active Go package is now Rust. Its corpus
+# gates run below after cargo test. The Go build, test, format, vet and module
+# guards are retired with the root module; _reference/go remains frozen.
 
 # WITHDRAWN: the Go release-inventory verifier (0036).
 #
@@ -137,6 +111,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 
 stage "cargo test"
 cargo test --workspace --locked
+
+# Keep a separately named failure stage for the corpus contract, even though
+# the workspace test suite also runs it (ED-0077).
+stage "corpus gates"
+cargo test --locked -p domowik-devtools --test corpus_gates
 
 # Issue 0004: syntax-validate every fenced ```json block in committed docs,
 # then the same parse-only guard over the conformance corpus manifest.
@@ -701,15 +680,12 @@ test "$rc" -eq 1
 test ! -s build/ci/level-fields.out
 test "$level_fields_before" = "$(shasum -a 256 < build/ci/level-fields.domo)"
 
-# ===== Issue 0024: the Flutter/Rust bridge spike =====
-#
-# A spike outside CI rots into a false record of what once worked, so it is
-# built and run here even though nothing in it is distributed (ED-0097). It is
-# its OWN Cargo workspace, excluded from the root one, so `--workspace` above
-# never reaches it.
-stage "spike 0024 bridge build and tests"
+# ===== The actively developed frontend and native bridge =====
+# Its own Cargo workspace is excluded from the root workspace, so it needs
+# explicit coverage in addition to the shared core checks above.
+stage "frontend bridge build and tests"
 (
-  cd spikes/0024-flutter-rust-bridge
+  cd frontend
   cargo fmt --check
   cargo clippy --all-targets -- -D warnings
   cargo test
@@ -721,35 +697,44 @@ stage "spike 0024 bridge build and tests"
 # is contained unwinding into a foreign frame, and that ownership abuse from a
 # caller with no borrow checker is refused rather than acted on. Built with
 # AddressSanitizer and UBSan, so the run is a memory-safety gate too.
-stage "spike 0024 C harness (asan+ubsan)"
+stage "frontend C harness (asan+ubsan)"
 if command -v clang >/dev/null 2>&1; then
   (
-    cd spikes/0024-flutter-rust-bridge
+    cd frontend
     mkdir -p build
     LIB=target/release/libdomowik_bridge.dylib
     [ -f "$LIB" ] || LIB=target/release/libdomowik_bridge.so
     clang -std=c11 -Wall -Wextra -Werror -g -fsanitize=address,undefined \
-      -o build/charness charness/main.c
+      -o build/charness native/charness/main.c
     ./build/charness "$LIB" 2>/dev/null | grep -q 'C HARNESS PASSED'
   )
 else
-  echo "spike 0024 C harness: SKIPPED - clang not on PATH"
+  echo "frontend C harness: SKIPPED - clang not on PATH"
 fi
 
 # The Dart harness loads the same library the way Flutter does. Skipped with an
 # ANNOUNCEMENT rather than in silence when the SDK is absent: a conditional
 # stage that skips quietly cannot be told apart from one that ran and passed
 # (ED-0087 R3).
-stage "spike 0024 Dart FFI harness"
+stage "frontend Dart FFI harness"
 if command -v dart >/dev/null 2>&1; then
   (
-    cd spikes/0024-flutter-rust-bridge/dart_harness
+    cd frontend/dart_harness
     LIB=../target/release/libdomowik_bridge.dylib
     [ -f "$LIB" ] || LIB=../target/release/libdomowik_bridge.so
     dart run bin/harness.dart "$LIB" 2>/dev/null | grep -q 'DART HARNESS PASSED'
   )
 else
-  echo "spike 0024 Dart FFI harness: SKIPPED - dart not on PATH"
+  echo "frontend Dart FFI harness: SKIPPED - dart not on PATH"
+fi
+
+stage "Linux native file choosers"
+if [ "$(uname -s)" = "Linux" ] && command -v xvfb-run >/dev/null 2>&1 && \
+    command -v c++ >/dev/null 2>&1 && command -v pkg-config >/dev/null 2>&1 && \
+    pkg-config --exists gtk+-3.0; then
+  bash scripts/check-linux-file-choosers.sh
+else
+  echo "Linux native file choosers: SKIPPED - needs Linux, GTK development tools and Xvfb"
 fi
 
 # THE FLUTTER APPLICATION, built and made to verify itself (issue 0024).
@@ -764,22 +749,47 @@ fi
 # Skips are ANNOUNCED, never silent (ED-0087 R3): a conditional stage that
 # passes quietly cannot be told apart from one that ran.
 if command -v flutter >/dev/null 2>&1; then
+  stage "Flutter editor package resolution"
+  (cd frontend && flutter pub get)
   stage "Flutter editor analysis"
-  (cd spikes/0024-flutter-rust-bridge/flutter_app && flutter analyze)
+  (cd frontend && flutter analyze)
   stage "Flutter editor widget tests"
-  (cd spikes/0024-flutter-rust-bridge/flutter_app && flutter test)
+  (cd frontend && flutter test)
   stage "Flutter viewport measurement harness"
-  (cd spikes/0024-flutter-rust-bridge/flutter_app && flutter test benchmark/viewport_benchmark.dart)
+  (cd frontend && flutter test benchmark/viewport_benchmark.dart)
   stage "Flutter level-render measurement harness"
-  (cd spikes/0024-flutter-rust-bridge/flutter_app && flutter test benchmark/level_render_benchmark.dart)
+  (cd frontend && flutter test benchmark/level_render_benchmark.dart)
+  stage "Flutter 3D camera measurement harness"
+  (cd frontend && flutter test benchmark/camera_3d_benchmark.dart)
 else
   echo "Flutter editor checks: SKIPPED - flutter not on PATH"
 fi
 
-stage "spike 0024 Flutter macOS application"
+stage "frontend Flutter Linux application"
+if [ "$(uname -s)" = Linux ] && bash "$REPO_ROOT/scripts/check-linux-editor-prerequisites.sh" >/dev/null 2>&1; then
+  stage "Linux editor prerequisite regression"
+  bash "$REPO_ROOT/scripts/ci/linux-editor-prerequisites-test.sh"
+  stage "frontend Flutter Linux application"
+  (
+    cd frontend
+    flutter build linux --release
+    BIN=build/linux/x64/release/bundle/domowik_editor
+    test -x "$BIN"
+    # Software/Xvfb probes exercise packaging and first-frame correctness,
+    # not physical-device input latency or hardware GPU performance.
+    DOMOWIK_SPIKE_SELFTEST=1 LIBGL_ALWAYS_SOFTWARE=1 timeout 180 xvfb-run -a "$BIN" | \
+      grep -q 'BUNDLE SELFTEST PASSED'
+    DOMOWIK_SPIKE_FIRSTFRAME=1 LIBGL_ALWAYS_SOFTWARE=1 timeout 180 xvfb-run -a "$BIN" | \
+      grep -q 'FIRST FRAME PROBE PASSED'
+  )
+else
+  echo "frontend Flutter Linux application: SKIPPED - needs Linux editor prerequisites"
+fi
+
+stage "frontend Flutter macOS application"
 if [ "$(uname -s)" = "Darwin" ] && command -v flutter >/dev/null 2>&1; then
   (
-    cd spikes/0024-flutter-rust-bridge/flutter_app
+    cd frontend
     # CLEAN, deliberately, and it costs about 25 seconds.
     #
     # An INCREMENTAL `flutter build macos --release` rewrites App.framework
@@ -791,8 +801,8 @@ if [ "$(uname -s)" = "Darwin" ] && command -v flutter >/dev/null 2>&1; then
     # packaging property nobody can check by looking.
     flutter clean >/dev/null
     flutter build macos --release >/dev/null
-    APP=build/macos/Build/Products/Release/domowik_spike_app.app
-    BIN="$APP/Contents/MacOS/domowik_spike_app"
+    APP=build/macos/Build/Products/Release/domowik_editor.app
+    BIN="$APP/Contents/MacOS/domowik_editor"
 
     # The on-disk packaging claims -- core inside the bundle, exact @rpath
     # framework id, both architecture slices, a valid signature -- moved into
@@ -820,7 +830,7 @@ if [ "$(uname -s)" = "Darwin" ] && command -v flutter >/dev/null 2>&1; then
       grep -q 'FIRST FRAME PROBE PASSED'
   )
 else
-  echo "spike 0024 Flutter macOS application: SKIPPED - needs macOS and flutter on PATH"
+  echo "frontend Flutter macOS application: SKIPPED - needs macOS and flutter on PATH"
 fi
 
 # Issue 0061: this script's OWN failure-reporting contract, exercised under
@@ -857,8 +867,8 @@ if [ -n "$tree_status" ]; then
   git diff --stat >&2
   # Lockfile changes distinguish resolver/toolchain drift from build output.
   # Keep the gate fail-closed; do not restore or ignore changed inputs.
-  git diff -- 'spikes/0024-flutter-rust-bridge/*/pubspec.lock' \
-    spikes/0024-flutter-rust-bridge/flutter_app/macos/Podfile.lock >&2
+  git diff -- frontend/pubspec.lock 'frontend/*/pubspec.lock' \
+    frontend/macos/Podfile.lock >&2
   false
 fi
 

@@ -431,7 +431,7 @@ break_spike_only_licence() {
   # separately; it is not what this case tests.
   python3 - "$1" <<'SPIKEPY'
 import sys
-path = sys.argv[1] + "/spikes/0024-flutter-rust-bridge/Cargo.toml"
+path = sys.argv[1] + "/frontend/native/Cargo.toml"
 text = open(path, encoding="utf-8").read()
 anchor = "[dependencies]\n"
 assert anchor in text
@@ -441,7 +441,7 @@ SPIKEPY
   # The generators run `cargo metadata --locked`, so the spike's lockfile has to
   # learn about the crate. Try offline first, then permit the pinned fixture
   # fetch; do not assume the maintainer's cache exists on a clean CI runner.
-  ( cd "$1/spikes/0024-flutter-rust-bridge" &&
+  ( cd "$1/frontend" &&
     { cargo generate-lockfile --offline >/dev/null 2>&1 || cargo generate-lockfile; } )
 }
 

@@ -1,0 +1,355 @@
+//! Bounded, derived top-down model previews. See BEHAVIOR-SPEC §10.2 and
+//! docs/evidence/0076-model-previews.md for public-format provenance.
+//!
+//! Input is opaque user content, not authoritative plan geometry. No filesystem,
+//! network, callbacks or global state. Coordinates are model-local and finite;
+//! +Y is up, X/Z form the footprint. Raster coverage is approximate at pixel
+//! resolution, never a topology predicate. Returned PNG bytes are caller-owned.
+
+mod glb;
+mod obj;
+use serde::Serialize;
+
+pub(crate) const MAX_TRIANGLES: usize = 1_000_000;
+pub(crate) const MAX_VERTICES: usize = 1_000_000;
+pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
+const SIZE: usize = 256;
+
+#[derive(Clone)]
+pub(crate) struct Triangle {
+    pub points: [[f64; 3]; 3],
+    pub color: [f64; 4],
+}
+
+/// A rebuildable preview; model extents are in original model units, not mm.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    pub png: Vec<u8>,
+    pub triangles: usize,
+    pub covered_pixels: usize,
+    pub model_extents: [f64; 3],
+}
+
+/// Decode a GLB, OBJ or ZIP containing OBJ/MTL and render a 256-pixel square
+/// transparent PNG. At most 64 MiB input/expanded relevant ZIP content, 4096
+/// archive entries and one million vertices/triangles. Errors name unsupported
+/// content or the exceeded budget; model bytes are never modified.
+pub fn preview(bytes: &[u8]) -> Result<Preview, String> {
+    render(&decode(bytes)?)
+}
+
+/// Initial object size in millimetres, measured from decoded scene geometry.
+/// GLB uses defined metre units; OBJ/ZIP proportions use a 1000 mm longest axis.
+/// +Y is up, width/depth are X/Z. Flat Y extents receive a 1 mm minimum.
+/// This is derived display sizing, not an exact geometry predicate or a claim
+/// about the real size of a unitless model. No source bytes are modified.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelDimensions {
+    pub dimensions_mm: [f64; 3],
+    pub physical_units: bool,
+    pub height_ratio: f64,
+}
+
+/// Bounded decode under the same limits as [preview], without rasterization.
+/// Static scene transforms are included. Missing/degenerate horizontal bounds
+/// and invalid coordinates are errors; callers may explicitly label a fallback.
+/// Output order is width, depth, height. Physical dimensions are not clamped.
+/// Transformed coordinates must be finite and at most 1e12 model units in
+/// magnitude. Bounds use deterministic binary64 evaluation, not exact predicates.
+/// This pure, thread-safe call returns caller-owned data and has no callbacks.
+pub fn dimensions(bytes: &[u8]) -> Result<ModelDimensions, String> {
+    let triangles = decode(bytes)?;
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for t in &triangles {
+        for p in t.points {
+            for k in 0..3 {
+                if !p[k].is_finite() || p[k].abs() > 1e12 {
+                    return Err("Invalid model coordinate".into());
+                }
+                min[k] = min[k].min(p[k]);
+                max[k] = max[k].max(p[k]);
+            }
+        }
+    }
+    let extent = std::array::from_fn::<_, 3, _>(|k| max[k] - min[k]);
+    if extent.iter().any(|v| !v.is_finite()) || extent[0] <= 0. || extent[2] <= 0. {
+        return Err("Model has no usable horizontal bounds".into());
+    }
+    let physical_units = bytes.starts_with(b"glTF");
+    let factor = if physical_units {
+        1000.
+    } else {
+        1000. / extent.iter().copied().fold(0., f64::max)
+    };
+    let dimensions_mm = [
+        extent[0] * factor,
+        extent[2] * factor,
+        (extent[1] * factor).max(1.),
+    ];
+    let height_ratio = extent[1] / extent[0];
+    if !height_ratio.is_finite() || dimensions_mm.iter().any(|v| !v.is_finite() || *v <= 0.) {
+        return Err("Model proportions exceed the supported numerical range".into());
+    }
+    Ok(ModelDimensions {
+        dimensions_mm,
+        physical_units,
+        height_ratio,
+    })
+}
+
+fn decode(bytes: &[u8]) -> Result<Vec<Triangle>, String> {
+    if bytes.len() > MAX_BYTES {
+        return Err("Model preview input exceeds 64 MiB".into());
+    }
+    let triangles = if bytes.starts_with(b"glTF") {
+        glb::decode(bytes)?
+    } else if bytes.starts_with(b"PK") {
+        obj::archive(bytes)?
+    } else {
+        obj::decode(bytes, &Default::default())?
+    };
+    Ok(triangles)
+}
+
+/// Shared GPU-ready model geometry, centered in X/Z and grounded at Y=0.
+/// XYZ, normal XYZ, RGBA per vertex. Coordinates are normalized to original
+/// width/depth, with height expressed as a ratio of the original width.
+/// Fast LOD uses bounded vertex clustering over the normalized bounding box;
+/// it changes derived display geometry only, never original asset bytes.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelMesh {
+    pub vertices: Vec<f32>,
+    pub height_ratio: f64,
+    pub source_triangles: usize,
+    pub triangles: usize,
+}
+
+/// Decode once for an interactive 3D renderer. At most 20,000 retained triangles
+/// in fast mode. Cached by the caller's content digest; camera movement should
+/// never call this function. Material colors and shape are approximated by LOD.
+pub fn mesh(bytes: &[u8]) -> Result<ModelMesh, String> {
+    mesh_with_budget(bytes, 20000)
+}
+
+/// Fast interactive rendering can request a smaller visual triangle budget.
+/// The original bytes and 2D geometry are unaffected. Budgets are bounded to
+/// 100..20,000 triangles and applied before GPU upload, never during navigation.
+pub fn mesh_with_budget(bytes: &[u8], budget: usize) -> Result<ModelMesh, String> {
+    let budget = budget.clamp(100, 20000);
+    let triangles = decode(bytes)?;
+    if triangles.is_empty() {
+        return Err("Model has no triangles".into());
+    }
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for t in &triangles {
+        for p in t.points {
+            for k in 0..3 {
+                if !p[k].is_finite() || p[k].abs() > 1e12 {
+                    return Err("Invalid model coordinate".into());
+                }
+                min[k] = min[k].min(p[k]);
+                max[k] = max[k].max(p[k]);
+            }
+        }
+    }
+    let extent = std::array::from_fn::<_, 3, _>(|k| max[k] - min[k]);
+    if extent[0] <= 0. || extent[2] <= 0. {
+        return Err("Model has no horizontal extent".into());
+    }
+    let mut vertices = Vec::new();
+    for grid in [128., 64., 32., 16., 8.] {
+        vertices.clear();
+        let mut seen = std::collections::BTreeSet::new();
+        for t in &triangles {
+            let keys = t.points.map(|p| {
+                std::array::from_fn::<_, 3, _>(|k| {
+                    if extent[k] == 0. {
+                        0i32
+                    } else {
+                        ((p[k] - min[k]) / extent[k] * grid).round() as i32
+                    }
+                })
+            });
+            if keys[0] == keys[1] || keys[1] == keys[2] || keys[2] == keys[0] {
+                continue;
+            }
+            let mut ordered = keys;
+            ordered.sort();
+            let color = t.color.map(|c| (c.clamp(0., 1.) * 255.).round() as u8);
+            if !seen.insert((ordered, color)) {
+                continue;
+            }
+            let p = keys.map(|p| {
+                [
+                    (p[0] as f64 / grid) - 0.5,
+                    p[1] as f64 / grid * extent[1] / extent[0],
+                    (p[2] as f64 / grid) - 0.5,
+                ]
+            });
+            let a = std::array::from_fn::<_, 3, _>(|k| p[1][k] - p[0][k]);
+            let b = std::array::from_fn::<_, 3, _>(|k| p[2][k] - p[0][k]);
+            let n = [
+                a[1] * b[2] - a[2] * b[1],
+                a[2] * b[0] - a[0] * b[2],
+                a[0] * b[1] - a[1] * b[0],
+            ];
+            let length = n[0].hypot(n[1]).hypot(n[2]);
+            if length <= 1e-12 {
+                continue;
+            }
+            for p in p {
+                vertices.extend(p.map(|v| v as f32));
+                vertices.extend(n.map(|v| (v / length) as f32));
+                vertices.extend(t.color.map(|v| v.clamp(0., 1.) as f32));
+            }
+        }
+        if vertices.len() / 30 <= budget {
+            break;
+        }
+    }
+    if vertices.len() / 30 > budget || vertices.is_empty() {
+        return Err("Model cannot fit the interactive LOD budget".into());
+    }
+    if vertices.iter().any(|v| !v.is_finite()) || !(extent[1] / extent[0]).is_finite() {
+        return Err("Model proportions exceed GPU coordinate range".into());
+    }
+    Ok(ModelMesh {
+        height_ratio: extent[1] / extent[0],
+        source_triangles: triangles.len(),
+        triangles: vertices.len() / 30,
+        vertices,
+    })
+}
+
+fn render(triangles: &[Triangle]) -> Result<Preview, String> {
+    if triangles.is_empty() {
+        return Err("Model contains no supported triangle surfaces".into());
+    }
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for t in triangles {
+        for p in t.points {
+            for k in 0..3 {
+                if !p[k].is_finite() || p[k].abs() > 1e12 {
+                    return Err("Model coordinate is non-finite or too large".into());
+                }
+                min[k] = min[k].min(p[k]);
+                max[k] = max[k].max(p[k]);
+            }
+        }
+    }
+    let extent = std::array::from_fn(|k| max[k] - min[k]);
+    if extent[0] <= 0.0 || extent[2] <= 0.0 {
+        return Err("Model has no horizontal extent".into());
+    }
+    let mut pixels = vec![0u8; SIZE * SIZE * 4];
+    let mut depth = vec![f64::NEG_INFINITY; SIZE * SIZE];
+    let mut work = 0usize;
+    for t in triangles {
+        if t.color[3] <= 0.01 {
+            continue;
+        }
+        let p = t.points.map(|v| {
+            [
+                (v[0] - min[0]) / extent[0] * (SIZE - 1) as f64,
+                (v[2] - min[2]) / extent[2] * (SIZE - 1) as f64,
+                v[1],
+            ]
+        });
+        let edge = |a: [f64; 3], b: [f64; 3], x: f64, y: f64| {
+            (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0])
+        };
+        let area = edge(p[0], p[1], p[2][0], p[2][1]);
+        if area.abs() < 1e-12 {
+            continue;
+        }
+        let lo_x = p
+            .iter()
+            .map(|p| p[0])
+            .fold(f64::INFINITY, f64::min)
+            .floor()
+            .max(0.0) as usize;
+        let hi_x = p
+            .iter()
+            .map(|p| p[0])
+            .fold(0.0, f64::max)
+            .ceil()
+            .min((SIZE - 1) as f64) as usize;
+        let lo_y = p
+            .iter()
+            .map(|p| p[1])
+            .fold(f64::INFINITY, f64::min)
+            .floor()
+            .max(0.0) as usize;
+        let hi_y = p
+            .iter()
+            .map(|p| p[1])
+            .fold(0.0, f64::max)
+            .ceil()
+            .min((SIZE - 1) as f64) as usize;
+        work += (hi_x - lo_x + 1) * (hi_y - lo_y + 1);
+        if work > 100_000_000 {
+            return Err("Model preview exceeds the raster-work budget".into());
+        }
+        let a = std::array::from_fn::<_, 3, _>(|i| t.points[1][i] - t.points[0][i]);
+        let b = std::array::from_fn::<_, 3, _>(|i| t.points[2][i] - t.points[0][i]);
+        let n = [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ];
+        let length = n[0].hypot(n[1]).hypot(n[2]);
+        let shade = if length > 0.0 {
+            0.65 + 0.35 * n[1].abs() / length
+        } else {
+            1.0
+        };
+        for y in lo_y..=hi_y {
+            for x in lo_x..=hi_x {
+                let w = [
+                    edge(p[1], p[2], x as f64 + 0.5, y as f64 + 0.5) / area,
+                    edge(p[2], p[0], x as f64 + 0.5, y as f64 + 0.5) / area,
+                ];
+                let w2 = 1.0 - w[0] - w[1];
+                if w[0] < -1e-9 || w[1] < -1e-9 || w2 < -1e-9 {
+                    continue;
+                }
+                let z = w[0] * p[0][2] + w[1] * p[1][2] + w2 * p[2][2];
+                let i = y * SIZE + x;
+                if z < depth[i] {
+                    continue;
+                }
+                depth[i] = z;
+                let alpha = t.color[3].clamp(0.0, 1.0);
+                for c in 0..3 {
+                    pixels[i * 4 + c] =
+                        (t.color[c].clamp(0.0, 1.0) * shade * alpha * 255.0).round() as u8;
+                }
+                pixels[i * 4 + 3] = (alpha * 255.0).round() as u8;
+            }
+        }
+    }
+    let covered_pixels = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| p[3] != 0)
+        .count();
+    if covered_pixels == 0 {
+        return Err("Model has no visible top-down surfaces".into());
+    }
+    let mut image =
+        tiny_skia::Pixmap::new(SIZE as u32, SIZE as u32).ok_or("Preview allocation failed")?;
+    image.data_mut().copy_from_slice(&pixels);
+    Ok(Preview {
+        png: image.encode_png().map_err(|e| e.to_string())?,
+        triangles: triangles.len(),
+        covered_pixels,
+        model_extents: extent,
+    })
+}

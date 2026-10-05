@@ -7,7 +7,7 @@
 # A packaging gate that has never been observed rejecting anything is not
 # evidence that it can.
 #
-# Usage: check-macos-bundle.sh <path to domowik_spike_app.app>
+# Usage: check-macos-bundle.sh <path to domowik_editor.app>
 #
 # Scope is what is ON DISK. The two probes that execute the bundle stay in
 # verify.sh: they assert what the running process does -- that the image it

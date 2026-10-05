@@ -8,7 +8,7 @@ and launcher artwork retain their [upstream BSD-3-Clause notice](docs/third-part
 Domowik (from the Slavic household spirit and guardian of the home) is a
 project for creating floor plans, placing openings and furnishings, and
 exploring the result in 3D. A Rust core powers both a headless command-line
-interface (CLI) and an experimental Flutter editor.
+interface (CLI) and the actively developed Flutter editor in `frontend/`.
 
 ## Status
 
@@ -53,7 +53,7 @@ For the desktop editor, install Flutter and the platform's native build tools;
 follow [Getting started](docs/GETTING-STARTED.md) for prerequisites. On Linux:
 
 ```sh
-cd spikes/0024-flutter-rust-bridge/flutter_app
+cd frontend
 flutter pub get
 flutter run -d linux
 ```
@@ -187,7 +187,7 @@ Results go to stdout and diagnostics to stderr, so piping is safe.
                     │ entities, validation     │
                     └──────────────────────────┘
 
-   Flutter editor prototype → native bridge → domowik-edit + core
+   Flutter editor → native bridge → domowik-edit + core
    Linux 3D texture → renderer-neutral domowik-scene + domowik-models
    Experimental platform backend; portable rendering gates remain open.
 ```
@@ -196,7 +196,7 @@ The Rust workspace has no dependency cycles. `format` holds the entity types eve
 speaks in; `document` owns the operation log that every change flows through;
 `container` owns the file; `geometry` owns the numerics and the plan topology;
 `edit` owns shared editing gestures, consumed by both the CLI and the Flutter
-prototype's native bridge.
+frontend's native bridge.
 
 The GUI borrows native document handles; Rust owns editing semantics and
 derived scene geometry. The platform runner owns GPU resources. See

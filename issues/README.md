@@ -162,3 +162,4 @@ The clean-room rules apply fully to specification and spike issues.
 | [0089](done/0089-single-commit-source-baseline.md) | 0 | Collapse committed history and prune branches | Done |
 | [0090](done/0090-ci-main-repair.md) | 2 | Repair hosted main CI preflight failures | Done |
 | [0091](done/0091-documentation-consolidation.md) | 0 | Consolidate documentation and retire archive references | Done |
+| [0092](done/0092-promote-frontend.md) | 2 | Promote the actively developed frontend | Done |

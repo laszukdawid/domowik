@@ -96,13 +96,21 @@ but is not required by the initial architecture.
 
 ## GUI and native boundaries
 
-### Rust-to-Flutter bridge (desktop prototype)
+### Rust-to-Flutter bridge (active frontend)
+
+The actively developed application lives at root-level `frontend/`, named
+Domowik (`domowik_editor` package/executable). Flutter sources and platforms
+live directly there; `native/` contains the C ABI adapter, `plugin/` packages
+it, and `dart_harness/` owns the shared bindings. `frontend/Cargo.toml` is a
+separate workspace with its own lockfile and release profile. Core crates
+remain reusable and authoritative. This organizational promotion does not
+accept proposed rendering decisions or close platform/performance gates.
 
 The editor calls a Rust C ABI through `dart:ffi`. The macOS plugin links a
 Rust static archive into an embedded framework. Opaque plan handles, explicit
 buffer ownership, error and panic containment, cancellation and close/drain
 rules are exercised by Rust, C, Dart and built-bundle probes. See
-[the spike evidence](../spikes/0024-flutter-rust-bridge/README.md).
+[the native boundary evidence](../frontend/native/README.md).
 
 `domowik-edit` owns gesture consequences (joins, splits and opening remaps),
 while `domowik-container::Plan` owns document/file sessions. The CLI and

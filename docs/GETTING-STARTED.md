@@ -64,7 +64,7 @@ flutter doctor -v
 Then, from the repository root:
 
 ```sh
-cd spikes/0024-flutter-rust-bridge/flutter_app
+cd frontend
 flutter pub get
 flutter run -d linux
 ```
@@ -73,13 +73,13 @@ The plugin build compiles and bundles the Rust bridge automatically. The editor
 opens an untitled plan. Choose **Walls** and drag in empty canvas to start.
 The [user guide](USER-GUIDE.md) covers assets, preferences and 3D navigation.
 
-To compile without launching a window, from `flutter_app`:
+To compile without launching a window, from `frontend/`:
 
 ```sh
 flutter build linux --release
 ```
 
-The executable is `build/linux/x64/release/bundle/domowik_spike_app` on x64.
+The executable is `build/linux/x64/release/bundle/domowik_editor` on x64.
 Keep the entire bundle together: its `lib/` and `data/` directories are required.
 This is a local development artifact, not a release-grade distribution.
 
@@ -98,41 +98,40 @@ flutter doctor -v
 From the repository root:
 
 ```sh
-cd spikes/0024-flutter-rust-bridge/flutter_app
+cd frontend
 flutter pub get
 flutter run -d macos
 ```
 
 The first CocoaPods/Xcode build compiles the Rust archive. macOS has the 2D
 editor; the current Linux native 3D backend is not a macOS renderer.
-For release compilation and in-bundle probes, from `flutter_app`:
+For release compilation and in-bundle probes, from `frontend/`:
 
 ```sh
 flutter build macos --release
-APP=build/macos/Build/Products/Release/domowik_spike_app.app/Contents/MacOS/domowik_spike_app
+APP=build/macos/Build/Products/Release/domowik_editor.app/Contents/MacOS/domowik_editor
 DOMOWIK_SPIKE_SELFTEST=1 "$APP"
 DOMOWIK_SPIKE_FIRSTFRAME=1 "$APP"
 ```
 
-See the [bridge evidence](../spikes/0024-flutter-rust-bridge/README.md) for
+See the [bridge evidence](../frontend/README.md) for
 what these probes establish and their limits.
 
 ## Run editor tests
 
 Some widget tests load the real native bridge; a root-workspace build alone
-does not create it because the spike is a separate Cargo workspace. From the
+does not create it because the frontend is a separate Cargo workspace. From the
 repository root:
 
 ```sh
-cd spikes/0024-flutter-rust-bridge
+cd frontend
 cargo build --release --locked
-cd flutter_app
 flutter pub get
 flutter analyze
 flutter test
 ```
 
-Tests expect the bridge in the spike's `target/release/` directory. If you set
+Tests expect the bridge in the frontend's `target/release/` directory. If you set
 `CARGO_TARGET_DIR` or `CARGO_BUILD_TARGET`, use a shell without those overrides
 for this recipe. Linux tests load a `.so`; macOS tests load a `.dylib`.
 See [Contributing](../CONTRIBUTING.md) for full verification and CPU benchmarks.
@@ -144,7 +143,7 @@ See [Contributing](../CONTRIBUTING.md) for full verification and CPU benchmarks.
 | Cargo/rustup missing during a GUI build | Check the build process's PATH, not just your terminal; macOS expects the standard rustup location. |
 | GTK or epoxy not found | Install development packages and check the pkg-config command above. |
 | Flutter invokes an unexpected SDK | Check `command -v flutter` and `flutter --version`; version-manager shims may select another SDK. |
-| Tests cannot load `libdomowik_bridge` | Build the separate spike in release mode at the expected location. |
+| Tests cannot load `libdomowik_bridge` | Build the separate frontend workspace in release mode at the expected location. |
 | GUI cannot start in a headless shell | Use widget tests or release compilation; launching requires a desktop/display. Native-dialog checks additionally need Xvfb. |
 | 3D fails or is unavailable | Use the 2D plan view; 3D currently requires Linux and an OpenGL-capable environment. |
 | Preferences cannot be saved | Inspect the reported config error; back up the config before repairing it. Corrupt/unsupported config is not silently overwritten. |

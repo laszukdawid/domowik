@@ -17,7 +17,7 @@ establish a stable API or file-format promise.
 
 Platform evidence is bounded by the tested ABI, host and increment. Read
 [Architecture](ARCHITECTURE.md), the
-[bridge evidence](../spikes/0024-flutter-rust-bridge/README.md),
+[bridge evidence](../frontend/native/README.md),
 [ADR 0003](decisions/0003-flutter-gui-wgpu-native.md) and
 [ADR 0010](decisions/0010-native-3d-texture-experiment.md) for open gates.
 Successful widget tests or CPU microbenchmarks do not prove physical-device

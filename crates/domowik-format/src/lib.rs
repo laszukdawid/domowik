@@ -242,6 +242,32 @@ pub enum OpeningKind {
     Window,
 }
 
+/// Operable construction, separate from whether the aperture is a door or a
+/// window. Absent on older plans: [Opening::mechanism] resolves that case to
+/// the original single-hinged representation without rewriting old files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OpeningMechanism {
+    DoorHinged,
+    DoorSliding,
+    WindowSideHung,
+    WindowDoubleSwing,
+    WindowLift,
+}
+
+impl OpeningMechanism {
+    pub fn accepts(self, kind: OpeningKind) -> bool {
+        matches!(
+            (self, kind),
+            (Self::DoorHinged | Self::DoorSliding, OpeningKind::Door)
+                | (
+                    Self::WindowSideHung | Self::WindowDoubleSwing | Self::WindowLift,
+                    OpeningKind::Window
+                )
+        )
+    }
+}
+
 /// Which host face a value refers to (BEHAVIOR-SPEC R4.0.4).
 ///
 /// `Left` names the `+n̂` host face and `Right` the `−n̂` face, where `n̂` is
@@ -281,6 +307,10 @@ pub enum Hinge {
 pub struct Opening {
     pub id: Uuid,
     pub kind: OpeningKind,
+    /// Optional for compatibility with plans written before mechanism choices
+    /// existed. The absence has the same semantics as a single-hinged opening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mechanism: Option<OpeningMechanism>,
     pub host_wall_id: Uuid,
     /// Position of the opening's CENTRE along the host wall's centre line,
     /// in `[0, 1]`.
@@ -326,6 +356,12 @@ pub struct Opening {
 }
 
 impl Opening {
+    pub fn effective_mechanism(&self) -> OpeningMechanism {
+        self.mechanism.unwrap_or(match self.kind {
+            OpeningKind::Door => OpeningMechanism::DoorHinged,
+            OpeningKind::Window => OpeningMechanism::WindowSideHung,
+        })
+    }
     /// A door of standard proportions, centred at `u` on `host_wall_id`.
     ///
     /// `host_thickness_mm` sets `depthMm`: a door cuts the whole wall, and
@@ -343,6 +379,7 @@ impl Opening {
             unknown: Default::default(),
             id: Uuid::now_v7(),
             kind: OpeningKind::Door,
+            mechanism: None,
             host_wall_id,
             u,
             width_mm,
@@ -374,6 +411,7 @@ impl Opening {
             unknown: Default::default(),
             id: Uuid::now_v7(),
             kind: OpeningKind::Window,
+            mechanism: None,
             host_wall_id,
             u,
             width_mm,
@@ -1051,8 +1089,8 @@ pub enum ValidationError {
     OpeningParamOutOfRange { id: Uuid, u: f64 },
 
     #[error(
-        "opening {opening_id}: sill + height is {top} mm but host wall \
-         {wall_id} is only {host_height} mm high"
+        "opening {opening_id}: sill + height reaches {top:.0} mm, but host wall \
+         {wall_id} is only {host_height:.0} mm high"
     )]
     ApertureExceedsHostHeight {
         /// The offending opening.
@@ -1071,6 +1109,13 @@ pub enum ValidationError {
         id: Uuid,
         /// The value found.
         value: f64,
+    },
+
+    #[error("opening {id}: mechanism {mechanism:?} is incompatible with {kind:?}")]
+    InvalidOpeningMechanism {
+        id: Uuid,
+        kind: OpeningKind,
+        mechanism: OpeningMechanism,
     },
 
     #[error(
@@ -1109,8 +1154,8 @@ pub enum ValidationError {
     },
 
     #[error(
-        "opening {id} is {width} mm wide at u={u} on a {host_length} mm wall, so it \
-         runs from {start} to {end} mm and does not fit within the wall"
+        "opening {id} is {width:.0} mm wide at u={u:.1} on a {host_length:.0} mm wall, so it \
+         runs from {start:.0} to {end:.0} mm and does not fit within the wall"
     )]
     OpeningDoesNotFitHost {
         id: Uuid,
@@ -1723,6 +1768,15 @@ impl Document {
         }
 
         for opening in &self.openings {
+            if let Some(mechanism) = opening.mechanism {
+                if !mechanism.accepts(opening.kind) {
+                    errors.push(ValidationError::InvalidOpeningMechanism {
+                        id: opening.id,
+                        kind: opening.kind,
+                        mechanism,
+                    });
+                }
+            }
             if !(0.0..=1.0).contains(&opening.u) || !opening.u.is_finite() {
                 errors.push(ValidationError::OpeningParamOutOfRange {
                     id: opening.id,
@@ -2155,6 +2209,65 @@ mod tests {
         let level = doc.levels[0].id;
         doc.walls.push(Wall::new(level, start, end, 120.0, 2500.0));
         doc
+    }
+
+    #[test]
+    fn opening_mechanisms_preserve_legacy_wire_and_reject_wrong_kinds() {
+        let mut doc = doc_with_wall(Point::new(0.0, 0.0), Point::new(4000.0, 0.0));
+        let host = doc.walls[0].id;
+        let door = Opening::door(host, 0.5, 900.0, 2100.0, 120.0);
+        let json = serde_json::to_value(&door).unwrap();
+        assert!(json.get("mechanism").is_none());
+        let mut decoded: Opening = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.effective_mechanism(), OpeningMechanism::DoorHinged);
+        decoded.mechanism = Some(OpeningMechanism::DoorSliding);
+        assert_eq!(
+            serde_json::to_value(&decoded).unwrap()["mechanism"],
+            "doorSliding"
+        );
+        doc.openings.push(decoded.clone());
+        assert!(doc.validate().is_empty());
+        doc.openings[0].mechanism = Some(OpeningMechanism::WindowLift);
+        assert!(doc
+            .validate()
+            .iter()
+            .any(|e| matches!(e, ValidationError::InvalidOpeningMechanism { .. })));
+    }
+
+    #[test]
+    fn opening_fit_error_rounds_display_values_to_human_scale() {
+        let error = ValidationError::OpeningDoesNotFitHost {
+            id: Uuid::nil(),
+            width: 1200.0000000001,
+            u: -0.3577315571290243,
+            host_length: 1870.0158345082205,
+            start: -1268.9636763345577,
+            end: -68.9636763345577,
+        };
+
+        let message = error.to_string();
+        assert!(message.contains("1200 mm wide at u=-0.4"), "{message}");
+        assert!(message.contains("1870 mm wall"), "{message}");
+        assert!(message.contains("runs from -1269 to -69 mm"), "{message}");
+        assert!(!message.contains("357731557"), "{message}");
+    }
+
+    #[test]
+    fn opening_host_height_error_rounds_display_values_to_whole_millimetres() {
+        let error = ValidationError::ApertureExceedsHostHeight {
+            opening_id: Uuid::nil(),
+            wall_id: Uuid::nil(),
+            top: 2300.0000000001,
+            host_height: 250.0000000001,
+        };
+
+        let message = error.to_string();
+        assert!(
+            message.contains("sill + height reaches 2300 mm"),
+            "{message}"
+        );
+        assert!(message.contains("only 250 mm high"), "{message}");
+        assert!(!message.contains("0000000001"), "{message}");
     }
 
     fn level_at(elevation: f64, thickness: f64) -> Level {

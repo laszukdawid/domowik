@@ -20,6 +20,7 @@ use crate::spatial::{Aabb, SpatialIndex};
 use crate::walls::WallSolid;
 use domowik_format::{AssetInstance, Document, Point, DERIVED_COORD_BOUND_MM};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Hit classes in R7.1.3 precedence order.
@@ -32,6 +33,8 @@ pub enum HitClass {
     JoinNode,
     /// A wall endpoint belonging to no join.
     FreeEndpoint,
+    /// A door or window aperture on a wall.
+    Opening,
     /// A wall's OWN occupied rectangle — not the cluster union.
     Region,
     /// A DEGRADED asset instance's deterministic placeholder box (§9.6).
@@ -45,8 +48,8 @@ pub enum HitClass {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hit {
     pub class: HitClass,
-    /// The entity this candidate selects: the join for a `JoinNode`, the wall
-    /// for a `FreeEndpoint` or a `Region`.
+    /// The entity this candidate selects: a join, wall, or opening according
+    /// to the hit class.
     pub entity: Uuid,
     /// The point on the candidate closest to the query — the query point
     /// itself when it is inside a region, giving exact distance zero.
@@ -54,8 +57,8 @@ pub struct Hit {
     /// Squared distance from the query point, in plan millimetres squared.
     ///
     /// A binary64 display value, potentially infinite after squaring. Endpoint
-    /// and join ranking does not use this rounded value. Region ranking and
-    /// closest-point projection remain approximate under issue 0012.
+    /// and join ranking does not use this rounded value. Opening and wall
+    /// region ranking and projection remain approximate under issue 0012.
     pub distance_squared: f64,
 }
 
@@ -82,7 +85,7 @@ impl Hit {
         self.class
             .cmp(&other.class)
             .then_with(|| {
-                if self.class != HitClass::Region {
+                if self.class != HitClass::Region && self.class != HitClass::Opening {
                     // Admission has already checked that these coordinates
                     // are finite. Different classes never reach this closure.
                     // Shared endpoint coordinates imply exactly equal distance;
@@ -267,6 +270,8 @@ pub struct HitIndex {
     /// Wall polygons by id, so a query never re-derives them.
     regions: Vec<(Uuid, Vec<Point>)>,
     region_index: SpatialIndex<usize>,
+    openings: Vec<(Uuid, Vec<Point>)>,
+    opening_index: SpatialIndex<usize>,
     endpoints: SpatialIndex<(Uuid, HitClass, Point)>,
     /// The caller's degraded instances for this level. Empty unless the query
     /// was built with a resolution snapshot.
@@ -280,6 +285,7 @@ pub struct HitIndex {
 #[derive(Debug, Clone, Copy)]
 enum Tail {
     Region(usize),
+    Opening(usize),
     Placeholder(Aabb),
     None,
 }
@@ -313,11 +319,47 @@ impl HitIndex {
                 .enumerate()
                 .filter_map(|(i, (_, poly))| Aabb::of(poly).map(|b| (b, i))),
         );
+        // The same aperture rectangle rendered by the bridge: the host axis
+        // interval occupied by the opening, at the host's full thickness.
+        let host_walls: HashMap<_, _> = if doc.openings.is_empty() {
+            HashMap::new()
+        } else {
+            doc.walls_on_level(level_id)
+                .map(|wall| (wall.id, wall))
+                .collect()
+        };
+        let openings: Vec<_> = doc
+            .openings
+            .iter()
+            .filter_map(|opening| {
+                let wall = host_walls.get(&opening.host_wall_id)?;
+                let (s0, s1) = opening.span(wall.length_mm())?;
+                let along = |t: f64| {
+                    Point::new(
+                        wall.start().x + (wall.end().x - wall.start().x) * t,
+                        wall.start().y + (wall.end().y - wall.start().y) * t,
+                    )
+                };
+                let poly = WallSolid::new(along(s0), along(s1), wall.thickness_mm).rectangle()?;
+                Some((
+                    opening.id,
+                    canonical_ring(&poly, Winding::CounterClockwise)?,
+                ))
+            })
+            .collect();
+        let opening_index = SpatialIndex::build(
+            openings
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (_, poly))| Aabb::of(poly).map(|b| (b, i))),
+        );
         let placeholder_index =
             SpatialIndex::build(placeholders.iter().enumerate().map(|(i, p)| (p.bounds, i)));
         Self {
             regions,
             region_index,
+            openings,
+            opening_index,
             endpoints: endpoint_index(doc, level_id),
             placeholders: placeholders.to_vec(),
             placeholder_index,
@@ -375,6 +417,24 @@ impl HitIndex {
             }
         }
 
+        // Opening bands rank ahead of their host's wall region. Both use the
+        // same broad and narrow phase so a nearby wall remains cycleable.
+        for i in self.opening_index.near(point, radius_mm) {
+            let (id, poly) = &self.openings[i];
+            let (closest, d2) = closest_point_on_polygon(poly, point);
+            if d2 <= r2 {
+                hits.push((
+                    Hit {
+                        class: HitClass::Opening,
+                        entity: *id,
+                        closest,
+                        distance_squared: d2,
+                    },
+                    Tail::Opening(i),
+                ));
+            }
+        }
+
         // Regions: each wall's own centred butt-capped rectangle (R3.0.2),
         // NOT the cluster union.
         for i in self.region_index.near(point, radius_mm) {
@@ -426,6 +486,9 @@ impl HitIndex {
             a.rank(b, point, || match (at, bt) {
                 (Tail::Region(ai), Tail::Region(bi)) => {
                     compare_rings(&self.regions[*ai].1, &self.regions[*bi].1)
+                }
+                (Tail::Opening(ai), Tail::Opening(bi)) => {
+                    compare_rings(&self.openings[*ai].1, &self.openings[*bi].1)
                 }
                 // R7.1.3's placeholder key: exact min corner, then the ID the
                 // caller of `rank` appends.
@@ -773,10 +836,30 @@ mod tests {
         (doc, level)
     }
 
+    #[test]
+    fn opening_is_selected_before_its_host_and_only_on_its_level() {
+        let mut doc = Document::with_ground_floor();
+        let level = doc.levels[0].id;
+        let wall = Wall::new(level, P(0.0, 0.0), P(4000.0, 0.0), 200.0, 2500.0);
+        let wall_id = wall.id;
+        let opening = domowik_format::Opening::window(wall_id, 0.5, 1200.0, 1400.0, 900.0, 200.0);
+        let opening_id = opening.id;
+        doc.walls.push(wall);
+        doc.openings.push(opening);
+        let hits = hit_test(&doc, level, P(2000.0, 0.0), 0.0);
+        assert_eq!(hits[0].class, HitClass::Opening);
+        assert_eq!(hits[0].entity, opening_id);
+        assert_eq!(hits[1].entity, wall_id);
+        assert!(hit_test(&doc, Uuid::nil(), P(2000.0, 0.0), 0.0).is_empty());
+        assert_eq!(hit_test(&doc, level, P(500.0, 0.0), 0.0)[0].entity, wall_id);
+    }
+
     fn endpoint_only_index(points: &[Point]) -> HitIndex {
         HitIndex {
             regions: Vec::new(),
             region_index: SpatialIndex::build(Vec::<(Aabb, usize)>::new()),
+            openings: Vec::new(),
+            opening_index: SpatialIndex::build(Vec::<(Aabb, usize)>::new()),
             placeholders: Vec::new(),
             placeholder_index: SpatialIndex::build(Vec::<(Aabb, usize)>::new()),
             endpoints: SpatialIndex::build(points.iter().enumerate().map(|(i, &at)| {
@@ -1060,6 +1143,8 @@ mod tests {
         let index = HitIndex {
             regions,
             region_index,
+            openings: Vec::new(),
+            opening_index: SpatialIndex::build(Vec::<(Aabb, usize)>::new()),
             endpoints: SpatialIndex::build(vec![
                 // Equal at EVERY level: these two are one candidate.
                 (Aabb::point(origin), (wall, HitClass::FreeEndpoint, origin)),

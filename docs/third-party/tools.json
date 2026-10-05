@@ -58,7 +58,7 @@
       "sourceUrl": "https://www.docker.com/products/docker-desktop/",
       "license": "Docker Subscription Service Agreement (proprietary); eligibility for this use UNASSESSED",
       "status": "dev-only",
-      "usedIn": "spikes/0024-flutter-rust-bridge/docker/run-linux-abi.sh: supplies the Linux kernel, glibc and ELF loader that issue 0024's Linux slice executes on. Nothing from Docker is linked into, bundled with, or distributed by Domowik.",
+      "usedIn": "frontend/docker/run-linux-abi.sh: supplies the Linux kernel, glibc and ELF loader that issue 0024's Linux slice executes on. Nothing from Docker is linked into, bundled with, or distributed by Domowik.",
       "provenance": "Owner-installed local development tool, already present and running on this machine; not procured, not purchased, and not installed by this work. Used as authorised local platform setup. NOTHING FROM DOCKER IS ADOPTED, LINKED OR DISTRIBUTED by Domowik: the dependency is on the container runtime only, and the images, toolchains and scripts inside it are separately licensed and listed as their own rows. Licence eligibility for this use is recorded as UNASSESSED — this row is not a compliance clearance and must not be read as one. No concrete unmet licence or purchase requirement has been encountered. The scripts invoke the runtime through one command name and are written to stay portable, but NO alternative runtime (Podman, Lima, Colima) has been executed here and no parity with them is claimed.",
       "added": "2026-09-12"
     },
@@ -68,7 +68,7 @@
       "sourceUrl": "https://hub.docker.com/_/rust",
       "license": "Apache-2.0 OR MIT (Rust toolchain); Debian base packages under their own licences",
       "status": "dev-only",
-      "usedIn": "spikes/0024-flutter-rust-bridge/docker/Dockerfile.linux-abi: the build host for the Linux .so, the Rust test suite, and the sanitised C harness.",
+      "usedIn": "frontend/docker/Dockerfile.linux-abi: the build host for the Linux .so, the Rust test suite, and the sanitised C harness.",
       "provenance": "Official Docker Hub library image, pinned BY DIGEST rather than by tag so the base cannot drift under the evidence it produces. The tag was chosen because it carries rustc 1.98.0 — exactly what rust-toolchain.toml pins — which the Dockerfile then asserts with a `test` on the full version string rather than trusting the tag. rustfmt and clippy are added with `rustup component add` because the official image ships the minimal profile. Nothing from the image is distributed.",
       "added": "2026-09-12"
     },
@@ -78,7 +78,7 @@
       "sourceUrl": "https://packages.debian.org/bookworm/clang",
       "license": "Apache-2.0 WITH LLVM-exception",
       "status": "dev-only",
-      "usedIn": "spikes/0024-flutter-rust-bridge/docker/Dockerfile.linux-abi: compiles charness/main.c with -fsanitize=address,undefined and supplies llvm-symbolizer.",
+      "usedIn": "frontend/docker/Dockerfile.linux-abi: compiles charness/main.c with -fsanitize=address,undefined and supplies llvm-symbolizer.",
       "provenance": "Debian bookworm archive packages, version-pinned to the candidates observed on the pinned base image. clang rather than gcc because scripts/verify.sh invokes clang by name on macOS, and a Linux run using a different compiler would not be testing the same thing. libclang-rt-14-dev is listed separately and is NOT optional: Debian ships the sanitizer runtimes apart from the compiler, so without it the harness compiles and then fails at link with a missing libclang_rt.asan-aarch64.a — observed here before it was added.",
       "added": "2026-09-12"
     },
@@ -88,7 +88,7 @@
       "sourceUrl": "https://storage.googleapis.com/dart-archive/channels/stable/release/3.11.4/sdk/dartsdk-linux-arm64-release.zip",
       "license": "BSD-3-Clause",
       "status": "dev-only",
-      "usedIn": "spikes/0024-flutter-rust-bridge/docker/Dockerfile.linux-abi: runs dart_harness/bin/harness.dart against the Linux .so, so dart:ffi symbol resolution is executed on Linux rather than inferred from the macOS run.",
+      "usedIn": "frontend/docker/Dockerfile.linux-abi: runs dart_harness/bin/harness.dart against the Linux .so, so dart:ffi symbol resolution is executed on Linux rather than inferred from the macOS run.",
       "provenance": "Official Dart archive, pinned by version AND by the publisher's own SHA-256, which the Dockerfile verifies with `sha256sum -c` BEFORE unpacking. Version 3.11.4 is not a free choice: it is the Dart that Flutter 3.41.6 carries, so the harness runs on the same VM the application does. No Dart SDK component is distributed with Domowik.",
       "added": "2026-09-12"
     },
@@ -98,7 +98,7 @@
       "sourceUrl": "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.41.6-stable.tar.xz",
       "license": "BSD-3-Clause (framework and Dart SDK); prebuilt engine artifacts carry their own aggregated terms and are not redistributed",
       "status": "dev-only",
-      "usedIn": "spikes/0024-flutter-rust-bridge/docker/Dockerfile.linux-app: builds and runs the Flutter LINUX application so bundle packaging is executed on Linux, not assumed from the macOS bundle.",
+      "usedIn": "frontend/docker/Dockerfile.linux-app: builds and runs the Flutter LINUX application so bundle packaging is executed on Linux, not assumed from the macOS bundle.",
       "provenance": "Official Flutter release archive, pinned by version and by the SHA-256 published in releases_linux.json, verified before unpacking. 3.41.6 matches the macOS host SDK exactly so the two platform runs are the same framework. NOTE FOR THE RECORD, and it constrains the evidence: Flutter publishes NO stable Linux arm64 archive — releases_linux.json lists dart_sdk_arch x64 only — so this slice runs as linux/amd64 under emulation on an Apple Silicon host. Functional and packaging results are valid; timings from it are not and are not quoted as measurements. This row is separate from the historical `flutter-sdk` row, which records the 2026-08 Go spike and is left untouched as the record of that run.",
       "added": "2026-09-12"
     },

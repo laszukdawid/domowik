@@ -1,6 +1,6 @@
 {
   "manifestSchema": 1,
-  "description": "Declarative distribution manifest for the RUST product (issue 0036). The Go manifest it replaces is frozen at _reference/go/release/manifest.json and describes binaries that no longer exist. Generated documents are never written into this file or into docs/third-party/; they go to releaseOutputDir, which is not committed. Nothing here publishes, tags, uploads or reserves anything.",
+  "description": "Declarative distribution manifest for the Rust product (issue 0036). The former Go manifest survives only in Git history. Generated documents go to releaseOutputDir, which is not committed, never into this file or docs/third-party/. Nothing here publishes, tags, uploads or reserves anything.",
   "sourceDateEpoch": {
     "policy": "require-env-or-git-commit",
     "notes": "SOURCE_DATE_EPOCH when set and valid, otherwise the HEAD commit time. The wall clock is never read, because a document that differs every run cannot be diffed, and diffing is the only mechanism that has actually held for docs/RUST-DEPENDENCIES.md and NOTICE."
@@ -16,14 +16,14 @@
   },
   "embedScanSubtrees": [
     "crates",
-    "spikes/0024-flutter-rust-bridge"
+    "frontend"
   ],
   "artifacts": [
     {
       "id": "domowik-cli",
       "kind": "rust-binary",
       "status": "built",
-      "description": "The command-line application. The only artifact Domowik builds today that a user could be given.",
+      "description": "The command-line application, with release inventory coverage separate from the staged frontend bundle.",
       "workspaceRoot": ".",
       "rootPackage": "domowik-cli",
       "binaryName": "domowik",
@@ -41,13 +41,13 @@
       "id": "domowik-gui-macos",
       "kind": "flutter-bundle",
       "status": "staged",
-      "description": "The macOS application bundle built from the issue-0024 Flutter app. SPIKE IS NOT THE SAME AS UNSHIPPED for a licence inventory (root, 2026-09-12): this bundle is locally runnable and redistributes a Flutter engine, an AOT-compiled Dart runtime, plugin frameworks and a Material icon font, none of which cargo metadata can see. It is declared so that the obligation is visible and countable, NOT so that it can be claimed as covered.",
-      "workspaceRoot": "spikes/0024-flutter-rust-bridge",
-      "rootPackage": "domowik-bridge-spike",
-      "embedSubtree": "spikes/0024-flutter-rust-bridge",
-      "dartLock": "spikes/0024-flutter-rust-bridge/flutter_app/pubspec.lock",
+      "description": "The macOS bundle of the actively developed frontend. This locally runnable interface redistributes a Flutter engine, an AOT-compiled Dart runtime, plugin frameworks and a Material icon font, none of which cargo metadata can see. Declared so the obligation is visible, not to claim completed release coverage.",
+      "workspaceRoot": "frontend",
+      "rootPackage": "domowik-frontend-bridge",
+      "embedSubtree": "frontend",
+      "dartLock": "frontend/pubspec.lock",
       "sdkTool": "flutter-sdk",
-      "bundlePath": "spikes/0024-flutter-rust-bridge/flutter_app/build/macos/Build/Products/Release/domowik_spike_app.app",
+      "bundlePath": "frontend/build/macos/Build/Products/Release/domowik_editor.app",
       "bundleScan": {
         "frameworks": "Contents/Frameworks",
         "flutterAssets": "Contents/Frameworks/App.framework/Resources/flutter_assets"

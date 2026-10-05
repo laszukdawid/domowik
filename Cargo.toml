@@ -4,6 +4,8 @@ members = [
     "crates/domowik-format",
     "crates/domowik-container",
     "crates/domowik-assets",
+    "crates/domowik-models",
+    "crates/domowik-scene",
     "crates/domowik-document",
     "crates/domowik-edit",
     "crates/domowik-geometry",
@@ -11,9 +13,9 @@ members = [
     "crates/domowik-devtools",
     "crates/domowik-bench",
 ]
-# Spike crates are their own workspaces (ED-0097). Excluded so `cargo build
-# --workspace` cannot pull a spike into the distributed graph by accident.
-exclude = ["spikes/0024-flutter-rust-bridge"]
+# Frontend platform packaging and unimplemented rendering experiments remain
+# isolated from the reusable core workspace.
+exclude = ["frontend", "spikes/0025-flutter-wgpu-surface"]
 
 [workspace.package]
 version = "0.1.0"
