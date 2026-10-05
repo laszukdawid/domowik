@@ -108,7 +108,7 @@ The clean-room rules apply fully to specification and spike issues.
 | Issue | Phase | Title | Status |
 |---|---:|---|---|
 | [0024](0024-flutter-rust-bridge-spike.md) | 2 | Flutter-to-Rust bridge spike | In Progress (partial scope) |
-| [0025](0025-flutter-wgpu-surface-spike.md) | 3 | Flutter-to-wgpu surface spike | In Progress |
+| [0025](0025-flutter-wgpu-surface-spike.md) | 3 | Flutter-to-wgpu surface spike | Open |
 | [0033](0033-viewport-render-input-performance.md) | 2 | Viewport, render, and input performance criteria | Open |
 | [0039](done/0039-editor-workspace.md) | 2 | Make the Flutter editor workspace clear and usable | Done |
 | [0040](done/0040-editor-unsaved-changes.md) | 2 | Protect unsaved edits when replacing an editor session | Done |
@@ -163,3 +163,4 @@ The clean-room rules apply fully to specification and spike issues.
 | [0090](done/0090-ci-main-repair.md) | 2 | Repair hosted main CI preflight failures | Done |
 | [0091](done/0091-documentation-consolidation.md) | 0 | Consolidate documentation and retire archive references | Done |
 | [0092](done/0092-promote-frontend.md) | 2 | Promote the actively developed frontend | Done |
+| [0093](done/0093-remove-obsolete-repository-remnants.md) | 0 | Remove obsolete repository remnants | Done |

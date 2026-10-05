@@ -41,6 +41,12 @@ compatibility before treating them as settled.
 | `frontend/linux/runner` / `frontend/macos/Runner` | Native pickers, lifecycle and platform surfaces |
 | `crates/domowik-devtools/src/corpusgen` | Rust malformed-file fixture generator and corpus gates |
 
+`build/`, `target/`, `frontend/build/` and `frontend/target/` hold ignored
+generated output or compiler caches, not source. There is no implemented server
+application under `backend/`; optional future services remain architectural
+proposals. Experiment plans and historical evidence belong in `issues/` and
+`docs/`, not empty implementation workspaces or handoffs in build directories.
+
 The former `_reference/` archive was removed on 2026-10-05. Historical Go code
 remains in earlier Git commits; it is not normative and is not a development
 dependency. Use the reviewed specifications for implementation work.

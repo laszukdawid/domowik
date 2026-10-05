@@ -117,7 +117,7 @@ contract is broken.
   `frontend/plugin/`. `frontend/Cargo.toml` owns a separate Cargo workspace.
   Display name: Domowik; Dart package/executable: `domowik_editor`. Platform
   IDs and FFI symbols remain stable. ADR 0003 stays Proposed until its gates
-  pass; the remaining wgpu experiment is not an implemented renderer.
+  pass; a portable wgpu backend remains proposed, not implemented.
 - Document exported APIs, ownership, concurrency, errors, numerical
   guarantees, and FFI safety. Avoid comments that merely restate code.
 - Geometry APIs must state units, coordinate bounds, tolerance or exactness,

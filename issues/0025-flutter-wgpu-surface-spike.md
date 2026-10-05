@@ -2,7 +2,7 @@
 
 - **Phase:** 3
 - **Priority:** High
-- **Status:** In Progress
+- **Status:** Open
 - **Depends on:** 0024
 
 ## Problem
@@ -14,8 +14,11 @@ to wgpu-native alone do not display a frame.
 
 Issue 0092 promotes the working application to `frontend/`; it is the place
 to integrate a future GPU backend, not a second Flutter application.
-`spikes/0025-flutter-wgpu-surface` currently holds a Cargo manifest/lockfile
+The former `spikes/0025-flutter-wgpu-surface` held a Cargo manifest/lockfile
 and placeholder `src/lib.rs`, with no rendering implementation to merge.
+Issue 0093 removes that unused workspace, not the requirements below. This
+issue returns to Open because implementation is not currently underway; no
+criterion is completed by removing scaffolding.
 The dated feasibility inventory below is a design reference, not execution
 evidence on the current Linux host. The interface already has a working Linux
 native GL texture backend; renderer-neutral scene payloads live in

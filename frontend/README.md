@@ -39,14 +39,15 @@ That root is now `frontend/`; its `flutter_app/` became this directory,
 `flutter_plugin/` became `plugin/`, and Rust sources/tests/headers moved into
 `native/`. Dated measurements retain their original paths and environments.
 
-## Rendering and the wgpu experiment
+## Rendering and the proposed portable backend
 
-`spikes/0025-flutter-wgpu-surface` contains an isolated dependency manifest,
-lockfile and placeholder Rust file, not a renderer or Flutter texture bridge.
-There is no implementation to merge. Its proposed texture/lifecycle work can
-guide a future backend, but needs implementation, license review and platform
-validation first. The working Linux native GL texture backend stays in place;
-renderer-neutral scene data remains in `crates/domowik-scene`.
+The former `spikes/0025-flutter-wgpu-surface` workspace contained only dependency
+setup and a placeholder, and was removed during repository cleanup. The design
+and unfulfilled texture/lifecycle requirements remain in
+[issue 0025](../issues/0025-flutter-wgpu-surface-spike.md); there was no renderer
+implementation to merge. A future backend needs implementation, license review
+and platform validation. The working Linux native GL texture backend stays in
+place; renderer-neutral scene data remains in `crates/domowik-scene`.
 
 From the repository root, after installing the required toolchains:
 

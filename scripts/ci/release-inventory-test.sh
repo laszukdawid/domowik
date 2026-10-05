@@ -55,11 +55,9 @@ fixture() {
     git config gc.auto 0
     git config user.email "test@invalid"
     git config user.name "release inventory test"
-    # Explicit paths from the same list, never a wildcard sweep. `-f` is
-    # required and correct: `build/HANDOFF.md` is TRACKED in the source
-    # repository while `build/` is ignored, so a fresh index refuses it
-    # without the flag and the copy would silently lose a tracked file.
-    tr '\n' '\0' < "$WORK/filelist" | xargs -0 git add -f --
+    # Explicit source paths from the same list, never a wildcard sweep or
+    # forced inclusion of ignored build output.
+    tr '\n' '\0' < "$WORK/filelist" | xargs -0 git add --
     git commit -q -m "fixture"
   )
 }

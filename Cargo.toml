@@ -13,9 +13,8 @@ members = [
     "crates/domowik-devtools",
     "crates/domowik-bench",
 ]
-# Frontend platform packaging and unimplemented rendering experiments remain
-# isolated from the reusable core workspace.
-exclude = ["frontend", "spikes/0025-flutter-wgpu-surface"]
+# Frontend platform packaging remains isolated from the reusable core workspace.
+exclude = ["frontend"]
 
 [workspace.package]
 version = "0.1.0"

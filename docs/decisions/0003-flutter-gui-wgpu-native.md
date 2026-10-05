@@ -80,8 +80,9 @@ Proposed with its gates unchanged**.
 now lives at `frontend/`, with the native adapter at `frontend/native/`.
 [Its README](../../frontend/README.md) maps historical paths. This promotion
 does not change this ADR's Proposed status or its validation gates. The
-issue-0025 crate still contains only dependency setup and a placeholder;
-no wgpu surface renderer has been implemented or merged into the interface.
+issue-0025 crate contained only dependency setup and a placeholder and was
+subsequently removed in issue 0093; its requirements remain in the tracker.
+No wgpu surface renderer has been implemented or merged into the interface.
 
 `spikes/0024-flutter-rust-bridge/` carries the run and its numbers. **The gate
 is not passed** and this ADR stays Proposed; what follows is what the slice
