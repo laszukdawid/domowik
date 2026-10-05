@@ -24,6 +24,7 @@ benchmark tooling and are not distributed.
 | block-buffer | 0.10.4 | runtime | MIT OR Apache-2.0 |
 | bumpalo | 3.20.3 | runtime | MIT OR Apache-2.0 |
 | bytemuck | 1.25.2 | runtime | Zlib OR Apache-2.0 OR MIT |
+| bytemuck_derive | 1.12.1 | runtime | Zlib OR Apache-2.0 OR MIT |
 | cast | 0.3.0 | dev | MIT OR Apache-2.0 |
 | cfg-if | 1.0.4 | runtime | MIT OR Apache-2.0 |
 | ciborium | 0.2.2 | dev | Apache-2.0 |
@@ -44,7 +45,9 @@ benchmark tooling and are not distributed.
 | derive_arbitrary | 1.4.2 | runtime | MIT OR Apache-2.0 |
 | digest | 0.10.7 | runtime | MIT OR Apache-2.0 |
 | displaydoc | 0.2.7 | runtime | MIT OR Apache-2.0 |
-| either | 1.18.0 | dev | MIT OR Apache-2.0 |
+| draco-core | 2.2.1 | runtime | Apache-2.0 |
+| earcutr | 0.5.0 | runtime | ISC |
+| either | 1.18.0 | runtime | MIT OR Apache-2.0 |
 | equivalent | 1.0.2 | runtime | Apache-2.0 OR MIT |
 | errno | 0.3.14 | dev | MIT OR Apache-2.0 |
 | fastrand | 2.5.0 | dev | Apache-2.0 OR MIT |
@@ -63,6 +66,7 @@ benchmark tooling and are not distributed.
 | is-terminal | 0.4.17 | dev | MIT |
 | is_terminal_polyfill | 1.70.2 | runtime | MIT OR Apache-2.0 |
 | itertools | 0.10.5 | dev | MIT/Apache-2.0 |
+| itertools | 0.14.0 | runtime | MIT OR Apache-2.0 |
 | itoa | 1.0.18 | runtime | MIT OR Apache-2.0 |
 | js-sys | 0.3.104 | runtime | MIT OR Apache-2.0 |
 | libc | 0.2.189 | runtime | MIT OR Apache-2.0 |
@@ -71,7 +75,7 @@ benchmark tooling and are not distributed.
 | memchr | 2.8.3 | runtime | Unlicense OR MIT |
 | miniz_oxide | 0.8.9 | runtime | MIT OR Zlib OR Apache-2.0 |
 | miniz_oxide | 0.9.1 | runtime | MIT OR Zlib OR Apache-2.0 |
-| num-traits | 0.2.19 | dev | MIT OR Apache-2.0 |
+| num-traits | 0.2.19 | runtime | MIT OR Apache-2.0 |
 | once_cell | 1.21.4 | runtime | MIT OR Apache-2.0 |
 | once_cell_polyfill | 1.70.2 | runtime | MIT OR Apache-2.0 |
 | oorandom | 11.1.5 | dev | MIT |
@@ -124,4 +128,4 @@ benchmark tooling and are not distributed.
 | zmij | 1.0.23 | runtime | MIT |
 | zopfli | 0.8.3 | runtime | Apache-2.0 |
 
-Total: 115 third-party crates (82 runtime, 33 dev).
+Total: 119 third-party crates (88 runtime, 31 dev).

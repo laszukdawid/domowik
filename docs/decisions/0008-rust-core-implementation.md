@@ -82,6 +82,12 @@ If triggered, reassess: continue with Rust and accept the constraint, split only
 
 **Go tree disposition (SUPERSEDES orchestrator ruling R1):**
 
+**Archive-retirement amendment, 2026-10-05.** The owner removed `_reference/`
+from the source tree. Earlier committed Go sources and release records remain
+in Git history. The freeze and retention decisions below are historical,
+not instructions to restore or maintain that directory. Current implementation
+work uses the reviewed specifications; historical code is not normative.
+
 R1 held that the Go tree would keep verifying on `main` until Rust reached
 parity. The owner superseded that on 2026-08-30, directing a full Rust rewrite
 with the Go code kept "in some separate dir for references". The Go core is
@@ -114,6 +120,17 @@ decision" — has now been taken for three of the four:
   active tree. Its hand-rolled ZIP writer emits deliberately malformed
   archives, which the `zip` crate cannot; whether to port or freeze it is
   issue 0062's open question and the reason `go.mod` still exists.
+
+**Amendment 2, 2026-10-04 (issue 0062, ED-0104).** The corpus generator was
+ported to `crates/domowik-devtools/src/corpusgen`, preserving byte identity
+for all 39 generated artifacts and the corpus gates. The root Go module,
+active Go package, verification stages and CI setup are retired together;
+Go is no longer a development requirement. `_reference/go/` remains frozen.
+
+The generator uses two pinned DEFLATE streams with recorded provenance and
+digests, checked by inflation. It does not recompress: payload-to-compressor
+regeneration was intentionally traded for semantic expansion checks, as
+recorded in ED-0104 and the issue-0062 parity evidence.
 
 Nothing about the frozen `_reference/go/` tree changed. `internal/release`,
 `cmd/domowik-sbom` and `release/` stay frozen with it, and the Rust

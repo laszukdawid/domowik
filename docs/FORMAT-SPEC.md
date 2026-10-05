@@ -144,7 +144,7 @@ rules, not at parse time.
 | `level` | Req: `name` string; `elevationMm` finite with absolute value ≤ `coordBoundMm`; `floorThicknessMm` ∈ [0, `dimensionCapMm`]; `defaultWallHeightMm`, `defaultCeilingHeightMm` ∈ (0, `dimensionCapMm`]. Opt: `backgroundImages`, an unordered set of `{digest, anchor{translationMm:[x,y], scaleUniform > 0 finite, rotationDeg}, stackOrdinal ≥ 0}` entries. | BEHAVIOR-SPEC §2.1–§2.3 (fields, constraints, warnings), §2.5 (anchor transform: p = t + s·R(θ)·q, degrees CCW), §2.7 (duplication). |
 | `wall` | Req: `startMm`, `endMm` coordinate pairs whose components each have absolute value ≤ `coordBoundMm`, with `startMm ≠ endMm`; `thicknessMm`, `heightMm` ∈ (0, `dimensionCapMm`]. Opt: `styleRefs`, set of non-empty opaque tokens. | BEHAVIOR-SPEC §3 (R3.0.x conventions; style resolution discipline R3.0.6). No stored derived geometry. |
 | `wallJoin` | Req: `members`, set of `{wallId, role ∈ {Start, End}}` with ≥ 2 unique entries; both endpoints of one wall prohibited. Stores NO coordinates and NO `levelId` (derives from members). | BEHAVIOR-SPEC §3.3 (R3.3.1–R3.3.7). Membership is an unordered set (C3). |
-| `opening` | Req: `kind` ∈ {door, window}; `hostWallId`; `u` ∈ [0,1]; `widthMm`, `heightMm`, `depthMm` ∈ (0, `dimensionCapMm`]; `sillMm` ∈ [0, `dimensionCapMm`]; `side`, `hinge`, `opensToward` enums; `swingDeg` ∈ [0°,180°]. Opt: `styleRefs`. Stores NO `levelId`: the effective level resolves through `hostWallId` at read time (BEHAVIOR-SPEC R4.0.2) and never changes during the opening's lifetime. | BEHAVIOR-SPEC §4 (R4.0.x–R4.3.x). Openings hosted by one wall form an unordered set (R4.0.6); nothing here may introduce order. |
+| `opening` | Req: `kind` ∈ {door, window}; `hostWallId`; `u` ∈ [0,1]; `widthMm`, `heightMm`, `depthMm` ∈ (0, `dimensionCapMm`]; `sillMm` ∈ [0, `dimensionCapMm`]; `side`, `hinge`, `opensToward` enums; `swingDeg` ∈ [0°,180°]. Opt: `mechanism` ∈ {doorHinged, doorSliding} for doors or {windowSideHung, windowDoubleSwing, windowLift} for windows; absent means doorHinged/windowSideHung respectively. Opt: `styleRefs`. Stores NO `levelId`: the effective level resolves through `hostWallId` at read time (BEHAVIOR-SPEC R4.0.2) and never changes during the opening's lifetime. | BEHAVIOR-SPEC §4 (R4.0.x–R4.3.x). Openings hosted by one wall form an unordered set (R4.0.6); nothing here may introduce order. |
 | `roomRecord` | Req: `seedMm` coordinate pair whose components each have absolute value ≤ `coordBoundMm`. Opt: `name` string (absent and empty-string are distinct authoritatively and identical in display); `floorStyleRef`, `ceilingStyleRef` non-empty opaque tokens. | BEHAVIOR-SPEC §5.2 (R5.2.1–R5.2.8). See §2.5 for the reconciliation representation. |
 
 The examples below form ONE coherent bundle: every id they reference is
@@ -195,6 +195,23 @@ this table constitutes behavioral, numerical, or API ratification.
 
 Tier B structural bounds only: finiteness, L19 string caps, §3.1 parameter
 references. Examples:
+
+The experimental editor's issue-0074 extension adds optional
+`editorFootprintMm: [width, depth]` metadata to an asset instance, and
+`editorAssetDirectories: [absolute directory path, ...]` to the manifest.
+BEHAVIOR-SPEC §10.1 owns their meaning. They introduce no new entity kind,
+required feature or container version. Existing readers preserve them via §8 U2
+but may not draw the editor footprints. Instance footprint edits use ordinary
+`setFields` operations and therefore replay and undo with the existing envelope.
+Directory locations are package metadata, not retrieval hints or asset identity;
+portable use of placed instances relies on embedded bytes, never those paths.
+
+Issue 0082 adds optional `editorHeightMm` instance metadata: finite positive
+unscaled height in millimetres, at most 1,000,000 mm. BEHAVIOR-SPEC §10.4 defines
+initial sizing, resizing and legacy inferred height. It shares the existing
+unknown-field preservation and `setFields` replay/undo rules. No container
+version or required feature changes; older editors preserve height but may
+infer it from width rather than display a non-proportional resize.
 
 ```json
 {"id":"019534c7-0000-7000-8000-000000000007","type":"label","levelId":"019534c7-0000-7000-8000-000000000001","anchorMm":[3000,1250],"name":"Kitchen"}

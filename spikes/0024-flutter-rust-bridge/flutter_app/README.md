@@ -1,64 +1,59 @@
 # Domowik experimental editor
 
-Spike application for issue 0024. **Not a product.**
+Experimental application for issue 0024 and subsequent editor increments.
+**Not a released product.** The directory remains under `spikes/` while
+platform/rendering and measured whole-app performance gates are open.
 
-A Flutter macOS editor using the Domowik Rust core through `dart:ffi` from
-inside its bundle. Draw walls, move corners, add doors/windows, inspect rooms
-and floor areas, switch levels, undo, and open/save `.domo` plans. It is the
-current GUI prototype, not a released cross-platform application: there is no
-3D view, and Linux and Android have not been validated.
+Flutter calls the shared Rust core through `dart:ffi`. The current editor
+supports walls/openings, levels, room naming, selection, snapping controls,
+undo/redo, native open/save, imported furniture, resizing and preferences.
+Linux additionally has an experimental native-texture 3D view. macOS has 2D
+editor/bundle evidence; earlier Android execution does not establish current
+full-editor support. Web editor support is planned but deferred in
+[issue 0088](../../../issues/0088-web-editor-support.md); it does not work yet.
 
-From a repository checkout, use macOS with Flutter (Dart 3.11.4 or later),
-Xcode, CocoaPods, and the Rust toolchain selected by the repository. Run
-`flutter doctor` first if Flutter has not built a macOS app on this machine.
-Xcode invokes the plugin's build phase outside a login shell, so `cargo` and
-`rustup` must be available in `~/.cargo/bin`.
+Start with the repository guides:
+
+- [Getting started](../../../docs/GETTING-STARTED.md): Linux/macOS prerequisites,
+  CLI, native build, tests and troubleshooting.
+- [User guide](../../../docs/USER-GUIDE.md): editing, exact platform shortcuts,
+  assets, resize previews, 3D and split preferences.
+- [Compatibility](../../../docs/COMPATIBILITY.md): experimental files and
+  platform/feature limits.
+- [Contributing](../../../CONTRIBUTING.md): source ownership and verification.
+
+From the repository root, after installing the required toolchains:
 
 ```sh
 cd spikes/0024-flutter-rust-bridge/flutter_app
 flutter pub get
-flutter run -d macos
+flutter run -d linux
 ```
 
-The first run builds the Rust archive through CocoaPods and Xcode. It opens an
-untitled plan. Pick **Walls**, then drag empty canvas to make the first wall.
-Use **Open plan** to load `.domo` files created by the CLI. See the repository
-[README](../../../README.md#run-locally) for a CLI example and the full local
-verification command.
+On macOS use `flutter run -d macos`. Platform builds compile and bundle the
+Rust core automatically. Start drawing with **Walls** on an untitled plan.
+Do not depend on local private `assets/` being present: attach your own licensed
+models through **Assets**.
 
-Choose **Walls**, then drag empty canvas to draw; click a wall to select it.
-Click repeatedly at the same spot to cycle overlapping objects. Shift, Cmd
-or Ctrl-click toggles the top object into or out of the selection. Adding an
-object makes it primary; removing the primary leaves no primary until another
-is explicitly selected. Edits and Delete act on the primary, not the group.
-Escape during a gesture restores the pre-press selection; Escape while idle
-clears it. Hold Shift, Cmd or Ctrl and drag from empty canvas to add walls
-inside or touching the rectangle to the selection. The last newly added wall
-becomes primary; a rectangle that adds nothing leaves the primary unchanged.
-The rectangle appears during the drag, and selection updates on release.
-Drag an endpoint to move its joined corner, or drag the wall body to move the
-wall. Choose **Door** or **Window** and click the host wall to place an opening.
-Scroll to pan; Cmd/Ctrl-scroll zooms about the cursor. Middle-drag or
-Space-drag pans, and Escape cancels a pan. Use **Fit plan** to frame the
-content; editing never silently refits it. The **+ / −** controls (or keyboard
-keys) zoom, arrow keys pan by one grid step, and the grid/ruler toggle changes
-only the view. Plan +Y points upward. The inspector shows the active level's
-counts, floor area and selected-wall dimensions. On a small window, open
-**Plan details** in the toolbar to reach the inspector.
+## Native-backed checks
 
-**Save** opens the native file dialog; **Open plan** reads files also editable
-with the CLI. Unsaved edits are marked beside the filename. New/Open, window
-close and application quit offer Save, Discard or Cancel before leaving a
-dirty plan. Cancelled dialogs and failed saves keep the current work available.
-Boundary tests and the demo rectangle action are
-available under the collapsed **Developer diagnostics** section.
+From the repository root:
 
-This remains a prototype with known interaction gaps; it does not yet claim
-full behavior-spec conformance or measured frame/input performance. Linux and
-Android validation remain open under ADR 0003. No 3D view exists yet.
+```sh
+cd spikes/0024-flutter-rust-bridge
+cargo build --release --locked
+cd flutter_app
+flutter pub get
+flutter analyze
+flutter test
+```
 
-Two headless probes let the built bundle verify itself, because "the author
-looked at a window" is not evidence that survives review:
+Widget lifecycle tests load the real native library. Picker responses can be
+injected; native handle/buffer leak checks still run. The
+[parent spike README](../README.md) documents ABI ownership, cancellation,
+platform probes and historical evidence.
+
+From `flutter_app`, the macOS bundle has two in-process probes:
 
 ```sh
 flutter build macos --release
@@ -68,19 +63,15 @@ DOMOWIK_SPIKE_SELFTEST=1   "$APP"   # core, persistence and ownership checks
 DOMOWIK_SPIKE_FIRSTFRAME=1 "$APP"   # drives the real UI, reports from inside paint
 ```
 
-Both run in `scripts/verify.sh`, along with `flutter analyze` and `flutter test`
-for the workspace controls, responsive layout and canvas-state preservation.
-The lifecycle widget tests load the real Rust library (build it first with
-`cargo build --release` from the parent directory); only the native file
-pickers are replaced with deterministic responses. They exercise failed and
-cancelled saves/opens, save/discard/cancel on close, no-op undo, and input
-exclusion during pending dialogs, with native handle/buffer leak checks.
-See the spike README for results and limits.
+Both are exercised by the macOS-conditional stages in `scripts/verify.sh`.
+Linux runs explicitly skip those stages; a skip is not macOS validation.
 
 Viewport microbenchmark (separate from correctness tests):
 
 ```sh
 flutter test benchmark/viewport_benchmark.dart
+flutter test benchmark/level_render_benchmark.dart
+flutter test benchmark/camera_3d_benchmark.dart
 ```
 
 This measures JIT CPU camera work and grid/ruler display-list recording, not

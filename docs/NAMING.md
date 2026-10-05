@@ -25,7 +25,7 @@ observations (immutable risk history) and their limitations.
 |---|---|---|---|
 | Product name | `Domowik` | Provisional | Sweep via checklist below; update ADR 0006 and this row |
 | Project URL | `https://domowik.dev` | **Temporary** (executive: expected to change) | Same sweep; see caution below |
-| Go module path | `domowik.dev/domowik` | Provisional, derived from URL | Must change with URL; single derivation point in this row plus code scaffold when it exists |
+| Historical Go module path | `domowik.dev/domowik` | Retired from active code (issue 0062) | No active Go module; retained for historical reference, not a publication target |
 | Binary name | `domowik` | Provisional | Sweep + ADR 0006 update |
 | File extension | `.domo` | Provisional | Sweep + FORMAT-SPEC + ADR 0006 update |
 | Application IDs | None selected (reconfirmed 2026-08-24: no application ID has been selected, registered, or published by this project). Rule: derive at store-publication time from whichever URL/domain is canonical then | Deferred-by-rule | Record selection in ADR 0006 and this row at publication |

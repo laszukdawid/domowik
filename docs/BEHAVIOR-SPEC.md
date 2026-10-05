@@ -99,7 +99,9 @@ compared under the numerical tolerance later ratified by issues 0022 and
 
 - Wheel deltas are normalized to signed logical-pixel deltas (dx, dy) and
   must be finite; positive dy means the user scrolls downward. Plain wheel
-  pans by (0, dy); shift+wheel pans by (dx, 0). Panning applies
+  pans by (0, dy); shift+wheel pans by (dx, 0) when dx is nonzero,
+  otherwise by (dy, 0) so a vertical-only mouse wheel can pan horizontally.
+  Panning applies
   ox += dx, oy += dy so content follows the input direction.
 - Ctrl/cmd+wheel zooms: the normalized dy maps to zoom factor 1.25^(−dy/100);
   dy = 0 is a no-op; a finite dx is ignored for zooming. The zoom applies
@@ -1199,7 +1201,18 @@ exact; R4.0.7 states the numerical-policy boundary.
   references. No opening parameter is ever sourced from level or document
   defaults, and changing a level default never mutates an existing opening
   (section 2.1 handoff rule).
-- **R4.0.5 Data classes.** Authoritative: id, `kind`, `hostWallId`, `u`,
+- **R4.0.4a Operable mechanism (original GUI decision, issue 0069).** Door
+  mechanisms are `doorHinged` and `doorSliding`; window mechanisms are
+  `windowSideHung`, `windowDoubleSwing`, and `windowLift`. A mechanism of the
+  wrong kind rejects. Absence means `doorHinged` for a door and
+  `windowSideHung` for a window, without rewriting pre-existing files.
+  The 2D editor displays `doorHinged` with the R4.0.4 swing, `doorSliding`
+  with a parallel track, `windowSideHung` with one hinged leaf,
+  `windowDoubleSwing` with two symmetric leaves, and `windowLift` with a
+  parallel track and lift marker. Glyphs are derived; no persisted per-leaf
+  opening fraction or actuator animation is inferred. Existing aperture fit
+  and overlap rules apply equally to all mechanisms.
+- **R4.0.5 Data classes.** Authoritative: id, `kind`, optional `mechanism`, `hostWallId`, `u`,
   `widthMm`, `heightMm`, `sillMm`, `depthMm`, `side`, `hinge`,
   `opensToward`, `swingDeg`, style references. Derived: aperture footprint,
   cut/subtracted occupied geometry, door/window glyphs, meshes, and swing
@@ -3028,19 +3041,55 @@ incorporating adversarial review rounds 1-13). Rules are identified as
   inclusive boundaries, T/z plan conversion, exact-real squared comparisons,
   R6.0.1 normalization. Hit CLASSES and precedence:
   1. `join-node` handles — key as R6.3.1;
-  2. `free-endpoint` — key as R6.3.1;
-  3. `region` — each wall's OWN occupied rectangle (centered butt-capped
+   2. `free-endpoint` — key as R6.3.1;
+   3. `opening` — a door/window's aperture rectangle over its host wall's
+      occupied band, from its stored width and centre position; nearest point,
+      canonical ring, then stable opening ID break ties. A click on the
+      aperture selects the opening before its host wall; dragging the opening
+      does not move the host wall. Repeated clicks may cycle to the host wall;
+      opening marquee selection is deferred.
+   4. `region` — each wall's OWN occupied rectangle (centered butt-capped
      rectangle, R3.0.2), NOT the cluster union: the closest point is the
      pointer itself when inside (exact distance zero); total key = exact
      `(x, y)` of the closest point, then the wall's canonical outer-ring
      tuple sequence (R3.2.4 normalization: least-vertex rotation, open
      rings), then hole tuples, then stable wall ID;
-  4. `placeholder-box` — degraded placeholder instances only, bounded by the
+   5. `placeholder-box` — degraded placeholder instances only, bounded by the
      §9.6 deterministic placeholder geometry (descriptor-declared dimensions,
      else the fixed 1000 mm box centred on the instance origin); total key =
      exact min-corner `(x, y)`, then stable instance ID.
-  Only active-level entities are eligible; non-active levels are never hit,
-  cycled, or marquee-selected (section 2.4).
+   Only active-level entities are eligible; non-active levels are never hit,
+   cycled, or marquee-selected (section 2.4).
+
+- **R7.1.4 Opening drag handles (original GUI decision, issue 0068).** A drag
+  starting inside an aperture moves it along its host. When it ends inside a
+  different active-level wall's own occupied region, that wall becomes the
+  target: R4.3.5's delete-old/create-new-with-fresh-ID operations share ONE
+  atomic undo batch and selection follows the newly created opening. A drag
+  starting within eight logical pixels of either aperture END instead resizes
+  width and centre while the opposite end remains fixed; it never changes
+  hosts. A selected door's leaf is a swing handle outside the wall band:
+  dragging its tip across the host changes `opensToward` to the final physical
+  side; it never changes `side`, `hinge`, or wall geometry. Invalid results
+  are refused as a whole by the core. Previews remain view-local and emit
+  zero operations; cancellation restores the original state.
+- **R7.1.5 Selection-only and warning focus (GUI decision, issue 0070).** An
+  explicit Select / draw activation after using the Walls chain leaves the
+  creation tool and enters selection-only mode: a plain drag starting in
+  empty space cannot create a wall. A warning's referenced wall pair or
+  level may be highlighted while its details dialog is open. Highlighting is
+  transient, does not change selection or the operation log, and clears when
+  the dialog closes. An opening's end-resize boundary exposes a resize cursor.
+- **R7.1.6 Wall measurement editing (original GUI decision, issue 0071).** The
+  editor MAY present a wall's thickness, height, and centreline length as one
+  numeric form submitted as ONE atomic batch. A length edit is expressed
+  about the fixed Start endpoint: End moves along the wall's existing
+  Start→End direction to the requested distance, and a joined End moves its
+  R3.4.2 node members with it. Every value MUST be finite and strictly
+  positive (R3.0.4); the core revalidates the resulting state, so a refused
+  batch (contact, zero length, opening constraints) leaves the document, both
+  history stacks, and selection unchanged. The form seeds from the current
+  authoritative snapshot and emits zero operations when nothing changed.
 
 ### 7.2 Click, tap, cycling, modifiers
 
@@ -3890,6 +3939,12 @@ could appear to differ, this section owns observable behavior; FORMAT-SPEC
 
 ### 9.1 Explicit save contract
 
+The experimental desktop editor uses native file choosers for Open and Save.
+Open selects one local file; Save suggests the current plan filename or
+`plan.domo` and asks before overwriting an existing target. Both offer a `.domo`
+filter. Cancelling returns no path and does not change the document or report
+a file-action error. These rules apply on Linux as well as macOS (issue 0081).
+
 Only an explicit save replaces the target file. The writer performs, in
 order:
 
@@ -4108,6 +4163,118 @@ section 9.
 
 ## 10. Furniture and asset instances
 
+### 10.1 Plan-local directory library (issue 0074)
+
+**Normative for the experimental 2D editor.** Original owner-requested behavior:
+
+- Plan-level directory locations belong to one plan, never the application's bundled
+  catalog. Browsing recursively enumerates regular GLB, OBJ and ZIP files,
+  case-insensitively, without following symlinks. ZIP files are opaque model
+  bundles; neither their contents nor another application's catalogs are parsed.
+- Browsing copies no model bytes. Placement reads the chosen file with the
+  per-blob limit, hashes its exact bytes, embeds it and creates one instance in
+  one undoable batch. Identical bytes share a blob. Saved placed instances work
+  without their source directory. Library locations persist as optional
+  `editorAssetDirectories` manifest metadata; unavailable locations are reported
+  in the browser while embedded models remain reusable.
+- **Directory chooser (issue 0075):** Add directory opens the system folder
+  picker on supported desktop platforms. Cancel is a no-op. Manual path entry
+  remains an explicit alternative. Existing library paths can be replaced by
+  typing or browsing. Replacement validates the new directory before changing
+  the plan, replaces the old location instead of appending it, and deduplicates
+  an already attached target. Placed instances and embedded bytes are retained.
+- Models have explicitly labelled 2D footprints; §10.2 adds decoded model art
+  within those bounds. New placement derives size from the model (§10.4).
+  The optional `editorFootprintMm: [width,depth]` instance extension records
+  positive finite unscaled dimensions, each at most 1,000,000 mm. The pivot is
+  the footprint center, mapping local coordinates with
+  `p = translationMm + scaleUniform * R(rotationDeg) * q`, counter-clockwise.
+  Missing or malformed legacy footprint metadata falls back to 1000 by 1000 mm for
+  this editor view. This footprint is distinct from §9.6 degraded placeholders.
+- Native code supplies transformed corners and click interaction geometry.
+  Footprints rank after existing wall/opening candidates and among themselves
+  by stable UUID. Only active-level instances may be selected or edited;
+  passive levels follow the existing visibility rules. Individual instance
+  placement, transform/size edits and deletion are undoable; library attachment
+  and embedded bytes are package metadata and are retained across undo.
+- A failed placement changes neither instances nor embedded content. Unknown
+  attribution/license fields are preserved; importing user content does not
+  assign Domowik's license to it. No decoder or network retrieval is implied.
+
+### 10.4 Model dimensions and resizing (issue 0082)
+
+**Normative experimental-editor behavior.** Placement has no manual fixed-size
+inputs. Decode the selected model's scene geometry with static node transforms
+before measuring its X/Y/Z bounds (+Y up). GLB/glTF defines metres; convert
+extents to millimetres. OBJ/ZIP-OBJ has no supported physical-unit declaration:
+preserve its XYZ proportions and assign 1000 mm to its longest extent. Require
+positive horizontal extents; flat height receives a 1 mm minimum. If supported
+bounds cannot be decoded, use 1000 × 1000 × 1000 mm and show the sizing failure.
+Do not silently substitute a cube for a defined physical size exceeding the
+editor's supported 1,000,000 mm per-axis bound; refuse placement instead.
+
+Store the initial width/depth as `editorFootprintMm` and height as
+`editorHeightMm` in the instance, outside the unchanged source asset bytes.
+Reusing embedded models follows the same sizing rules. Existing instance sizes
+are retained; without explicit height, 3D height retains the legacy model
+height/width ratio applied to its stored width (or width for a missing model).
+
+Right-click on an active-level object offers Select and Resize; wall-chain
+right-click keeps its existing finish behavior. Resize selects the object and
+opens width/depth/height in millimetres. Proportions are locked by default:
+editing any dimension scales the other two by the same factor. Unlocking permits
+independent changes. Apply commits all three dimensions in one undoable batch;
+Cancel changes none. Dimensions must be finite, positive and at most 1,000,000 mm.
+Keep the footprint center, position, rotation, source bytes and other instance
+metadata. Saved dimensions update both views and survive reopening. Object
+properties also expose height; resizing never re-decodes models during camera
+navigation.
+
+The resize dialog is capped at 420 logical pixels wide. Its object-name title
+has at most 50 characters including an ellipsis; hover reveals the full name.
+Initial/computed dimension text uses one decimal place in millimetres, while
+untouched underlying values retain their precision. A live preview shows cached
+top-down object art at the proposed footprint (or a labelled footprint when art
+is unavailable), the original footprint outline, and a height comparison.
+Invalid input retains the last valid preview and disables Apply. This display
+preview never changes the document or adds undo history (issue 0083).
+
+### Remaining furniture behavior
+
+### 10.2 Imported-model plan previews (issue 0076)
+
+**Normative for the experimental editor.** Imported meshes render as a cached
+orthographic view from above (+Y toward the X/Z plane), with diffuse material
+colors and simple directional shading. Transparent background preserves gaps
+and non-rectangular outlines. The preview fits the instance's configured width
+and depth and follows its rotation/translation and level visibility. Footprint
+boxes remain interaction/selection bounds, not a replacement for decoded art.
+Existing plans regenerate previews from embedded content without source files.
+Unreadable or unsupported models retain a labelled fallback and a diagnostic.
+Preview generation is derived, off the UI thread and never enters plan history.
+Furniture-only plans are not empty for the introductory canvas overlay.
+
+Supported content is polygonal OBJ with diffuse MTL colors inside ZIP bundles,
+standalone OBJ, and glTF 2.0 binary meshes with static node transforms and Draco
+compression. No external resource fetching, animation, skin deformation or
+texture/PBR fidelity is implied by this initial orthographic preview.
+
+### 10.3 User configuration (issue 0077)
+
+Reusable asset library locations are local user/device preferences, available
+across restarts and across plans. The browser merges them with legacy
+plan-level locations. Reading preferences or adding a global library does not
+create a plan operation or dirty the plan. Placing a model from a global
+library validates its selected source location and embeds its bytes as before.
+
+Version-1 JSON config has `version: 1` and `assetDirectories: [absolute path,...]`.
+Unknown preferences survive updates. Reads/writes are limited to 1 MiB and 64
+unique locations; invalid/future files are reported and never silently replaced.
+Updates write and flush a same-directory candidate, then rename it over the
+previous config. This is local preference persistence, not a cross-store plan
+transaction or a power-loss guarantee. Paths remain recorded when offline so
+users can repair them using the existing path editor or folder picker.
+
 To define: placement transform and pivot; scale constraints; elevation;
 instancing; missing asset placeholder; model bounds; catalog metadata versus
 plan-specific metadata; content license display.
@@ -4131,7 +4298,104 @@ deterministic stand-in for undecodable content and says nothing about content
 that decoded. Issue 0012's placeholder evidence carries the same obligation
 from the query side.
 
+## 11. Live 3D editor view (issue 0078)
+
+**Normative experimental-editor behavior.** The 3D view is derived from the
+same plan as the 2D editor and updates after accepted edits/history and file
+replacement. Camera state is local, independent of selection and history.
+Orbit navigation revolves around a target; pan translates it; zoom changes
+distance; Fit frames visible content. Walk-through uses an eye-level camera
+with yaw/pitch and forward/strafe/vertical movement. Switching modes or views
+does not edit the plan. Visible levels render at finished-floor elevations,
+with slabs extending downward, walls/openings upward, and furniture standing
+on its level. Imported mesh pivots are footprint-centered and bottom-aligned.
+Surface/unsupported-model failures are surfaced rather than mistaken for an
+empty scene. Experimental texture backend evidence does not close ADR 0003's
+platform or measured-performance gates.
+
+Performance-first owner direction: camera navigation never decodes model bytes,
+triangulates floors, rebuilds scene snapshots or uploads geometry. Imported
+meshes are cached by digest and shared between instances; bounded display LOD
+and diffuse/approximate transparency are permitted. Camera state is coalesced
+per frame, with at most one update in flight, and the camera handler must not
+wait on the GPU render lock. These choices never alter plan/model source data.
+
+### 11.1 Editor preferences (issue 0080)
+
+**Normative experimental-editor behavior.** Preferences is accessible from
+the editor. The 2D/3D split defaults to vertical: 2D on the left, 3D on the
+right. Horizontal places 2D above 3D. Both views receive equal space separated
+by a divider. Existing user configurations without an orientation use vertical.
+Save persists the choice as user/device configuration and applies it to the
+current split view; Cancel discards edits. Failed writes are shown in the
+preferences window and leave the applied choice unchanged. Preferences never
+dirty a plan or enter undo history. View/camera state survives layout changes.
+No plan format or dependency changes are required.
+
+### 11.2 Platform-aware workflow guidance (issue 0084)
+
+**Normative experimental-editor behavior.** Navigation, selection and history
+guidance uses the runtime platform, not a user preference or visual theme:
+macOS displays Command (⌘); Windows and Linux display Ctrl. Other current
+targets use Ctrl as the keyboard fallback. Hints show only the platform's
+primary modifier, plus Shift where independently supported. Existing Control
+and Meta aliases remain accepted for compatibility. Undo is primary-modifier+Z;
+Redo is primary-modifier+Shift+Z in both 2D and 3D. Do not advertise shortcuts
+that are not implemented. Shared guidance and shortcut recognition must not
+change document semantics, focus routing or gesture cancellation.
+
 ## Study log
+
+Issue 0085, 2026-10-04: original owner approval to improve application service
+boundaries. Refactoring preserves §9 file/unsaved-session guarantees, §2 level
+rendering and existing gesture/history semantics. File/session ownership,
+serialized approval workflows and per-level render-cache reuse are isolated
+without changing file format, input behavior or dependencies. No external
+artifacts consulted; no new product semantics are introduced.
+
+Issue 0084, 2026-10-04: original owner request and screenshot to replace mixed
+Windows/macOS shortcut hints with exact runtime-platform guidance. Section 11.2
+retains existing inputs while sharing navigation, selection and history
+definitions. No external artifacts, adapted code or dependencies consulted.
+
+Issue 0083, 2026-10-04: original user screenshot and request for a compact resize
+dialog, truncated hoverable names, 0.1 mm display precision and live preview.
+Section 10.4 defines a cached-art top view and height comparison without
+transient document edits. No external code, assets or dependencies consulted.
+
+Issue 0082, 2026-10-04: original owner direction to derive physical size when
+defined, otherwise preserve proportions or use a cube fallback, and add a
+right-click Resize action. Section 10.4 defines that order, unknown-unit scale,
+flat-height handling, persistence and legacy compatibility. The public Khronos
+glTF specification defines metre units after node transforms. No third-party
+application source, catalog schema or model bytes are incorporated.
+
+Issue 0081, 2026-10-04: original user bug report that Linux Open returned a
+MissingPluginException. Section 9.1 records the native Open/Save behavior
+already used by Domowik's desktop file lifecycle. Linux uses the existing GTK
+dependency; no comparable application source or data consulted.
+
+Issue 0080, 2026-10-04: original user request for a preferences window and a
+vertical (left/right) default split. Section 11.1 records that product choice
+and Save/Cancel semantics. Implementation uses existing Domowik configuration
+and Flutter widgets; no third-party application source or assets consulted.
+
+Issues 0076/0077, 2026-10-03: original owner requests for actual-object plan
+rendering and remembered user-level library locations. §10.2/§10.3 specify
+derived top-down art and local preferences. Format references and the reviewed
+Apache-2.0 Draco dependency are recorded in the issue evidence; no comparable
+application implementation or model fixtures are copied into the repository.
+
+Issue 0075, 2026-10-03: original owner direction that Add directory should open
+the system chooser, with optional manual paths and modification of existing
+locations. §10.1 now specifies cancellation, validated replacement and
+deduplication. No comparable application source or catalog material consulted.
+
+Issue 0074, 2026-10-03: original owner request and clarification for a plan-local
+directory library of owner-created models. §10.1 defines an original 2D
+footprint workflow using Domowik's existing asset envelopes. No comparable
+application source, catalogs, serialization formats or test fixtures consulted.
+Tests use originally generated inert model bytes and temporary directories.
 
 Append entries using this template:
 

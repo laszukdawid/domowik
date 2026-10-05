@@ -13,22 +13,12 @@
       "added": "2026-08-23"
     },
     {
-      "name": "github-actions/setup-go",
-      "version": "v6.0.0",
-      "commitSha": "44694675825211faa026b3c33043df3e48a5fa00",
-      "sourceUrl": "https://github.com/actions/setup-go",
-      "license": "MIT",
-      "status": "dev-only",
-      "usedIn": ".github/workflows/ci.yml",
-      "added": "2026-08-23"
-    },
-    {
       "name": "domowik-sbom",
       "version": "1.1.0",
       "sourceUrl": "https://domowik.dev/domowik",
       "license": "Apache-2.0",
       "status": "dev-only",
-      "usedIn": "NOTHING, since ED-0091. It generated SBOMs, NOTICE and the consumption manifest from scripts/verify.sh until the Go release-inventory stage was withdrawn with the Go product it described; the sources moved to _reference/go/. This row is kept as the record of that tooling, not as a live dependency. Its Rust replacements are the two rows below (issue 0036).",
+      "usedIn": "NOTHING, since ED-0091. It generated SBOMs, NOTICE and the consumption manifest from scripts/verify.sh until the Go release-inventory stage was withdrawn with the Go product it described. The sources were archived under _reference/go/; that archive was removed on 2026-10-05 and earlier committed contents remain in Git history. This row records historical tooling, not a live dependency. Its replacements are the two Python release-tool rows below (issue 0036).",
       "provenance": "First-party project-owned Apache-2.0 tool; sources at cmd/domowik-sbom and internal/release; pinned in docs/RELEASE-INVENTORY.md; never distributed with release artifacts. Version history: 1.0.0 initial pipeline; 1.1.0 artifact-scoped bundled declarations, exact graph comparison, consumption-manifest integrity bindings.",
       "added": "2026-08-23"
     },

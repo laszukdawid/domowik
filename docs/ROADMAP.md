@@ -1,6 +1,7 @@
 # Roadmap
 
-**Domowik is in Phase 2 prototyping** (2026-09-05). Each phase starts with
+**Domowik is in Phase 2 prototyping with an early Phase 3 experiment**
+(2026-10-04). Each phase starts with
 unresolved feasibility work and has an exit gate. Dates are intentionally
 omitted until those gates are sized.
 
@@ -8,12 +9,40 @@ omitted until those gates are sized.
 |---|---|
 | 0 — specification and risk reduction | Exited, with named gates still open (below) |
 | **1 — core and headless CLI** | **Exit criteria met; see the closure record** |
-| 2 — interactive 2D GUI | Working macOS Flutter prototype; platform and measured performance gates remain open |
-| 3 — 3D | Not started |
+| 2 — interactive 2D GUI | Linux/macOS desktop work, imported furniture and preferences; full conformance and measured performance gates remain open |
+| 3 — 3D | Experimental Linux native-texture view (0078 / ADR 0010); portable backend and hardware/performance gates remain open |
+
+## Current development summary — 2026-10-04
+
+The editor now includes wall/opening property editing, selection and snapping
+controls, room naming, level controls, native Linux/macOS file workflows,
+directory asset libraries, imported model previews, automatic dimensions and
+undoable resizing. Preferences persist a left/right default or stacked 2D/3D
+split on the device. Platform hints and session/file/cache boundaries are
+shared services rather than duplicated widget workflows.
+
+The 3D experiment derives scene data in Rust and displays it through a Linux
+native GL texture, with orbit/walk cameras. It does not finish Phase 3 or accept
+ADR 0003. Earlier Android execution is evidence for its tested bridge/app
+slice, not full current editor support. Whole-app reference-device budgets and
+remaining conformance/platform gates are still open.
+
+Web is a required future editor target, deferred under
+[issue 0088](../issues/0088-web-editor-support.md). Browser core, file/storage
+and renderer adapters must preserve the shared Rust semantics; the current
+native FFI application is not a browser implementation.
+
+No public release, stable format or release-grade GUI license inventory is
+claimed. Use [Getting started](GETTING-STARTED.md), the
+[user guide](USER-GUIDE.md) and [compatibility guide](COMPATIBILITY.md) for
+current onboarding. The dated handoffs and Phase 1 audit below are retained
+as historical records, not current feature lists. Issue status/acceptance
+criteria live in the [tracker](../issues/README.md).
 
 The implementation language changed during Phase 1: the core is Rust
 ([ADR 0008](decisions/0008-rust-core-implementation.md), superseding ADR 0002),
-and the Go tree is frozen reference at `_reference/go/`. Phase bullets below
+and the former Go archive was removed on 2026-10-05; earlier committed code
+remains in Git history. Phase bullets below
 that say "Go" are the original text, kept because rewriting history is worse
 than a dated note — read them as the work item, not the language.
 
@@ -174,7 +203,7 @@ numbers, the correctness argument, and the one residual left open.
 
 ## Phase 2: interactive 2D GUI
 
-**Current handoff (2026-09-05):** issue 0024 delivers a macOS editor backed by
+**Historical handoff (2026-09-05):** issue 0024 delivers a macOS editor backed by
 the Rust gesture API (`domowik-edit`, ED-0101), including wall/opening edits,
 derived room areas and native open/save. Issue 0039 improves the workspace
 and its small-window layout. This is still the experimental spike; Linux and

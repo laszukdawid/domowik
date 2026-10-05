@@ -1,99 +1,70 @@
 # Domowik
 
-**An open-source home layout editor: plan in 2D, explore in 3D.**
+Source licensing: Domowik is Apache-2.0; Flutter-generated platform scaffolding
+and launcher artwork retain their [upstream BSD-3-Clause notice](docs/third-party/FLUTTER-TEMPLATES.md).
+
+**A local-first home layout editor: plan in 2D, explore in 3D.**
 
 Domowik (from the Slavic household spirit and guardian of the home) is a
-planned cross-platform application for creating floor plans, placing
-openings and furnishings, and exploring the result in 3D. It will provide a
-graphical editor and a headless command-line interface (CLI).
+project for creating floor plans, placing openings and furnishings, and
+exploring the result in 3D. A Rust core powers both a headless command-line
+interface (CLI) and an experimental Flutter editor.
 
 ## Status
 
-**Phase 1 is complete: a working headless floor-plan engine and CLI.** Plans
+**Experimental development software; no public release is claimed.** Plans
 are self-contained `.domo` files. You can create one, draw and edit walls with
 real join and split behaviour, add doors and windows, place a scan to trace
 over, get true floor areas, undo, apply external operation batches, compact the
 history, and export to SVG or PNG — all from the command line.
 
-**Phase 2 has a working Flutter 2D editor prototype on macOS.** Draw and move
-walls, place doors and windows, inspect floor areas, switch levels, undo, and
-open/save the same `.domo` files used by the CLI. The workspace puts drawing
-tools above the canvas and plan details in a sidebar (a drawer in small
-windows). See [the editor instructions](spikes/0024-flutter-rust-bridge/flutter_app/README.md).
+The editor supports wall/opening properties, levels, room naming, selection,
+undo/redo, native open/save, imported furniture with model previews and resizing,
+and device preferences. Linux also has an experimental native-texture 3D view
+with orbit/walk navigation and a 2D/3D split, left/right by default.
 
-The editor remains experimental: Linux/Android bridge validation and measured
-input/frame-time goals are still open under
-[ADR 0003](docs/decisions/0003-flutter-gui-wgpu-native.md). There is no 3D yet,
-and no comparative performance claim against other home-design applications.
+Linux and macOS desktop editor work have evidence; the current 3D backend is
+Linux-only. Android has earlier bridge/application execution evidence, not a
+claim of current full-editor support. iOS and Windows are not supported editor
+targets. Web support is planned and deferred under [issue 0088](issues/0088-web-editor-support.md),
+not available in the current native editor. Cross-platform rendering and measured whole-app performance
+gates remain open under [ADR 0003](docs/decisions/0003-flutter-gui-wgpu-native.md)
+and [ADR 0010](docs/decisions/0010-native-3d-texture-experiment.md).
+There is no comparative performance claim against other applications.
 
-The Go implementation that preceded this is frozen for reference at
-`_reference/go/` (see
+Use copies of important plans: the file format, bridge and editor are still
+experimental. See [compatibility and limitations](docs/COMPATIBILITY.md).
+
+The former Go implementation and `_reference/` archive have been retired
+from the source tree; earlier committed versions remain in Git history (see
 [ADR 0008](docs/decisions/0008-rust-core-implementation.md)).
 
 ## Run locally
 
-The command-line application works on the Rust workspace's supported hosts.
-The graphical editor currently runs on macOS only. It is useful for exercising
-the same document and editing core as the CLI, but it is still a prototype: it
-does not provide 3D, and its Linux, Android, input-latency, and frame-time
-validation is unfinished.
-
-Start with a normal clone and the toolchains required by the part you want to
-run:
+Start from a checkout of this repository. Rust is enough to build the CLI:
 
 ```sh
-git clone git@github.com:laszukdawid/domowik.git
-cd domowik
-
-# The repository selects Rust 1.98.0 through rust-toolchain.toml.
-cargo --version
-```
-
-For the CLI, Rust is enough:
-
-```sh
-cargo build --release -p domowik-cli
+# Run from the repository root. rustup reads rust-toolchain.toml.
+cargo build --release --locked -p domowik-cli
 ./target/release/domowik --help
 ```
 
-For the macOS editor, install Flutter with Dart 3.11.4 or later, Xcode, and
-CocoaPods. `flutter doctor` should report that the macOS desktop toolchain is
-ready. Xcode's build phase looks for `cargo` and `rustup` in `~/.cargo/bin`, so
-use the standard rustup installation or make those commands available there.
-Then run:
+For the desktop editor, install Flutter and the platform's native build tools;
+follow [Getting started](docs/GETTING-STARTED.md) for prerequisites. On Linux:
 
 ```sh
 cd spikes/0024-flutter-rust-bridge/flutter_app
 flutter pub get
-flutter run -d macos
+flutter run -d linux
 ```
 
-The first GUI build compiles the Rust bridge as part of the CocoaPods/Xcode
-build. It can take longer than later builds. The editor opens an untitled plan;
-choose **Walls** and drag on empty canvas to draw. It reads and writes the same
-`.domo` files as `domowik`, so a file created by the CLI can be opened with
-**Open plan** in the editor. The full current interaction guide, bundle probes,
-and known limits are in the [editor README](spikes/0024-flutter-rust-bridge/flutter_app/README.md).
+On macOS, use `flutter run -d macos` instead. The native build compiles the
+Rust bridge automatically. Choose **Walls** and drag on the empty canvas to
+start; see the [user guide](docs/USER-GUIDE.md) for the rest.
 
-To build the prototype without opening a window and exercise its bundle:
-
-```sh
-cd spikes/0024-flutter-rust-bridge/flutter_app
-flutter build macos --release
-APP=build/macos/Build/Products/Release/domowik_spike_app.app/Contents/MacOS/domowik_spike_app
-DOMOWIK_SPIKE_SELFTEST=1 "$APP"
-DOMOWIK_SPIKE_FIRSTFRAME=1 "$APP"
-```
-
-The repository-wide check also needs Go and Python 3 for the remaining hygiene
-tools, plus Flutter, Xcode, CocoaPods, and the pinned Rust toolchain for the
-macOS bundle. Run it from the repository root:
-
-```sh
-PATH="/path/to/flutter/bin:$PATH" ./scripts/verify.sh
-```
-
-The authoritative success marker is `=== VERIFICATION PASSED === all stages`.
+For tests, verification and contribution rules, read
+[CONTRIBUTING.md](CONTRIBUTING.md). A local source build is not an authorized
+binary release.
 
 ## Try it
 
@@ -106,17 +77,17 @@ alias domowik=./target/release/domowik
 
 # A 6 m x 4 m flat with a dividing wall. Millimetres throughout.
 domowik new flat.domo
-domowik add-wall flat.domo 0    0    6000 0
-domowik add-wall flat.domo 6000 0    6000 4000
-domowik add-wall flat.domo 6000 4000 0    4000
-domowik add-wall flat.domo 0    4000 0    0
+domowik add-wall flat.domo 0    0    6000 0    --thickness 200
+domowik add-wall flat.domo 6000 0    6000 4000 --thickness 200
+domowik add-wall flat.domo 6000 4000 0    4000 --thickness 200
+domowik add-wall flat.domo 0    4000 0    0    --thickness 200
 
 # Dropping this across the room SPLITS the walls it crosses and joins the
 # children — one atomic batch, so one undo takes it all back.
 domowik add-wall flat.domo 3500 0    3500 4000 --thickness 100
 
 domowik add-opening flat.domo 1 door   --at 0.3 --width 900
-domowik add-opening flat.domo 3 window --at 0.5 --width 1500 --sill 900
+domowik add-opening flat.domo 3 window --at 0.5 --width 1500 --height 1200 --sill 900
 
 # Name the two rooms the dividing wall made. A room record is a NAME and a
 # SEED POINT; the room itself stays derived from the walls, so moving a wall
@@ -217,7 +188,8 @@ Results go to stdout and diagnostics to stderr, so piping is safe.
                     └──────────────────────────┘
 
    Flutter editor prototype → native bridge → domowik-edit + core
-   NOT BUILT: a 3D renderer. See the roadmap for platform gates.
+   Linux 3D texture → renderer-neutral domowik-scene + domowik-models
+   Experimental platform backend; portable rendering gates remain open.
 ```
 
 The Rust workspace has no dependency cycles. `format` holds the entity types everything else
@@ -226,21 +198,28 @@ speaks in; `document` owns the operation log that every change flows through;
 `edit` owns shared editing gestures, consumed by both the CLI and the Flutter
 prototype's native bridge.
 
-The GUI's Rust bridge has macOS evidence; Linux/Android and the 3D surface
-still need platform spikes before they are accepted. See [Architecture](docs/ARCHITECTURE.md) and
-the [decision records](docs/decisions/README.md).
+The GUI borrows native document handles; Rust owns editing semantics and
+derived scene geometry. The platform runner owns GPU resources. See
+[Architecture](docs/ARCHITECTURE.md) and the
+[decision records](docs/decisions/README.md) for accepted boundaries and open
+technology gates.
 
 ## Documentation
 
 | Document | Purpose |
 |---|---|
+| [Documentation index](docs/README.md) | Choose a user, contributor or design path |
+| [Getting started](docs/GETTING-STARTED.md) | Build/run the CLI and desktop editor; troubleshoot setup |
+| [User guide](docs/USER-GUIDE.md) | Current editor workflows and platform-specific shortcuts |
+| [Contributing](CONTRIBUTING.md) | Source map, issue workflow and verification |
+| [Compatibility](docs/COMPATIBILITY.md) | Experimental formats, platform limits and safe file handling |
 | [Naming registry](docs/NAMING.md) | Canonical identity values and the procedure for changing them |
 | [Glossary](docs/GLOSSARY.md) | Plain-language definitions of project terms |
 | [Roadmap](docs/ROADMAP.md) | Phases and validation gates |
 | [Architecture](docs/ARCHITECTURE.md) | Components, boundaries, and provisional choices |
 | [Format requirements](docs/FORMAT-SPEC.md) | Logical model and compatibility requirements |
 | [Asset strategy](docs/ASSET-STRATEGY.md) | Size budgets, deduplication, and packaging profiles |
-| [Behavior specification](docs/BEHAVIOR-SPEC.md) | Testable editor behavior still to be defined |
+| [Behavior specification](docs/BEHAVIOR-SPEC.md) | Normative behavior rules and separately marked draft questions |
 | [Clean-room policy](docs/CLEAN-ROOM-POLICY.md) | Black-box study and provenance rules |
 | [Third-party policy](docs/THIRD-PARTY-POLICY.md) | Code, tools, services, and user asset licensing |
 | [HomeHero integration](docs/INTEGRATION-HOMEHERO.md) | Deferred, API-level integration goal |
@@ -250,8 +229,9 @@ the [decision records](docs/decisions/README.md).
 
 `issues/` holds the work tracker as ordinary tracked files in this repository,
 with dependencies and acceptance criteria. `./scripts/verify.sh` enforces that
-each issue's status line agrees with the index. It will need its own published
-location before external contributors can rely on it.
+each issue's status line agrees with the index. The tracker is part of the
+checkout, not a separate repository; relative links work without publishing it
+independently. Start with [the issue index](issues/README.md).
 
 ## License
 

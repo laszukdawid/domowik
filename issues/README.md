@@ -76,6 +76,7 @@ The clean-room rules apply fully to specification and spike issues.
 | [0023](done/0023-container-security-recovery.md) | Container threat model and recovery contract | Done |
 | [0030](0030-ratify-numerical-model.md) | Ratify numerical geometry model after spikes | In Progress (partial scope) |
 | [0034](0034-identity-prerelease-finalization.md) | Pre-publication identity finalization | Blocked |
+| [0072](0072-curved-walls-decision.md) | Decide and specify curved walls | Open |
 
 ## Phase 1: core and CLI
 
@@ -132,7 +133,32 @@ The clean-room rules apply fully to specification and spike issues.
 | [0059](0059-editor-marquee-selection.md) | 2 | Supply the marquee selection gesture | In Progress (partial scope) |
 | [0060](0060-room-records-and-naming.md) | 2 | Deliver room records and room naming | In Progress |
 | [0061](0061-ci-macos-gui-coverage.md) | 2 | Give CI the macOS and GUI stages it currently never runs | In Progress |
-| [0062](0062-retire-go-toolchain.md) | 2 | Retire the Go toolchain | In Progress (partial scope) |
+| [0062](done/0062-retire-go-toolchain.md) | 2 | Retire the Go toolchain | Done |
 | [0063](done/0063-native-close-test-synchronization.md) | 2 | Make native close quiescence tests deterministic | Done |
 | [0064](0064-empty-universe-package-profile.md) | 1 | Decide the package profile of a plan with no assets | In Progress |
-| [0090](0090-ci-main-repair.md) | 2 | Repair hosted main CI preflight failures | In Progress |
+| [0065](done/0065-live-wall-drag-preview-and-shift-wheel.md) | 2 | Preview wall movement and pan with Shift+wheel | Done |
+| [0066](done/0066-select-openings-before-host-walls.md) | 2 | Select openings before their host walls | Done |
+| [0067](done/0067-edit-opening-position-and-size.md) | 2 | Edit opening position and dimensions | Done |
+| [0068](done/0068-opening-drag-handles-and-rehosting.md) | 2 | Rehost and directly manipulate openings | Done |
+| [0069](done/0069-opening-mechanisms-and-door-controls.md) | 2 | Choose opening mechanisms and door orientation | Done |
+| [0070](done/0070-editor-warning-and-selection-usability.md) | 2 | Improve selection, warnings and opening affordances | Done |
+| [0071](done/0071-wall-measurements-editing.md) | 2 | Edit wall thickness, height and centreline length | Done |
+| [0073](done/0073-copyable-editor-diagnostics.md) | 2 | Copy editor diagnostics and simplify numeric errors | Done |
+| [0074](done/0074-plan-local-asset-library.md) | 2 | Use a directory as a plan-local furniture library | Done |
+| [0075](done/0075-asset-directory-picker.md) | 2 | Pick and edit plan-local asset library directories | Done |
+| [0076](done/0076-render-imported-models.md) | 2 | Render imported furniture instead of footprint placeholders | Done |
+| [0077](done/0077-user-configuration.md) | 2 | Remember asset libraries in user-level configuration | Done |
+| [0078](0078-live-3d-plan-view.md) | 3 | Live 3D plan view and navigation | In Progress (partial scope) |
+| [0079](done/0079-upright-3d-texture.md) | 3 | Present the native 3D texture upright | Done |
+| [0080](done/0080-editor-preferences.md) | 2 | Add editor preferences and split orientation | Done |
+| [0081](done/0081-linux-plan-file-dialogs.md) | 2 | Implement Linux plan file dialogs | Done |
+| [0082](done/0082-model-size-and-resize.md) | 2 | Preserve model dimensions and expose object resizing | Done |
+| [0083](done/0083-resize-dialog-preview.md) | 2 | Make the resize dialog compact and preview size changes | Done |
+| [0084](done/0084-platform-workflow-hints.md) | 2 | Share platform-aware editor workflow hints | Done |
+| [0085](done/0085-editor-service-boundaries.md) | 2 | Separate editor file/session and render-cache responsibilities | Done |
+| [0086](done/0086-public-preview-documentation.md) | 2 | Prepare documentation for a public source preview | Done |
+| [0087](done/0087-public-source-preparation.md) | 2 | Require Linux editor CI and retain Flutter template notices | Done |
+| [0088](0088-web-editor-support.md) | 2 | Support the editor in a web browser | Open |
+| [0089](done/0089-single-commit-source-baseline.md) | 0 | Collapse committed history and prune branches | Done |
+| [0090](done/0090-ci-main-repair.md) | 2 | Repair hosted main CI preflight failures | Done |
+| [0091](done/0091-documentation-consolidation.md) | 0 | Consolidate documentation and retire archive references | Done |

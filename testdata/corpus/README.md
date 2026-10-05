@@ -38,12 +38,12 @@ testdata/corpus/
 ```
 
 `.domo` packages are real ZIP-family containers built deterministically by the
-dev-only generator in `internal/corpusgen` (Go stdlib `archive/zip` plus
-targeted byte patches for defect variants). Only these generated artifacts —
+dev-only generator in `crates/domowik-devtools/src/corpusgen` (a hand-rolled
+byte-level ZIP writer plus targeted patches for defect variants). Only these generated artifacts —
 the `.domo` files and the ratio-twin sidecar `meta.json` — carry a
 byte-reproducibility guarantee: the test suite regenerates them on every run
-and asserts byte equality (`go test ./internal/corpusgen -update` rewrites
-them). All OTHER committed fixtures are integrity-checked instead: every
+and asserts byte equality (`cargo run --locked -p domowik-devtools --bin
+domowik-corpusgen -- --update` rewrites them). All OTHER committed fixtures are integrity-checked instead: every
 artifact record in `EXPECTATIONS.md` carries a `sha256` that the checker
 recomputes from the referenced file bytes on every run and never trusts from
 a sidecar.
@@ -140,7 +140,7 @@ sizes) or genuine micro-streams whose actual expansion stays below 256 KiB;
 no fixture expands to resource-exhausting sizes on any machine. Traversal
 fixtures use synthetic entry names inside package metadata only; nothing is
 extracted to host paths by this corpus, and no nested archive is ever
-interpreted. The independent safety test in `internal/corpusgen` asserts the
+interpreted. The independent safety test in `domowik-devtools` asserts the
 size cap over all artifacts and recipe bounds on every run.
 
 ## Provenance and clean-room statement

@@ -3,10 +3,15 @@
 Status: **Proposed architecture.** Accepted project goals are separated below
 from technology choices that still require feasibility spikes.
 
-Current implementation (2026-09-05): the core and CLI are Rust (accepted ADR
-0008). A Flutter macOS editor prototype uses that core through issue 0024's
-native bridge. Flutter's target-platform and performance gates remain open
-under ADR 0003; there is no 3D renderer yet.
+Current implementation (2026-10-04): the core and CLI are Rust (accepted ADR
+0008). The experimental Flutter desktop editor uses that core through issue
+0024's native bridge, with Linux and macOS evidence bounded by the increment
+and ABI tested. Imported models are decoded by `domowik-models`; the
+renderer-neutral `domowik-scene` derives 3D data from the document. Issue 0078
+adds an experimental Linux native-OpenGL texture backend (ADR 0010), not a
+portable renderer or acceptance of ADR 0003. Whole-app performance and
+remaining platform/rendering gates remain open. See
+[Getting started](GETTING-STARTED.md) and [compatibility](COMPATIBILITY.md).
 
 ## Accepted system boundaries
 
@@ -40,10 +45,19 @@ sync, reconstruction, and HomeHero adapters remain separate services.
 Flutter GUI ── platform surface bridge ──▶ proposed wgpu-native renderer
 ```
 
+The diagram's wgpu path is a proposed portable backend, not the current Linux
+implementation. Today `domowik-scene` supplies renderer-neutral scene data to
+the experimental native GL texture runner. Document/model code owns no GPU;
+the runner owns texture/buffer lifetime.
+
 The core does not call wgpu. The GUI owns rendering surfaces and submits
 render-ready scene data derived from the document.
 
 ## Core responsibilities
+
+These define ownership boundaries, not a completion checklist. In particular,
+the shared semantic 2D paint API and external asset cache remain planned; the
+current exporters and embedded-asset workflow do not establish those APIs.
 
 - Project document, entity schemas, and validation.
 - Applying atomic operation batches and projecting current state.
@@ -74,12 +88,15 @@ domowik pack --thin|--portable
 domowik export svg|png
 ```
 
-Headless 3D rendering may be added later, but is not required by the initial
-architecture.
+These are architectural workflow names, not literal syntax for every current
+command. The implementation uses `export-svg` and `export-png`; `pack --thin`
+is refused because external-cache packaging is not implemented. Use the built
+CLI's `--help` for current syntax. Headless 3D rendering may be added later,
+but is not required by the initial architecture.
 
 ## GUI and native boundaries
 
-### Rust-to-Flutter bridge (macOS prototype validated)
+### Rust-to-Flutter bridge (desktop prototype)
 
 The editor calls a Rust C ABI through `dart:ffi`. The macOS plugin links a
 Rust static archive into an embedded framework. Opaque plan handles, explicit
@@ -93,13 +110,41 @@ bridge share these APIs. Flutter chooses gestures and paints the geometry
 returned by Rust; it must not duplicate core editing semantics (ED-0101).
 
 Linux and Android execution were validated at ABI 12 (2026-09-12): a Flutter
-application loads and drives the core from inside its own bundle on both, and
+application loaded and drove the core from inside its own bundle on both, and
 on Linux from a machine carrying no toolchain. Android was an emulator and one
-ABI; neither has been re-run at the current ABI 13. iOS is deferred and macOS
-is a local-development target. ADR 0003 remains Proposed until its measured
-editor-performance gate passes; its platform gate no longer holds it.
+ABI; that run does not validate the current ABI 15/editor. Later Linux editor
+increments have local native-backed tests and release-build evidence. iOS is
+deferred; macOS remains a desktop development/bundle target, not a current 3D
+backend. ADR 0003 remains Proposed while measured editor-performance and
+remaining validation obligations are open. Do not extrapolate an old platform
+slice to every current feature.
 
-### 3D surface bridge (unvalidated)
+### Flutter application services (issue 0085)
+
+The experimental editor separates native file/session ownership from widgets:
+`PlanSession` owns one native plan handle and file-operation allocations;
+`FileWorkflowController` serializes file/close/property actions and unsaved
+approval through borrowed callbacks; `FileDialogs` isolates native pickers and
+close requests. The widget owns dialog presentation and UI reset decisions,
+not native handle replacement. File operations remain synchronous at the C ABI
+boundary; extracting services does not claim asynchronous file I/O.
+
+`PlanGeometryCache` owns per-session/per-level content-key reuse, visibility
+eviction and failed-read retry. The widget still assembles visible render
+layers and owns preview images. `ThreeDView` still combines scene-upload and
+surface scheduling with input/presentation; extracting a renderer controller
+and preview-image owner remains future work. 2D paint and 3D GPU interfaces
+remain separate; shared document geometry stays authoritative in Rust.
+
+### 3D surface bridge (Linux experiment; portable gate open)
+
+Issue 0078 now exercises the Linux embedder's GPU texture API with renderer-
+neutral Rust scene data, instanced geometry and local orbit/walk cameras. This
+is the bounded native-GL experiment in ADR 0010, not a completed wgpu/platform
+gate. The renderer owns buffers and depth/color targets; view changes update
+only the camera matrix. Model decode, LOD and scene construction are cached/off
+the UI thread. The current feature is validated on Linux; other backend and
+hardware-frame gates remain with issue 0025.
 
 `wgpu-native` is a candidate renderer because it supports portable modern GPU
 APIs and programmable shaders. Dart FFI alone is insufficient: Flutter needs a
@@ -132,12 +177,12 @@ See [FORMAT-SPEC.md](FORMAT-SPEC.md) and the
 
 ## Geometry and performance
 
-The numerical model is not yet decided. A candidate hybrid model — exact
-predicates over float64 millimetre coordinates, with quantized evaluation
-admissible only inside clipping under measured error budgets — is proposed in
-[NUMERICAL-MODEL.md](NUMERICAL-MODEL.md) and remains unratified until issues
-0006 and 0007 spike it and issue 0030 ratifies it. The comparison it
-addresses:
+The numerical model is partly ratified: the coordinate domain and numeric
+policy are in force, while conformance obligations remain open. Read
+[NUMERICAL-MODEL.md](NUMERICAL-MODEL.md) §§3 and 12–14 for current policy;
+its superseded Go-era machinery is historical, not an implementation mandate.
+Issues 0012/0030 and related evidence retain the unmet guarantees. The original
+comparison addressed:
 
 - adaptive/exact predicates over floating-point coordinates; and
 - integer quantization/snap rounding for polygon clipping.

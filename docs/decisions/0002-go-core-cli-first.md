@@ -4,8 +4,9 @@
   2026-08-30. It never reached Accepted: revision trigger 3 fired when two
   geometry predicates missed the 10,000 ns/op Phase 0 bound, and the owner
   decided the core moves to Rust. Retained in full as the record of the
-  reasoning that led there — the Go implementation it describes is frozen at
-  `_reference/go/`. The counter-evidence matters and is recorded in ADR 0008:
+  reasoning that led there — the Go implementation it describes survives in
+  Git history; the former `_reference/` archive was removed on 2026-10-05.
+  The counter-evidence matters and is recorded in ADR 0008:
   the same package's adaptively filtered path ran at 5.479 ns/op with zero
   allocations, so this ADR's stack was not proven incapable of the bound.
 - **Date:** 2026-08-22

@@ -1,11 +1,18 @@
 # Issue-0024 spike: Flutter-to-Rust native bridge (ADR 0003)
 
 Status: **evidence for ADR 0003; the gate is NOT PASSED.** macOS, Linux and
-Android are all executed end to end, application included. iOS is deferred.
-Both platforms the gate names have now run, but ADR 0003 remains **Proposed**:
+Android have dated end-to-end execution evidence, application included. iOS
+is deferred. These slices are bounded by their tested ABI and environment;
+Android's earlier emulator run is not current full-editor or 3D support.
+Both platforms the gate names have run, but ADR 0003 remains **Proposed**:
 its gate also requires an editor prototype meeting measured input and
 frame-time goals, which is issue 0033's, and the Android run is on an emulator
 rather than a device. See "Platforms".
+
+For current usage, start with [Getting started](../../docs/GETTING-STARTED.md),
+the [user guide](../../docs/USER-GUIDE.md) and
+[compatibility](../../docs/COMPATIBILITY.md). This README retains boundary
+contracts and dated experiment records rather than replacing those guides.
 
 This directory is a spike. It is its own Cargo workspace, excluded from the
 root one (`Cargo.toml` `exclude`), and **nothing here is distributed**. It is
@@ -38,11 +45,13 @@ rots into a false record of what once worked (ED-0097).
 ## ABI summary (spike-only, not a product contract)
 
 ```c
-int32_t  domowik_abi_version(void);                      /* == 12 */
+int32_t  domowik_abi_version(void);                      /* == 15 */
 int32_t  domowik_plan_create(uint64_t* out_handle);
 int32_t  domowik_plan_create_default(uint64_t* out_handle); /* clean Level 1 */
 int32_t  domowik_plan_execute(uint64_t, const uint8_t* req, uint64_t,
-                              domowik_buf* out);         /* JSON protocol */
+                               domowik_buf* out);         /* JSON protocol */
+int32_t  domowik_plan_assets(uint64_t, const uint8_t* req, uint64_t,
+                              domowik_buf* out);         /* plan-local models */
 int32_t  domowik_plan_undo(uint64_t, domowik_buf* out);
 int32_t  domowik_plan_redo(uint64_t, domowik_buf* out);
 int32_t  domowik_plan_state(uint64_t, domowik_buf* out);
@@ -74,11 +83,39 @@ int64_t  domowik_debug_snap_index_builds(uint64_t);      /* locality probe */
 int64_t  domowik_debug_warnings_computations(uint64_t);  /* locality probe */
 ```
 
-All 28 exports are listed. `tests/abi_documentation.rs` asserts that, because
+All 29 exports are listed. `tests/abi_documentation.rs` asserts that, because
 this block silently omitted seven of them until 2026-09-12, including the four
 the editor round added.
 
 Boundary rules as implemented and tested:
+
+- **Live 3D view (issue 0078):** the header view menu selects **2D plan**,
+  **3D view**, or **2D + 3D split view**. Linux's registered GPU texture displays
+  walls/openings, room slabs and cached imported meshes. Drag to orbit,
+  right/Shift-drag to pan, scroll to zoom; Walk through adds mouse look, WASD,
+  Q/E height and Shift speed. Fit resets the aerial camera. Camera operations
+  never edit the plan, decode content, rebuild scenes or upload geometry.
+  GPU mesh buffers are shared between repeated instances; 5,000-triangle fast
+  LOD is a rendering approximation. The backend is experimental under ADR 0010,
+  with Linux evidence and open cross-platform/hardware gates. See
+  [the scene and performance evidence](../../docs/evidence/0078-live-3d-view.md).
+
+- **Plan-local assets (issue 0074, ABI 15):** **Assets** opens a searchable
+  directory library with GLB/OBJ/ZIP discovery in subdirectories. Placement
+  embeds the chosen model lazily and draws an explicitly sized, named 2D
+  footprint. Move, size/position/rotation edits and deletion are undoable.
+  Library directories persist only with their plan; embedded models remain
+  available after source removal. See [usage and evidence](../../docs/evidence/0074-plan-local-assets.md).
+  **Add directory** opens a native folder chooser on Linux/macOS; **Enter path**
+  and attached-path edit/browse controls support manual additions and validated
+  replacement (issue 0075). Folder-provider URI support on Android is separate
+  from this filesystem workflow.
+  Issue 0076 now draws cached top-down mesh previews (OBJ/ZIP-OBJ and GLB,
+  including Draco) with diffuse colors; the rectangle remains only a selection
+  bound or diagnosed fallback. Issue 0077 remembers reusable library locations
+  in user-level config across restarts and plans. See
+  [preview evidence](../../docs/evidence/0076-model-previews.md) and
+  [config paths](../../docs/evidence/0077-user-configuration.md).
 
 - **Targeting (issues 0045/0047, ABI 9):** Press classification, selection
   and opening-host targeting consume the same native ordered candidates,
@@ -116,6 +153,13 @@ Boundary rules as implemented and tested:
   geometry and ordering to the core and does not change document history.
   Placeholder selection and the core's numerical gaps remain open under
   issues 0012/0026; this is partial R7 conformance.
+- **Wall measurements (issue 0071, ABI 14):** the wall inspector shows
+  centreline length, thickness and height and submits changed values as ONE
+  atomic `setWall` batch. `lengthMm` is resolved bridge-side about the stored
+  Start — End moves along the existing direction with R3.4.2 join co-movement
+  — so the view derives no geometry. The ABI moves because an ABI 13 library
+  would ignore the unknown field and apply only the thickness/height half of
+  the same form.
 - **Levels (issue 0051):** Active levels render normally above visible and
   ghosted passive levels; hidden levels are omitted. Only the active level
   participates in targeting and edits. Reopen activates the lowest level and
@@ -147,7 +191,7 @@ Boundary rules as implemented and tested:
   returns a JSON summary with `batch_id` and `warnings`, replacing ABI 9's raw
   batch-ID bytes; unchanged properties submissions still return an empty buffer.
   Execute/history summaries gain an additive `warnings` field. Callers must
-  match the current ABI (12) before using the library. Buffer ownership and
+  match the current ABI (15) before using the library. Buffer ownership and
   persisted files are unchanged. See [the partial implementation evidence](../../docs/evidence/0055-wall-contact/AREA-WARNINGS.md)
   for measurements and outstanding contact-conformance work.
 - **History (issue 0042, ABI 8):** Undo/Redo use the live core session before

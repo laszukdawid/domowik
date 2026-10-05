@@ -98,21 +98,20 @@ contract is broken.
   New geometry code lands WITH its benchmark, and predicates must try a
   floating-point filter with a proven error bound before escalating to exact
   arithmetic — the measured gap between those paths was ~2,000x.
-- **The Go implementation is FROZEN reference at `_reference/go/`.** Read it;
-  do not port it mechanically. The specifications are normative and the Go code
-  is not — where they disagree, the spec wins. The leading underscore keeps the
-  tree out of the Go toolchain's default patterns; do not rename it.
+- **The former Go implementation is historical, not a source-tree component.**
+  The owner removed `_reference/` on 2026-10-05. Earlier committed versions
+  remain in Git history. Specifications are normative; historical code is not
+  and must not be ported mechanically when it disagrees with the specification.
 - **Repo-hygiene tooling is Rust** (`crates/domowik-devtools`:
   `domowik-jsoncheck`, `domowik-tracker-check`). It is not product code and is
   not distributed; it lives in the workspace so `cargo fmt`, `cargo clippy`
   and `cargo test` cover it.
-- **One Go package survives**: `internal/corpusgen`, the issue-0028 fixture
-  generator, still formatted with `gofmt`. Its hand-rolled ZIP writer emits
-  deliberately malformed archives, which the `zip` crate cannot do; whether to
-  port or freeze it is issue 0062's open question. The Go module path remains
-  `domowik.dev/domowik` per
-  [ADR 0006](docs/decisions/0006-naming-and-identity.md) and the
-  [naming registry](docs/NAMING.md).
+- **No active Go package remains.** The issue-0028 fixture generator lives in
+  `crates/domowik-devtools/src/corpusgen` (issue 0062, ED-0104). Its hand-rolled
+  ZIP writer emits deliberately malformed archives. All 39 generated artifacts
+  match the Go originals byte-for-byte. The two DEFLATE streams are pinned
+  inputs with recorded provenance, checked by inflating them; the generator
+  does not recompress them. The former Go archive is available only in Git history.
 - Proposed GUI: Dart/Flutter, subject to the FFI feasibility gate.
 - Document exported APIs, ownership, concurrency, errors, numerical
   guarantees, and FFI safety. Avoid comments that merely restate code.
@@ -124,7 +123,8 @@ contract is broken.
 ## Verification
 
 Run `./scripts/verify.sh` (equivalently, each command inside it) from the
-repository root; it must exit 0. Both toolchains must be on PATH — the script
+repository root; it must exit 0. Rust, Python and applicable GUI/native tools
+must be on PATH; Go is not required. The script
 deliberately does not source `~/.cargo/env`, because a verification run that
 depends on a developer's home directory cannot be trusted in CI.
 
@@ -140,19 +140,19 @@ until it is recorded and its licence reviewed
 ([THIRD-PARTY-POLICY](docs/THIRD-PARTY-POLICY.md)). It reports declared
 licences only; it is not a licence audit and does not build `NOTICE`.
 
-Go stages cover `internal/corpusgen` only: `go build`, `go test`, `gofmt -l`,
-`go vet`, the corpus gates, dependency-drift and module-graph guards. The JSON
-fence checks and the `tracker consistency` stage are Rust binaries from
-`domowik-devtools` and therefore run AFTER `cargo test`; tracker consistency
-still runs just before the clean-tree check, so a tracker repair stays visible
-as uncommitted work rather than masked by it.
+There are no Go stages. The JSON fence checks, named `corpus gates` stage and
+`tracker consistency` stage use Rust tools/tests from `domowik-devtools` after
+`cargo test`. Tracker consistency still runs just before the clean-tree check,
+so a tracker repair stays visible as uncommitted work rather than masked by it.
 
-**Withdrawn, and owed back:** the Go release-inventory verifier froze with the
-Go product it describes, and CLI stream/exit-code probes P1-P3 plus
-cross-compilation coverage went with `./cmd/domowik`. Reinstating the probes
-against the Rust binary is an acceptance criterion of the CLI port, and a Rust
-release/SBOM process is owed. See
-[ADR 0008](docs/decisions/0008-rust-core-implementation.md).
+**Rust replacement status (2026-10-04):** the Go release-inventory verifier
+froze with its product. Rust CLI stream/exit-code probes and release/SBOM
+validation now run in `scripts/verify.sh`; Linux cross-compilation runs in CI
+as compile-only coverage, not runtime evidence. GUI bundle license coverage
+and first-release obligations remain incomplete. See
+[RELEASE-INVENTORY.md](docs/RELEASE-INVENTORY.md) and
+[ADR 0008](docs/decisions/0008-rust-core-implementation.md). Do not treat the
+older withdrawal record as the current list of checks.
 
 **Every stage names itself on failure.** A failing run prints
 `=== VERIFICATION FAILED ===` with the STAGE, line, and captured exit status;

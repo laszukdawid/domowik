@@ -2,7 +2,7 @@
 
 - **Phase:** 2
 - **Priority:** Medium
-- **Status:** In Progress (partial scope)
+- **Status:** Done
 - **Depends on:** 0037
 
 ## Problem
@@ -142,7 +142,7 @@ differently.
 Nine mutants, each killed and reverted, including the L33 coverage mutant that
 reproduces ED-0069's exact diagnostic — `row L33 covered without records` — so
 the coverage audit demonstrably came across intact. Evidence, commands and
-outputs: [docs/evidence/0062-corpusgen-rust/PARITY.md](../docs/evidence/0062-corpusgen-rust/PARITY.md).
+outputs: [docs/evidence/0062-corpusgen-rust/PARITY.md](../../docs/evidence/0062-corpusgen-rust/PARITY.md).
 
 ### The one deliberate difference: the generator no longer compresses
 
@@ -221,12 +221,12 @@ port reproduces it exactly, which is what makes the artifacts byte-identical.
 Repairing it changes nine artifacts and their recorded digests, which is 0028's
 call. Recorded in that issue with the byte-level evidence.
 
-### Not done yet, and why
+### Historical handoff — 2026-09-12
 
 The Go package, `go.mod` and the Go stages are still here. `scripts/verify.sh`
 and `.github/workflows/` belong to issue 0061 while it is in flight, so the
 removal is prepared and handed over rather than taken:
-[docs/evidence/0062-corpusgen-rust/SWITCHOVER.md](../docs/evidence/0062-corpusgen-rust/SWITCHOVER.md)
+[docs/evidence/0062-corpusgen-rust/SWITCHOVER.md](../../docs/evidence/0062-corpusgen-rust/SWITCHOVER.md)
 carries the exact patch, verified with `git apply --check`, plus the two
 ownership conflicts it must be sequenced around.
 
@@ -234,6 +234,47 @@ Both generators running side by side is worth something while it lasts:
 `go test ./internal/corpusgen` and `cargo test -p domowik-devtools` assert byte
 equality against the same committed artifacts, so the implementations
 cross-check each other on every run rather than only at the moment of the port.
+
+### Final switchover — 2026-10-04
+
+The owner requested completion of the Go cleanup. The prepared handoff is
+applied to the current verifier and CI configuration, preserving the
+mandatory Linux editor gate and unrelated workspace changes. The last active
+Go package, root module, CI setup and version-manager entry are retired
+together; the Rust corpus gates replace the Go stage. The frozen reference
+tree and historical evidence remain intact. Task commands, contributor setup,
+the naming registry and ADR 0008 now agree that Go is retired from active work.
+
+Full local verification passed in the clean snapshot
+`/tmp/domowik-no-go-check.16uA9W`, with neither `go` nor `gofmt` on PATH:
+
+```sh
+export PATH=/opt/dev/flutter/bin:/home/dawid/.cargo/bin:/usr/bin:/bin
+if command -v go || command -v gofmt; then exit 1; fi
+DOMOWIK_REQUIRE_LINUX_EDITOR=1 ./scripts/verify.sh
+```
+
+Exit 0, ending `=== VERIFICATION PASSED === all stages`. The run covered
+Rust formatting/build/clippy/tests, all 11 named corpus gates, dependency and
+NOTICE checks, benchmark compilation/smoke, CLI probes, Rust/C/Dart bridge
+checks, native Linux file dialogs, Flutter analysis, 305 widget tests, all
+three CPU harnesses, Linux release compilation and both Xvfb bundle probes.
+The full log is `/tmp/domowik-no-go-verify.log`. Flutter 3.47.5 / Dart 3.13.4
+matched the pre-existing workspace lockfile; CI's 3.41.6 pin is unchanged.
+macOS application/Bash 3.2 checks were not exercised on this Linux host.
+
+Local CI preflight passed 27 summary cases, shell lint over eight files,
+missing-prerequisite rejection proofs and 27 inventory checks; the inventory
+log is `/tmp/domowik-no-go-preflight.log`. One optional cached libloading
+0.8.9 text probe announced a skip; the independent ISC notice proofs passed.
+`task --dry test` resolves only to `cargo test --workspace --locked`.
+
+The first scratch build reused stale source timestamps and was rerun after
+cache invalidation. A subsequent benchmark build exhausted the temporary
+filesystem quota; relocating the disposable cache to local disk resolved it.
+Neither failure caused product edits or remote CI runs. Existing workspace
+changes and installed Go toolchains are preserved; no commit or push is part
+of this closure.
 
 ## Acceptance criteria
 
@@ -251,13 +292,14 @@ cross-check each other on every run rather than only at the moment of the port.
       change.
 - [x] The `internal/corpusgen` question above is answered by the owner and
       recorded, with the losing option's cost stated rather than dropped.
-- [ ] If corpusgen is ported or frozen: `go.mod`, the `go build`, `go test`,
+- [x] If corpusgen is ported or frozen: `go.mod`, the `go build`, `go test`,
       `gofmt`, `go vet`, `dependency drift`, `module graph size` and
       `module graph identity` stages, and the CI `setup-go` step and
       `GOTOOLCHAIN` variable are removed together, in one change.
-      *Prepared and verified with `git apply --check`; held for issue 0061,
-      which owns `scripts/verify.sh` and `.github/workflows/`.*
-- [ ] `./scripts/verify.sh` passes with no Go toolchain installed at all.
+      *Applied to the current Linux/macOS workflows on 2026-10-04; the
+      mandatory Linux editor gate is preserved.*
+- [x] `./scripts/verify.sh` passes with no Go toolchain available in the
+      verification environment (neither `go` nor `gofmt` on PATH).
 
 ## Boundaries
 

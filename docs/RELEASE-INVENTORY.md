@@ -11,7 +11,8 @@ covered. Nothing here publishes, tags, uploads, or reserves anything, and the
 first public binary release remains ungated by this document alone.
 
 The Go pipeline that used to do this froze with the Go product it described
-(ED-0091). Its design is preserved at the end of this page, because a
+(ED-0091); its source archive was removed on 2026-10-05 and remains in earlier
+Git commits. Its design is preserved at the end of this page, because a
 replacement should be argued against it rather than written as though the
 problem were new.
 
@@ -176,10 +177,15 @@ has a `rust-std` row.
 
 ## What is still owed
 
-- **Nothing is wired into `scripts/verify.sh` yet.** The scripts and their
-  tests run standalone. Where the stages belong, and whether the validator's
-  regeneration of `NOTICE` duplicates work the surrounding run already did, is
-  a cost question for root.
+Current integration (2026-10-04): `scripts/verify.sh` runs release validation
+against the built CLI and then the full declared artifact set, followed by
+deterministic SBOM comparisons. Its `--skip-generated` validator calls rely on
+the earlier notice/inventory regeneration stages; standalone validation checks
+generated files by default. Harness regression tests also run in CI. This
+integration does not close staged GUI bundle coverage or authorize a release.
+
+Remaining obligations:
+
 - **Issue 0036 criterion 4 stays unmet.** The notice bundle is generated and
   reviewable; "included before the first public binary release" cannot be
   closed until a release is authorised and happens.
@@ -193,7 +199,10 @@ has a `rust-std` row.
 before ADR 0008, kept because the Rust process above should be argued against a
 worked design rather than written as though the problem were new. The code is
 `internal/release`, `cmd/domowik-sbom` and `release/`, all of which moved to
-`_reference/go/` with the Go core. Its `verify.sh` stage was withdrawn: the
+`_reference/go/` with the Go core. That archive was removed on 2026-10-05;
+this appendix describes a historical design, not runnable source in the
+current checkout. Earlier committed sources remain in Git history.
+Its `verify.sh` stage was withdrawn: the
 manifest enforces `artifacts must not be empty` and describes two linux
 binaries built from `./cmd/domowik`, which no longer exists. Pointing it at a
 build tool would have been a lie and relaxing the guard would have weakened a

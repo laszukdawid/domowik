@@ -1,8 +1,8 @@
 # Corpus expectation manifest (issue 0028)
 
 Machine-readable index of every fixture. Records live in the fenced JSON
-arrays below and are validated by `internal/corpusgen`
-(`go test ./internal/corpusgen`), which enforces: unique ids, closed
+arrays below and are validated by the Rust corpus gates in `domowik-devtools`
+(`cargo test --locked -p domowik-devtools --test corpus_gates`), which enforce: unique ids, closed
 vocabularies, clause citations, artifact/recipe exclusivity, artifact
 existence and the 256 KiB inert cap, recipe bound expressions, and full
 two-way coverage between this file and the committed fixture tree.
@@ -32,7 +32,7 @@ they are distinct:
    normative v0.1 profile.
 
 The `residualBlockers` array in the coverage-audit fence lists every record in
-state 2 or 3 with its route. `internal/corpusgen` enforces the honest-coverage
+state 2 or 3 with its route. The Rust corpus gates enforce the honest-coverage
 contract mechanically: the marker's named assertions must exist in the
 record's own `assert` block; `residualBlockers` must match the blocked record
 set exactly in both directions; and no `categoryAudit` or `rowAudit` entry may
@@ -1028,7 +1028,7 @@ covered — the substitution issue 0018's release audit condemned.
 ## Hostile — physical container defects (.domo)
 
 Every committed hostile container is inert and ≤256 KiB; each defect is a
-byte-level delta over a conforming base package built by `internal/corpusgen`.
+byte-level delta over a conforming base package built by the Rust corpus generator.
 
 ```json
 [
