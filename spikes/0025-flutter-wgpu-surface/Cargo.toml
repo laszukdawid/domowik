@@ -1,0 +1,23 @@
+# Spike crate for issue 0025. NOT part of the distributed build graph yet.
+#
+# Its own workspace, excluded from the root one, mirroring issue 0024's spike
+# (ED-0097): a spike inside the distributed graph acquires a compatibility
+# obligation it was never meant to carry.
+#
+# `wgpu` is depended on DIRECTLY rather than through wgpu-native's C API
+# (ED-0109): our caller is Rust, so the C wrapper would be a second FFI
+# boundary inside one process. Default features are OFF and backends are named
+# explicitly, because the point of this step is to see the smallest tree that
+# can answer the surface question, not the largest one cargo will hand us.
+[workspace]
+
+[package]
+name = "domowik-surface-spike"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.98.0"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["wgsl"] }

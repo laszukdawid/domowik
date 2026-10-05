@@ -1,0 +1,63 @@
+diff --git a/scripts/verify.sh b/scripts/verify.sh
+index 3e9d952..55d2600 100755
+--- a/scripts/verify.sh
++++ b/scripts/verify.sh
+@@ -367,6 +367,58 @@ cmp build/ci/probe.png build/ci/probe2.png
+ # writing into a file named for the probes.
+ exec 2>&1
+ 
++# ISSUE 0036: the release inventory, validated against the binary just built.
++#
++# Placed HERE and not next to the licence stages above because the first call
++# needs target/release/domowik to exist: without it the validator refuses
++# `missing-artifact`, which is correct behaviour and a useless stage.
++#
++# TWO CALLS, AND THE SECOND IS NOT REDUNDANT. `--artifact` FILTERS the artifact
++# list, so the first call audits only the root workspace graph. The second call
++# drops the filter and is the one that reaches the 0024 spike, which is its own
++# Cargo workspace (ED-0097) and is invisible to both the first call and to
++# `rust-deps-inventory.py`, neither of which passes a --manifest-path. An
++# earlier draft of this stage ran the first call alone and claimed spike
++# coverage in a comment; it did not have it (root, R19). Both invocations are
++# mutation-proven in scripts/ci/release-inventory-test.sh: an unreviewed
++# copyleft licence reachable only from the spike fails the second call and
++# PASSES the first.
++#
++# The second call omits `--require-built` deliberately. The Flutter bundle is
++# declared `staged`, so requiring a built artifact would refuse
++# `incomplete-coverage` on an artifact nobody has asked this run to build.
++#
++# Measured cost on an Apple Silicon host with a warm cargo cache: 0.245s for
++# the first call, 0.30s for the second. Both are one `cargo metadata` slower
++# cold.
++#
++# `--skip-generated` is deliberate and is the ONLY place it is correct. The
++# `rust notice` and `rust dependency inventory` stages above have already
++# regenerated and diffed NOTICE and docs/RUST-DEPENDENCIES.md; repeating that
++# here would cost two more `cargo metadata` runs and a second pass over every
++# runtime crate's licence files to reprove what this run just proved. Run
++# standalone, the validator checks them by default, because a release gate that
++# trusted files it had not regenerated is the ED-0094 failure.
++#
++# What this ADDS over the licence stages above: the CLI's target-filtered
++# linked closure rather than the workspace-wide list, the standard library from
++# the pinned toolchain record, an `include_bytes!` scan against
++# docs/third-party/assets.json, the measured binary, and the spike workspace.
++stage "release inventory"
++python3 scripts/release-validate.py --require-built --artifact domowik-cli \
++  --skip-generated
++python3 scripts/release-validate.py --skip-generated
++
++# The SBOM must be reproducible, which is a property no single run can show.
++# Two generations of the same document over the same tree, compared byte for
++# byte: a generator that read the clock, iterated a set, or embedded a random
++# serialNumber fails here rather than at the moment somebody tries to diff two
++# releases.
++stage "release sbom determinism"
++python3 scripts/release-sbom.py artifact --id domowik-cli > build/ci/sbom1.json
++python3 scripts/release-sbom.py artifact --id domowik-cli > build/ci/sbom2.json
++cmp build/ci/sbom1.json build/ci/sbom2.json
++
+ # P13a: the asset store. A background image imports, deduplicates, verifies,
+ # renders beneath the plan, and survives a save.
+ stage "probe P13a asset store"

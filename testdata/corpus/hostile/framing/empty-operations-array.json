@@ -1,0 +1,10 @@
+{
+ "batchId": "01949033-0000-7000-8000-000000014013",
+ "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+ "counterBase": 85,
+ "frontier": {
+  "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 84
+ },
+ "operations": [],
+ "expectedOutcome": "empty batch defines empty range and no frontier position => malformed-framing (\u00a74.1 B3 / \u00a74.3 row 4)"
+}

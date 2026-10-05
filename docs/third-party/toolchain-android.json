@@ -1,0 +1,147 @@
+{
+  "recordSchema": 1,
+  "component": "android-toolchain",
+  "description": "Ledger-before-reliance record for the Android toolchain used by the issue-0024 Android evidence slice. Every entry is DEV-ONLY: none of it is distributed with Domowik, and no artifact built by it is a release artifact. Recorded separately from docs/third-party/tools.json so the Android slice does not contend with concurrent edits to the shared tools ledger; the two are complementary, not alternatives. See docs/THIRD-PARTY-POLICY.md.",
+  "recorded": "2026-09-12",
+  "host": {
+    "os": "macOS 26.6 (Darwin 25.6.0)",
+    "arch": "arm64 (Apple M4 Max)",
+    "note": "The SDK, JDK, NDK, emulator and AVD live under /private/tmp/domowik-android-0024, outside the repository and outside the user's home. Nothing was installed globally, no shell profile was modified, and no privileged installation was performed."
+  },
+  "licenseAcceptance": {
+    "agreement": "Android Software Development Kit License Agreement",
+    "url": "https://developer.android.com/studio/terms",
+    "acceptedBy": "The current Android CLI accepts the SDK Terms as part of `android sdk install`; unlike the retired `sdkmanager --licenses` flow there is no separate prompt, and `--licenses` now reports that it is no longer needed.",
+    "evidence": "sdk/licenses/android-sdk-license contains the accepted licence hash 24333f8a63b6825ea9c5514f83c2829b004d1fee",
+    "scope": "Covers the SDK platform, build-tools, platform-tools, NDK, emulator and system image below. Accepting it is a precondition of using the SDK at all; it grants no rights over Domowik's own code and imposes no obligation on any Domowik artifact, because nothing built here is distributed.",
+    "notAccepted": "No Google APIs or Google Play system image was installed, so no additional Google APIs Terms of Service apply. See the systemImage entry for why."
+  },
+  "tools": [
+    {
+      "name": "Eclipse Temurin JDK",
+      "version": "21.0.12.1+1 (21.0.12+101.0.LTS)",
+      "sourceUrl": "https://github.com/adoptium/temurin21-binaries",
+      "artifact": "OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz",
+      "sha256": "3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998",
+      "sizeBytes": 200073404,
+      "license": "GPL-2.0-only WITH Classpath-exception-2.0",
+      "status": "dev-only",
+      "usedIn": "Runs Gradle and the Android Gradle Plugin for the issue-0024 Android build",
+      "provenance": "Downloaded from the Adoptium release the Adoptium v3 API named for mac/aarch64, and the published SHA-256 was verified before extraction. The Classpath Exception is what keeps the GPL off anything compiled or run by this JDK; no part of the JDK is distributed with Domowik, so the question is moot here in any case.",
+      "chosenBecause": "AGP 8.11.1 requires Java 17 or later, and Flutter 3.41.6 errors below 17. 21 is the current LTS and the version this evidence was produced with."
+    },
+    {
+      "name": "Android SDK Command-line Tools",
+      "version": "23.0.0 (build 16111833); Android CLI 1.0.16261425",
+      "sourceUrl": "https://dl.google.com/android/repository/commandlinetools-mac_arm64-16111833_latest.zip",
+      "sha1": "ad03dc49bfacfd52c110b14104ea548b8a07e830",
+      "sizeBytes": 155384151,
+      "license": "Android Software Development Kit License Agreement",
+      "status": "dev-only",
+      "usedIn": "Installing and listing SDK packages; avdmanager creates the AVD; apkanalyzer inspects the built APK",
+      "provenance": "The SHA-1 published in Google's repository2-3.xml manifest was verified before extraction. This release replaces the classic `sdkmanager` with a new `android` CLI and retains `sdkmanager` only as a deprecation shim."
+    },
+    {
+      "name": "Android SDK Platform-Tools",
+      "version": "37.0.1",
+      "sourceUrl": "https://dl.google.com/android/repository/",
+      "license": "Android Software Development Kit License Agreement",
+      "status": "dev-only",
+      "usedIn": "adb: install, launch, read probe output, drive lifecycle transitions",
+      "provenance": "Installed by the Android CLI from Google's repository with its own integrity checking."
+    },
+    {
+      "name": "Android SDK Platform",
+      "version": "android-36 (revision 2.0.0)",
+      "sourceUrl": "https://dl.google.com/android/repository/",
+      "license": "Android Software Development Kit License Agreement",
+      "status": "dev-only",
+      "usedIn": "compileSdk and targetSdk 36, the defaults Flutter 3.41.6 pins",
+      "provenance": "Installed by the Android CLI from Google's repository."
+    },
+    {
+      "name": "Android SDK Build-Tools",
+      "version": "36.0.0 (35.0.0 additionally pulled in by the Android Gradle Plugin)",
+      "sourceUrl": "https://dl.google.com/android/repository/",
+      "license": "Android Software Development Kit License Agreement",
+      "status": "dev-only",
+      "usedIn": "Packaging and signing the APK",
+      "provenance": "36.0.0 was installed deliberately. 35.0.0 and CMake 3.22.1 were pulled in by the Gradle build itself during the first APK build and are recorded because they were installed, not because they were chosen; CMake is unused by this spike, whose native build is cargo."
+    },
+    {
+      "name": "Android NDK",
+      "version": "28.2.13676358",
+      "sourceUrl": "https://dl.google.com/android/repository/",
+      "license": "Android Software Development Kit License Agreement; bundled components carry their own notices (NOTICE and NOTICE.toolchain in the NDK root), principally Apache-2.0 WITH LLVM-exception for the LLVM toolchain and BSD terms for the bionic headers and stubs",
+      "status": "dev-only",
+      "usedIn": "Supplies the clang driver cargo links aarch64-linux-android objects with",
+      "provenance": "Installed by the Android CLI. Pinned to the version Flutter 3.41.6 names as its default, and set explicitly in the plugin's build.gradle so the linker that produced the recorded evidence is named rather than inherited.",
+      "distributionNote": "The NDK links the Rust cdylib against Android's own libc, libm and libdl, which are platform libraries present on the device and NOT bundled into the artifact; the built .so declares them as NEEDED and carries no copy. No NDK C++ runtime (libc++_shared) is linked, because the bridge is Rust and does not use one."
+    },
+    {
+      "name": "Android Emulator",
+      "version": "37.1.11 (build 15917651)",
+      "sourceUrl": "https://dl.google.com/android/repository/",
+      "license": "Android Software Development Kit License Agreement",
+      "status": "dev-only",
+      "usedIn": "Hosts the named AVD the evidence was produced on",
+      "provenance": "Installed by the Android CLI. Runs natively on the arm64 host; the Android slice is not executed under any emulated instruction set."
+    },
+    {
+      "name": "Android system image",
+      "version": "system-images;android-36;default;arm64-v8a (revision 2.0.0)",
+      "sourceUrl": "https://dl.google.com/android/repository/sys-img/android/arm64-v8a-36_r02.zip",
+      "sha1": "62ad6714df790f89c8a8ad32552ffe20bb16fe87",
+      "sizeBytes": 810700000,
+      "license": "Android Software Development Kit License Agreement",
+      "status": "dev-only",
+      "usedIn": "The AVD 'domowik_0024_arm64' the probes run on",
+      "provenance": "Installed by the Android CLI from Google's repository.",
+      "chosenBecause": "The AOSP 'default' image was chosen over 'google_apis' and 'google_apis_playstore' DELIBERATELY. The Google APIs images add Google Play services and carry additional Google terms, and this spike needs none of them: it loads a Rust library and calls it. Taking the plain AOSP image keeps the licence surface to the SDK agreement alone."
+    },
+    {
+      "name": "Gradle",
+      "version": "8.14 (wrapper distribution gradle-8.14-all.zip)",
+      "sourceUrl": "https://services.gradle.org/distributions/gradle-8.14-all.zip",
+      "license": "Apache-2.0",
+      "status": "dev-only",
+      "usedIn": "Builds the Android plugin library and the application",
+      "provenance": "Requested by the wrapper properties Flutter's template generates and downloaded by the Gradle wrapper. The wrapper's own jar and scripts are NOT committed to this repository: they are gitignored and Flutter injects them from its pinned SDK cache, so no third-party binary enters the tree."
+    },
+    {
+      "name": "Android Gradle Plugin",
+      "version": "8.11.1",
+      "sourceUrl": "https://maven.google.com/",
+      "license": "Apache-2.0",
+      "status": "dev-only",
+      "usedIn": "com.android.application and com.android.library; packages the Rust .so into the APK",
+      "provenance": "The version Flutter 3.41.6 pins in its Android templates."
+    },
+    {
+      "name": "Kotlin Gradle Plugin and stdlib",
+      "version": "2.2.20",
+      "sourceUrl": "https://github.com/JetBrains/kotlin",
+      "license": "Apache-2.0",
+      "status": "dev-only",
+      "usedIn": "Compiles the single Kotlin runner class, MainActivity",
+      "provenance": "The version Flutter 3.41.6 pins in its Android templates. The Kotlin stdlib is linked into the spike APK, which is not distributed; if an Android application ever becomes a release artifact this row becomes a DISTRIBUTED dependency and needs a notice."
+    },
+    {
+      "name": "Rust std for aarch64-linux-android",
+      "version": "1.98.0",
+      "sourceUrl": "https://static.rust-lang.org/",
+      "license": "MIT OR Apache-2.0",
+      "status": "dev-only",
+      "usedIn": "Target standard library for the Android build of the spike cdylib",
+      "provenance": "Added with `rustup target add aarch64-linux-android` against the toolchain rust-toolchain.toml already pins. This is the only change made outside the scoped directory: it adds a target to the existing ~/.rustup toolchain and installs nothing new on PATH."
+    }
+  ],
+  "notDistributed": "Every row above is a build-time or test-time tool. The APK they produce is signed with the auto-generated Android debug key and is a development artifact, not a release artifact, for the same reason ED-0099 gives about macOS. If Android ever becomes a distribution target, the Kotlin stdlib, AndroidX and Flutter engine rows inside the APK become distributed dependencies requiring notices, and a real signing identity becomes an owner decision rather than an engineering task.",
+  "revisitTriggers": [
+    "any version change in the rows above, including a Flutter upgrade that moves its pinned AGP, Kotlin, Gradle, compileSdk or NDK defaults",
+    "adopting a google_apis or google_apis_playstore system image, which adds Google terms this record explicitly avoids",
+    "linking any NDK-provided runtime such as libc++_shared into the bridge",
+    "Android becoming a distribution target, which converts several rows from dev-only to distributed"
+  ],
+  "templateAssets": "The committed Android tree includes files generated by `flutter create` from the Flutter SDK's own templates: AndroidManifest.xml, the launch_background and styles resources, and the five ic_launcher.png launcher icons. They originate in the Flutter SDK (BSD-3-Clause), which docs/third-party/tools.json already records as a dev-only tool, and they are the only binary files the Android slice adds to the repository. The Gradle wrapper jar and scripts are NOT committed: they are gitignored and Flutter injects them from its pinned SDK cache on each build."
+}

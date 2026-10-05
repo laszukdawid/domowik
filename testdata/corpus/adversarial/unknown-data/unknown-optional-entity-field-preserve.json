@@ -1,0 +1,30 @@
+{
+ "note": "U2: unknown OPTIONAL entity field on an otherwise valid Tier A entity must be preserved opaquely on write-back or write-back refused; silent stripping forbidden. L32 bounds preservation within L1.",
+ "entity": {
+  "id": "019534c7-0000-7000-8000-000000000002",
+  "type": "wall",
+  "levelId": "019534c7-0000-7000-8000-000000000001",
+  "startMm": [
+   0,
+   2500
+  ],
+  "endMm": [
+   4000,
+   2500
+  ],
+  "thicknessMm": 120,
+  "heightMm": 2500,
+  "futureNote": {
+   "vendor": "example",
+   "payload": [
+    1,
+    2,
+    3
+   ]
+  }
+ },
+ "expectedOutcome": {
+  "outcome": "success-on-read",
+  "writeBackContract": "preserve-with-identical-meaning or safe-write-refusal naming what cannot be preserved"
+ }
+}

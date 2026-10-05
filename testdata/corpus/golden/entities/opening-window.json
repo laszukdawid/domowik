@@ -1,0 +1,15 @@
+{
+ "id": "019534c7-0000-7000-8000-00000000000a",
+ "type": "opening",
+ "kind": "window",
+ "hostWallId": "019534c7-0000-7000-8000-000000000004",
+ "u": 0.25,
+ "widthMm": 1200,
+ "heightMm": 1400,
+ "sillMm": 900,
+ "depthMm": 120,
+ "side": "Right",
+ "hinge": "nearStart",
+ "opensToward": "Right",
+ "swingDeg": 180
+}

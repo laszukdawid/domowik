@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- No components and no permissions. This library exists only to carry the
+         Rust core into the application's APK as lib/<abi>/libdomowik_bridge.so;
+         the Dart side opens it directly through dart:ffi. -->
+</manifest>

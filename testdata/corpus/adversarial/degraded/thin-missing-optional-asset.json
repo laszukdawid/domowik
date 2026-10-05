@@ -1,0 +1,21 @@
+{
+ "note": "Thin package whose optional asset (descriptor requirement=optional) resolves nowhere.",
+ "assetInstance": {
+  "id": "019534c7-0000-7000-8000-000000000009",
+  "type": "assetInstance",
+  "levelId": "019534c7-0000-7000-8000-000000000001",
+  "digest": "sha256:524f170c49ff7c181ac9e7c36c7186b476c326499c721d51275bb0d088104e2d",
+  "transform": {
+   "translationMm": [
+    5200,
+    3100
+   ],
+   "scaleUniform": 1,
+   "rotationDeg": 0
+  }
+ },
+ "expectedOutcome": {
+  "outcome": "degraded-read-only-inspection",
+  "detail": "missing optional asset per BEHAVIOR-SPEC \u00a79.6 matrix; placeholder from descriptor placeholderDimensions"
+ }
+}

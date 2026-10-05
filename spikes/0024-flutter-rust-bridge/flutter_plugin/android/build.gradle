@@ -1,0 +1,173 @@
+// Builds the Domowik Rust core for Android and packages it into this library's
+// jniLibs, so the application's APK carries lib/<abi>/libdomowik_bridge.so.
+//
+// This is the Android answer to the question the macOS podspec answers there:
+// where does the native code live once the app is a package rather than a
+// `dart run`? On macOS a cargo `cdylib` was unusable because its LC_ID_DYLIB is
+// the absolute path of the build machine, so the crate is built as a
+// `staticlib` and linked into the pod's framework. Android has no such problem:
+// an ELF shared object is resolved by soname against the app process's own
+// native-library search path, so the `cdylib` is packaged as-is and opened by
+// bare name. Nothing here bakes in a path from this machine.
+
+group = "invalid.domowik_spike.domowik_bridge_plugin"
+version = "1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.11.1")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+// ONE ABI, deliberately.
+//
+// The macOS slice built a universal binary and could only ever run the arm64
+// half, so it carries "the x86_64 slice was built but never executed" as a
+// standing caveat. Repeating that here would buy a second unexecuted artifact
+// and a second caveat. The emulator this evidence is produced on is arm64, the
+// host is arm64, so arm64-v8a is what is built and arm64-v8a is what is run.
+// Adding armeabi-v7a or x86_64 is one line each plus a device to run them on;
+// until there is such a device, their absence is the honest state.
+ext.rustAbis = ["arm64-v8a": "aarch64-linux-android"]
+
+// The Rust crate is the spike root, two directories above this one.
+ext.rustCrateDir = file("${projectDir}/../..")
+
+// jniLibs the cargo task writes into. Kept under the Gradle build directory so
+// `flutter clean` and `gradlew clean` remove it and nothing lands in the source
+// tree, where the repository's clean-tree verification stage would see it.
+ext.rustJniLibsDir = file("${layout.buildDirectory.get().asFile}/rustJniLibs")
+
+android {
+    namespace = "invalid.domowik_spike.domowik_bridge_plugin"
+    compileSdk = 36
+
+    // Pinned rather than inherited. The NDK is not an incidental build detail
+    // here: it supplies the linker that produces the .so, so the version that
+    // produced the recorded evidence is named in the ledger and named here.
+    ndkVersion = "28.2.13676358"
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        // Must match the Android API level in the NDK clang wrapper chosen
+        // below; they are the same number for the same reason.
+        minSdk = 24
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs += rustJniLibsDir
+        }
+    }
+}
+
+// Resolves the NDK clang that cargo links Android objects with.
+//
+// Taken from `android.ndkDirectory` rather than from the environment, so the
+// linker is by construction the one AGP itself resolved for `ndkVersion`. A
+// second NDK on the machine cannot silently become the one that built the .so.
+String ndkClang(String triple, int api) {
+    def prebuilt = new File(android.ndkDirectory, "toolchains/llvm/prebuilt")
+    def hosts = prebuilt.listFiles()?.findAll { it.directory }?.sort { it.name }
+    if (!hosts) {
+        throw new GradleException("no NDK prebuilt toolchain under ${prebuilt}")
+    }
+    def clang = new File(hosts.first(), "bin/${triple}${api}-clang")
+    if (!clang.exists()) {
+        throw new GradleException("NDK clang wrapper not found: ${clang}")
+    }
+    return clang.absolutePath
+}
+
+String cargoExecutable() {
+    def fromEnv = System.getenv("CARGO")
+    if (fromEnv) {
+        return fromEnv
+    }
+    def home = System.getenv("CARGO_HOME") ?: "${System.getProperty('user.home')}/.cargo"
+    def candidate = new File("${home}/bin/cargo")
+    if (candidate.exists()) {
+        return candidate.absolutePath
+    }
+    return "cargo"
+}
+
+tasks.register("cargoBuildAndroid") {
+    description = "Builds the Domowik Rust core for every configured Android ABI."
+    group = "build"
+
+    // NEVER UP TO DATE, and this is the load-bearing line.
+    //
+    // The macOS slice shipped a bundle containing a STALE Rust archive because
+    // its build phase declared outputs and no inputs, so Xcode skipped cargo
+    // entirely -- and both self-verification probes PASSED on that stale build.
+    // Declaring the crate's sources as Gradle inputs would work until someone
+    // edited a core crate outside the listed set, and the failure mode is
+    // silent. Cargo already knows what changed and a warm no-op costs about a
+    // second, so the decision of whether to rebuild is left to the tool that
+    // can make it correctly. `./scripts/android-probe.sh --mutate-abi` proves
+    // this works by changing ABI_VERSION in the Rust source and requiring the
+    // installed app to report the new number.
+    outputs.upToDateWhen { false }
+
+    doLast {
+        def cargo = cargoExecutable()
+        rustAbis.each { abi, triple ->
+            def linker = ndkClang(triple, android.defaultConfig.minSdk)
+            def targetDir = new File("${layout.buildDirectory.get().asFile}/cargo")
+
+            // Target-scoped variable names, so no macOS or Linux build in this
+            // repository can pick these settings up by accident.
+            def prefix = "CARGO_TARGET_" + triple.toUpperCase().replace("-", "_")
+            def env = [:]
+            env.put(prefix + "_LINKER", linker)
+            // A shared object without a SONAME is resolved by file name and
+            // works, but the platform linker deduplicates by soname; naming it
+            // makes the library say what it is rather than relying on where it
+            // happened to be found.
+            env.put(prefix + "_RUSTFLAGS", "-C link-arg=-Wl,-soname,libdomowik_bridge.so")
+            env.put("CARGO_TARGET_DIR", targetDir.absolutePath)
+
+            providers.exec {
+                commandLine cargo, "build", "--release", "--target", triple
+                workingDir rustCrateDir
+                environment env
+            }.result.get().assertNormalExitValue()
+
+            def built = new File(targetDir, "${triple}/release/libdomowik_bridge.so")
+            if (!built.exists()) {
+                throw new GradleException("cargo produced no ${built}")
+            }
+            def destination = new File(rustJniLibsDir, abi)
+            destination.mkdirs()
+            def packaged = new File(destination, "libdomowik_bridge.so")
+            packaged.bytes = built.bytes
+            logger.lifecycle("cargoBuildAndroid: ${abi} <- ${triple} (${packaged.length()} bytes)")
+        }
+    }
+}
+
+// jniLibs are read while the library's resources are merged, which happens
+// after `preBuild`, so the core is in place before anything can package it.
+tasks.configureEach { task ->
+    if (task.name == "preBuild") {
+        task.dependsOn("cargoBuildAndroid")
+    }
+}

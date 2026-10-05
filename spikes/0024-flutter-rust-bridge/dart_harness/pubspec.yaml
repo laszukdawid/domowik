@@ -1,0 +1,5 @@
+name: domowik_bridge_harness
+description: dart:ffi harness for the issue-0024 bridge spike. Not published.
+publish_to: none
+environment:
+  sdk: ">=3.0.0 <4.0.0"

@@ -1,0 +1,29 @@
+{
+  "manifestSchema": 1,
+  "sourceDateEpoch": {
+    "policy": "require-env-or-git-commit"
+  },
+  "artifacts": [
+    {
+      "id": "domowik-linux-amd64",
+      "os": "linux",
+      "arch": "amd64",
+      "package": "./cmd/domowik"
+    },
+    {
+      "id": "domowik-linux-arm64",
+      "os": "linux",
+      "arch": "arm64",
+      "package": "./cmd/domowik"
+    }
+  ],
+  "notice": {
+    "path": "NOTICE"
+  },
+  "sbomDir": "release/sbom",
+  "releaseOutputDir": "build/release",
+  "consumptionManifest": {
+    "path": "build/release/manifest.json"
+  },
+  "bundled": []
+}

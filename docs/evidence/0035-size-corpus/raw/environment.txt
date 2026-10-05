@@ -1,0 +1,8 @@
+environment captured by generator 0035-part-a.1
+os=linux
+kernel=7.1.8-arch1-3
+cpu=AMD Ryzen 9 7950X 16-Core Processor
+cpus=32
+memTotalKiB=64853676
+filesystem=btrfs
+go=go1.27.0 goos=linux goarch=amd64 GOTOOLCHAIN=local

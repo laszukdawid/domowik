@@ -1,0 +1,24 @@
+{
+ "note": "U1: a field that a future schema makes REQUIRED but this reader cannot recognize refuses safely before any effect.",
+ "entity": {
+  "id": "019534c7-0000-7000-8000-000000000002",
+  "type": "wall",
+  "levelId": "019534c7-0000-7000-8000-000000000001",
+  "startMm": [
+   0,
+   2500
+  ],
+  "endMm": [
+   4000,
+   2500
+  ],
+  "thicknessMm": 120,
+  "heightMm": 2500
+ },
+ "manifestFormatVersion": "0.2",
+ "expectedOutcome": {
+  "outcome": "reject",
+  "category": "unsupported-version",
+  "detail": "V3 gate: minor exceeds supported; actionable diagnostic names both versions"
+ }
+}

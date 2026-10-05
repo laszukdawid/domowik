@@ -1,0 +1,696 @@
+// The plan canvas: the document models the core hands back, and the painter
+// that draws them (issue 0051).
+//
+// Extracted from `main.dart` and extended with passive level rendering.
+//
+// Every polygon, aperture and room here was computed by the Rust core. NO
+// geometry is derived in Dart: rooms are measured to the INNER wall faces,
+// which is what a person means by floor area and is several square metres
+// away from what the centre lines enclose, and a second implementation in the
+// view would disagree with the core the first time a join rule changed
+// (ED-0101).
+
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/material.dart';
+
+import 'plan_viewport.dart';
+
+class Wall {
+  const Wall(this.id, this.start, this.end, this.thicknessMm);
+
+  final String id;
+  final Offset start;
+  final Offset end;
+  final double thicknessMm;
+}
+
+/// A polygon with holes, in plan millimetres.
+///
+/// For a ROOM face this also carries what the core decided about its label
+/// (BEHAVIOR-SPEC §5.2/§5.3): which record is effectively associated, the text
+/// to show, the rounded area string, where to anchor it, and a point inside
+/// the face that a new record could be seeded at. None of that is computed
+/// here. ED-0101: a front end chooses what the user is trying to do and never
+/// decides what it means, and "which of two records names this room" is
+/// exactly a meaning.
+class Ring {
+  const Ring(
+    this.outer,
+    this.holes,
+    this.areaMm2, {
+    this.recordId,
+    this.label,
+    this.displayAreaM2,
+    this.labelAnchorMm,
+    this.seedCandidateMm,
+  });
+
+  final List<Offset> outer;
+  final List<List<Offset>> holes;
+
+  /// Set for rooms; zero for occupied-region components.
+  final double areaMm2;
+
+  /// The effectively associated record (R5.2.4), or null when the face has no
+  /// candidates and therefore no label at all (R5.3.3 absence).
+  final String? recordId;
+
+  /// The label text the core resolved: the record's name, or `Room`.
+  final String? label;
+
+  /// The area under the R5.3.2 display rule. A string, because the rounding is
+  /// normative — square metres, two decimals, exact halves to EVEN — and
+  /// `toStringAsFixed(2)` is not that rule.
+  final String? displayAreaM2;
+
+  /// Where R5.3.3 anchors the label: the effective record's seed.
+  final Offset? labelAnchorMm;
+
+  /// A point strictly inside the face, for seeding a new record.
+  final Offset? seedCandidateMm;
+
+  static Ring fromJson(Map<String, Object?> j) {
+    List<Offset> pts(Object? v) => (v as List<Object?>)
+        .map((e) => (e as List<Object?>).cast<num>())
+        .map((p) => Offset(p[0].toDouble(), p[1].toDouble()))
+        .toList();
+    Offset? point(Object? v) {
+      if (v == null) return null;
+      final p = (v as List<Object?>).cast<num>();
+      return Offset(p[0].toDouble(), p[1].toDouble());
+    }
+
+    return Ring(
+      pts(j['outer']),
+      (j['holes'] as List<Object?>).map(pts).toList(),
+      (j['areaMm2'] as num?)?.toDouble() ?? 0.0,
+      recordId: j['recordId'] as String?,
+      label: j['label'] as String?,
+      displayAreaM2: j['displayAreaM2'] as String?,
+      labelAnchorMm: point(j['labelAnchorMm']),
+      seedCandidateMm: point(j['seedCandidateMm']),
+    );
+  }
+}
+
+/// One room record as the core projected it (BEHAVIOR-SPEC §5.2).
+///
+/// `status` is DERIVED and arrives already decided: `associated`,
+/// `superseded`, `seed-on-boundary`, `seed-in-wall` or `seed-in-exterior`.
+/// The editor displays it and never computes it.
+class RoomRecordView {
+  const RoomRecordView(
+    this.id,
+    this.seedMm,
+    this.name,
+    this.status, {
+    this.floorStyleRef,
+    this.ceilingStyleRef,
+  });
+
+  final String id;
+  final Offset seedMm;
+
+  /// The AUTHORITATIVE name. Null and the empty string are different values
+  /// here and stay different; only the display collapses both to `Room`.
+  final String? name;
+  final String status;
+  final String? floorStyleRef;
+  final String? ceilingStyleRef;
+
+  bool get isAssociated => status == 'associated';
+
+  static RoomRecordView fromJson(Map<String, Object?> j) {
+    final seed = (j['seedMm'] as List<Object?>).cast<num>();
+    return RoomRecordView(
+      j['id'] as String,
+      Offset(seed[0].toDouble(), seed[1].toDouble()),
+      j['name'] as String?,
+      j['status'] as String,
+      floorStyleRef: j['floorStyleRef'] as String?,
+      ceilingStyleRef: j['ceilingStyleRef'] as String?,
+    );
+  }
+}
+
+/// One opening's derived geometry: the aperture cut and the door leaf.
+class Aperture {
+  const Aperture(
+    this.id,
+    this.isDoor,
+    this.cut,
+    this.hinge,
+    this.tip,
+    this.swingDeg,
+  );
+
+  final String id;
+  final bool isDoor;
+  final List<Offset> cut;
+  final Offset hinge;
+  final Offset tip;
+  final double swingDeg;
+
+  static Aperture fromJson(Map<String, Object?> j) {
+    Offset pt(Object? v) {
+      final p = (v as List<Object?>).cast<num>();
+      return Offset(p[0].toDouble(), p[1].toDouble());
+    }
+
+    final leaf = (j['leaf'] as List<Object?>);
+    return Aperture(
+      j['id'] as String,
+      j['kind'] == 'door',
+      (j['cut'] as List<Object?>).map(pt).toList(),
+      pt(leaf[0]),
+      pt(leaf[1]),
+      (j['swingDeg'] as num).toDouble(),
+    );
+  }
+}
+
+/// What the core derived for the level: the region walls occupy and the rooms
+/// their complement encloses.
+///
+/// Never recomputed here. Rooms are measured to the INNER wall faces, which is
+/// what a person means by floor area and is several square metres away from
+/// what the centre lines enclose; a second implementation in the view would
+/// disagree with the core the first time a join rule changed.
+class Derived {
+  const Derived(
+    this.occupied,
+    this.rooms,
+    this.openings,
+    this.floorAreaMm2, {
+    this.roomRecords = const [],
+  });
+
+  final List<Ring> occupied;
+  final List<Ring> rooms;
+  final List<Aperture> openings;
+  final double floorAreaMm2;
+
+  /// Every room record on the level, in stable-UUID order. Separate from
+  /// `rooms` because faces and records are separate things: a face exists with
+  /// no record, and a record persists with no face.
+  final List<RoomRecordView> roomRecords;
+
+  static const empty = Derived([], [], [], 0.0);
+}
+
+/// One NON-ACTIVE level, drawn beneath the active one (BEHAVIOR-SPEC §2.4).
+///
+/// Carries no selection state. The editor must independently exclude passive
+/// levels from targeting, snapping and document edits; rendering alone cannot
+/// enforce that boundary.
+///
+/// Geometry lists are borrowed, not copied. Callers must not mutate them after
+/// publication; replace changed payloads so identity-based repaint detection
+/// remains valid without walking or copying every polygon each frame.
+///
+/// `ghosted` distinguishes the two rendered non-active tiers: `false` is the
+/// VISIBLE tier (normal rendering, below the active level), `true` the GHOSTED
+/// tier (reduced emphasis, below visible). Hidden levels are not represented:
+/// they are simply absent from [PlanPainter.backgroundLevels].
+@immutable
+class PlanLayer {
+  const PlanLayer({
+    required this.levelId,
+    required this.walls,
+    required this.derived,
+    this.ghosted = false,
+  });
+
+  final String levelId;
+  final List<Wall> walls;
+  final Derived derived;
+  final bool ghosted;
+
+  /// Identity comparison on `walls` and `derived`, matching the convention
+  /// [PlanPainter.shouldRepaint] already uses for the active level: these
+  /// lists are rebuilt wholesale when the document changes, so identity is
+  /// both correct and O(1). Deep equality would walk every polygon on every
+  /// frame to learn what a pointer comparison already knows.
+  @override
+  bool operator ==(Object other) =>
+      other is PlanLayer &&
+      other.levelId == levelId &&
+      other.ghosted == ghosted &&
+      other.walls == walls &&
+      other.derived == derived;
+
+  @override
+  int get hashCode => Object.hash(levelId, ghosted, walls, derived);
+}
+
+class PlanPainter extends CustomPainter {
+  const PlanPainter(
+    this.walls,
+    this.derived,
+    this.selected,
+    this.draft, {
+    required this.view,
+    this.showGrid = true,
+    this.selectedJoin,
+    this.selectedIds = const {},
+    this.selectedJoins = const {},
+    this.backgroundLevels = const [],
+    this.marqueeRect,
+    this.snapPoint,
+    this.snapGuide,
+  });
+
+  final List<Wall> walls;
+  final Derived derived;
+
+  final PlanViewport view;
+  final bool showGrid;
+
+  /// Non-active levels, painted beneath the active one in the order given.
+  ///
+  /// The CALLER owns the order and must supply it bottom-to-top: ghosted
+  /// levels first, then visible ones, each tier by ascending elevation with a
+  /// stable-ID tie-break (§2.4, §2.2). The painter does not sort — it has no
+  /// elevation to sort by, and inventing one here would put a second ordering
+  /// rule beside the level controls' own.
+  final List<PlanLayer> backgroundLevels;
+
+  /// Selected wall or join identity, if any.
+  final String? selected;
+  final Offset? selectedJoin;
+  final Set<String> selectedIds;
+  final Map<String, Offset> selectedJoins;
+
+  /// The wall being dragged out right now, before it is committed.
+  final (Offset, Offset)? draft;
+
+  /// The marquee rectangle being dragged out right now (issue 0059), as two
+  /// opposite corners in plan mm, either order. VIEW-ONLY: no native query
+  /// backs this while it is shown — see `_marqueeRect` in `main.dart`.
+  final (Offset, Offset)? marqueeRect;
+  final Offset? snapPoint;
+  final (Offset, Offset)? snapGuide;
+
+  /// How many walls the most recent `paint` drew FOR THE ACTIVE LEVEL.
+  ///
+  /// Written from inside `paint` so the first-frame probe reports what the
+  /// render path did, not what the state object believed it would do.
+  ///
+  /// Background layers are deliberately NOT counted. The probe asks "did the
+  /// document I am editing reach the canvas", and a count that grew with the
+  /// number of levels merely visible underneath would answer a different
+  /// question and would stop failing on exactly the bug it exists to catch.
+  static int wallsPainted = 0;
+
+  /// Reduced-emphasis alpha for a ghosted layer.
+  ///
+  /// Applied PER PAINT rather than through `saveLayer`. `saveLayer` would give
+  /// true group opacity — overlapping shapes inside one layer would not
+  /// darken each other — but it allocates and composites an offscreen buffer
+  /// per layer per frame, which is the expensive thing to do on every pan of a
+  /// multi-level plan. The visible trade is that a ghosted layer's own
+  /// overlapping geometry (a wall crossing its room fill) composites slightly
+  /// darker than a grouped version would. That is acceptable for a tier whose
+  /// only job is spatial context, and it is recorded here rather than
+  /// discovered later.
+  static const double ghostOpacity = 0.32;
+
+  /// Content bounds of the walls and derived geometry SUPPLIED, computed only
+  /// after document changes.
+  ///
+  /// Describes its arguments and nothing else: it takes one level's content
+  /// and returns that level's extent. Which levels a fit should span is the
+  /// CALLER's decision — call it per level and union the results to fit
+  /// everything drawable, or pass the active level alone. `null` when the
+  /// supplied content has no extent.
+  static Rect? boundsOf(List<Wall> walls, Derived derived) {
+    var minX = double.infinity, minY = double.infinity;
+    var maxX = -double.infinity, maxY = -double.infinity;
+    void see(Offset p) {
+      minX = math.min(minX, p.dx);
+      minY = math.min(minY, p.dy);
+      maxX = math.max(maxX, p.dx);
+      maxY = math.max(maxY, p.dy);
+    }
+
+    for (final w in walls) {
+      see(w.start);
+      see(w.end);
+    }
+    for (final r in derived.occupied) {
+      r.outer.forEach(see);
+    }
+    if (minX > maxX) return null;
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  Offset toScreen(Offset mm) => view.toScreen(mm);
+
+  Path _pathOf(Ring r) {
+    final path = Path();
+    void ring(List<Offset> pts) {
+      if (pts.isEmpty) return;
+      path.moveTo(toScreen(pts.first).dx, toScreen(pts.first).dy);
+      for (final p in pts.skip(1)) {
+        path.lineTo(toScreen(p).dx, toScreen(p).dy);
+      }
+      path.close();
+    }
+
+    ring(r.outer);
+    // Holes wind the other way; `evenOdd` turns them into voids rather than
+    // overdrawing them.
+    for (final h in r.holes) {
+      ring(h);
+    }
+    path.fillType = PathFillType.evenOdd;
+    return path;
+  }
+
+  /// `base` at `opacity`, multiplying whatever alpha it already carries.
+  static Color _fade(Color base, double opacity) =>
+      opacity >= 1.0 ? base : base.withValues(alpha: base.a * opacity);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // ONE grid, under everything. Drawing it per layer would darken it in
+    // proportion to how many levels happen to be visible.
+    if (showGrid) _paintGrid(canvas, size, rulers: false);
+
+    // Passive levels, bottom to top in the order the caller supplied. No
+    // selection is available to them and none is drawn: §2.4 makes non-active
+    // levels visual only.
+    for (final layer in backgroundLevels) {
+      _paintLevel(
+        canvas,
+        layer.walls,
+        layer.derived,
+        opacity: layer.ghosted ? ghostOpacity : 1.0,
+        countWalls: false,
+      );
+    }
+
+    // The active level, at full emphasis, above every passive one.
+    _paintLevel(canvas, walls, derived, opacity: 1.0, countWalls: true);
+
+    _paintSelectionAndDraft(canvas);
+
+    if (showGrid) _paintGrid(canvas, size, rulers: true);
+  }
+
+  /// One level's geometry, all of it from the core.
+  ///
+  /// Every tier renders the SAME things — rooms, their area labels, the
+  /// occupied region, centre-line fallback and apertures — and differs only in
+  /// `opacity`. §2.4 defines the visible tier as "normal rendering" below the
+  /// active level, so dropping an annotation the active level shows would be a
+  /// rendering decision the specification has not made; tiering the existing
+  /// output is not.
+  void _paintLevel(
+    Canvas canvas,
+    List<Wall> levelWalls,
+    Derived levelDerived, {
+    required double opacity,
+    required bool countWalls,
+  }) {
+    final scale = view.zoom;
+
+    // Rooms first, beneath the walls, each labelled with the area the CORE
+    // measured.
+    final roomFill = Paint()..color = _fade(const Color(0xFFEFF3F7), opacity);
+    for (final room in levelDerived.rooms) {
+      canvas.drawPath(_pathOf(room), roomFill);
+    }
+    for (final room in levelDerived.rooms) {
+      _labelRoom(canvas, room, opacity);
+    }
+
+    // The occupied region: one filled path per component, holes included.
+    final wallFill = Paint()..color = _fade(const Color(0xFF33475B), opacity);
+    for (final part in levelDerived.occupied) {
+      canvas.drawPath(_pathOf(part), wallFill);
+    }
+
+    // Centre lines are drawn only when the core has not produced a region yet
+    // — a single unjoined wall still has one, but an empty plan does not.
+    var drawn = 0;
+    if (levelDerived.occupied.isEmpty) {
+      for (final w in levelWalls) {
+        final paint = Paint()
+          ..color = _fade(const Color(0xFF33475B), opacity)
+          ..strokeWidth = math.max(1.0, w.thicknessMm * scale)
+          ..strokeCap = StrokeCap.butt;
+        canvas.drawLine(toScreen(w.start), toScreen(w.end), paint);
+        drawn++;
+      }
+    } else {
+      drawn = levelWalls.length;
+    }
+    if (countWalls) wallsPainted = drawn;
+
+    // Apertures over the wall mass, then the leaf: a door reads as a gap in
+    // the wall with a leaf swinging out of it. Every point came from the core.
+    for (final o in levelDerived.openings) {
+      if (o.cut.isEmpty) continue;
+      final path = Path()
+        ..moveTo(toScreen(o.cut.first).dx, toScreen(o.cut.first).dy);
+      for (final p in o.cut.skip(1)) {
+        path.lineTo(toScreen(p).dx, toScreen(p).dy);
+      }
+      path.close();
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = _fade(
+            o.isDoor ? const Color(0xFFF7F6F3) : const Color(0xFFBCD3E8),
+            opacity,
+          ),
+      );
+      if (o.isDoor) {
+        canvas.drawLine(
+          toScreen(o.hinge),
+          toScreen(o.tip),
+          Paint()
+            ..color = _fade(const Color(0xFF8A6F3C), opacity)
+            ..strokeWidth = math.max(1.0, 30.0 * scale),
+        );
+      }
+    }
+  }
+
+  /// Selection and the uncommitted drag, over everything.
+  ///
+  /// Reads only the ACTIVE level's walls. A passive layer has no selection to
+  /// draw, and could not supply one: [PlanLayer] carries none.
+  void _paintSelectionAndDraft(Canvas canvas) {
+    final scale = view.zoom;
+    final chosen = walls.where(
+      (w) => w.id == selected || selectedIds.contains(w.id),
+    );
+    for (final w in chosen) {
+      canvas.drawLine(
+        toScreen(w.start),
+        toScreen(w.end),
+        Paint()
+          ..color = w.id == selected
+              ? const Color(0xFFE0663A)
+              : const Color(0x9973A7A0)
+          ..strokeWidth = math.max(2.0, w.thicknessMm * scale)
+          ..strokeCap = StrokeCap.butt,
+      );
+    }
+
+    for (final entry in selectedJoins.entries) {
+      if (entry.key == selected) continue;
+      canvas.drawCircle(
+        toScreen(entry.value),
+        5,
+        Paint()..color = const Color(0x9973A7A0),
+      );
+    }
+    final corner = selectedJoin;
+    if (corner != null) {
+      canvas.drawCircle(
+        toScreen(corner),
+        6,
+        Paint()..color = const Color(0xFFE0663A),
+      );
+      canvas.drawCircle(toScreen(corner), 3, Paint()..color = Colors.white);
+    }
+    // The wall being dragged out, so the drag is visible before it commits.
+    final d = draft;
+    if (d != null) {
+      canvas.drawLine(
+        toScreen(d.$1),
+        toScreen(d.$2),
+        Paint()
+          ..color = const Color(0x8833475B)
+          ..strokeWidth = math.max(2.0, 200.0 * scale)
+          ..strokeCap = StrokeCap.butt,
+      );
+    }
+    final guide = snapGuide;
+    if (guide != null) {
+      canvas.drawLine(
+        toScreen(guide.$1),
+        toScreen(guide.$2),
+        Paint()
+          ..color = const Color(0xCC28796C)
+          ..strokeWidth = 1.5,
+      );
+    }
+    final point = snapPoint;
+    if (point != null) {
+      canvas.drawCircle(
+        toScreen(point),
+        5,
+        Paint()
+          ..color = const Color(0xFF28796C)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+    }
+    // The marquee rectangle being dragged out (issue 0059). Purely a VIEW of
+    // the two corners the pointer is at right now: no native query informs
+    // this shape, and none of its content previews what would be selected.
+    final m = marqueeRect;
+    if (m != null) {
+      final rect = Rect.fromPoints(toScreen(m.$1), toScreen(m.$2));
+      canvas.drawRect(rect, Paint()..color = const Color(0x2233475B));
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = const Color(0xFF33475B)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+    }
+  }
+
+  /// Iterates only visible grid lines: work scales with viewport pixels, not
+  /// document extent or zoom. Rulers are a final overlay over plan geometry.
+  void _paintGrid(Canvas canvas, Size size, {required bool rulers}) {
+    final step = view.gridStepMm;
+    final minor = Paint()..color = const Color(0xFFECEDE8);
+    final major = Paint()..color = const Color(0xFFD9DED6);
+    final axis = Paint()..color = const Color(0xFF97B4AB);
+    if (rulers) {
+      final background = Paint()..color = const Color(0xF5FAFAF7);
+      canvas.drawRect(Rect.fromLTWH(0, 0, size.width, 18), background);
+      canvas.drawRect(Rect.fromLTWH(0, 0, 36, size.height), background);
+    }
+    void label(double mm, Offset position) {
+      final digits = math.max(0, (-math.log(step) / math.ln10).ceil());
+      final text = TextPainter(
+        text: TextSpan(
+          text: mm.toStringAsFixed(digits),
+          style: const TextStyle(fontSize: 9, color: Color(0xFF65746C)),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      text.paint(canvas, position);
+      text.dispose();
+    }
+
+    for (final line in view.gridLines(size.width)) {
+      final x = line.pixel;
+      if (rulers) {
+        if (line.major && x >= 36 && line.millimetres != null) {
+          label(line.millimetres!, Offset(x + 2, 2));
+        }
+      } else {
+        canvas.drawLine(
+          Offset(x, 0),
+          Offset(x, size.height),
+          line.axis
+              ? axis
+              : line.major
+              ? major
+              : minor,
+        );
+      }
+    }
+    for (final line in view.gridLines(size.height, horizontal: true)) {
+      final y = line.pixel;
+      if (rulers) {
+        if (line.major && y >= 18 && line.millimetres != null) {
+          label(line.millimetres!, Offset(2, y + 2));
+        }
+      } else {
+        canvas.drawLine(
+          Offset(0, y),
+          Offset(size.width, y),
+          line.axis
+              ? axis
+              : line.major
+              ? major
+              : minor,
+        );
+      }
+    }
+  }
+
+  /// The room's label: its name and the area, both as the CORE resolved them.
+  ///
+  /// Three things here come from the other side of the bridge and are not
+  /// recomputed: WHETHER there is a label at all (a face with no candidates
+  /// shows none, R5.3.3), WHAT it says (the effective record's name, or the
+  /// `Room` fallback), and WHERE it sits (that record's seed, not the ring's
+  /// centroid — which for an L-shaped room is outside the room).
+  ///
+  /// The area string too. It used to be `toStringAsFixed(2)` of the raw area,
+  /// which is not R5.3.2: that rule resolves an exact half to the EVEN last
+  /// digit, so 30.245 m² shows as 30.24 and Dart's rounding gives 30.25. A
+  /// normative rule implemented twice is a rule implemented differently.
+  void _labelRoom(Canvas canvas, Ring room, double opacity) {
+    final anchor = room.labelAnchorMm;
+    final label = room.label;
+    final area = room.displayAreaM2;
+    if (anchor == null || label == null || area == null) return;
+
+    final at = toScreen(anchor);
+    final tp = TextPainter(
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: '$label\n',
+            style: TextStyle(
+              color: _fade(const Color(0xFF33475B), opacity),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          TextSpan(
+            text: '$area m²',
+            style: TextStyle(
+              color: _fade(const Color(0xFF6B7A88), opacity),
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, at - Offset(tp.width / 2, tp.height / 2));
+    tp.dispose();
+  }
+
+  @override
+  bool shouldRepaint(PlanPainter old) =>
+      old.walls != walls ||
+      old.derived != derived ||
+      old.selected != selected ||
+      old.selectedJoin != selectedJoin ||
+      old.selectedIds != selectedIds ||
+      old.selectedJoins != selectedJoins ||
+      old.draft != draft ||
+      old.marqueeRect != marqueeRect ||
+      old.snapPoint != snapPoint ||
+      old.snapGuide != snapGuide ||
+      old.view != view ||
+      old.showGrid != showGrid ||
+      !listEquals(old.backgroundLevels, backgroundLevels);
+}

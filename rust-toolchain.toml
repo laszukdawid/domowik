@@ -1,0 +1,5 @@
+[toolchain]
+# Latest stable at the time of the rewrite. Pinned rather than tracking
+# "stable" so a CI runner and a developer machine compile identical code.
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,29 @@
+{
+  "assetsSchema": 1,
+  "description": "Non-code third-party files DISTRIBUTED inside Domowik binaries, per docs/THIRD-PARTY-POLICY.md. Cargo dependencies are recorded separately in docs/RUST-DEPENDENCIES.md and NOTICE; this file exists because a font is neither a crate nor a dev tool, so neither of those generators can see it. scripts/rust-notice.py reads this file and reproduces each licence text into NOTICE, and scripts/verify.sh diffs the result, so an asset added without a record here fails the build.",
+  "assets": [
+    {
+      "name": "Noto Sans Regular",
+      "version": "2.015",
+      "path": "crates/domowik-cli/assets/NotoSans-Regular.ttf",
+      "sha256": "f3961a9cde016d41a4879aecda1474d3a36d6bf54fa0e4643de029cc2248b0e8",
+      "bytes": 431364,
+      "license": "OFL-1.1",
+      "licenseTextPath": "crates/domowik-cli/assets/NotoSans-Regular.OFL.txt",
+      "licenseTextSha256": "cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a",
+      "copyright": "Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)",
+      "sourceUrl": "https://github.com/notofonts/notofonts.github.io",
+      "sourcePath": "fonts/NotoSans/unhinted/ttf/NotoSans-Regular.ttf",
+      "commitSha": "28b15b4b43b7bed62b5cf6e6b0b5ff5846270535",
+      "upstreamSourceUrl": "https://github.com/notofonts/latin-greek-cyrillic",
+      "upstreamTag": "NotoSans-v2.015",
+      "modified": false,
+      "status": "distributed",
+      "usedIn": "crates/domowik-cli/src/label.rs; embedded with include_bytes! and used for room-name glyph outlines in SVG and PNG export (BEHAVIOR-SPEC R5.3.3, issue 0060)",
+      "provenance": "Downloaded 2026-09-12 from the notofonts distribution repository at the pinned commit, unmodified and unsubset. The built binaries are published there; the font project's own sources and the OFL text live in the upstream repository, whose tag NotoSans-v2.015 matches the version this binary's name table reports (uniqueID 2.015;GOOG;NotoSans-Regular). The licence text committed beside the font is that tag's OFL.txt. The file's own name table records the licence at IDs 13 and 14, which agrees. The unhinted build is chosen deliberately: hinting is grid-fitting for small-size rasterisation and Domowik reads outlines, so the hints would be 190 KB of bytes nothing consults.",
+      "obligations": "OFL-1.1 requires the licence and copyright notice to travel with the font, which NOTICE and the committed OFL text satisfy; it forbids selling the font by itself, which Domowik does not do. The font carries NO Reserved Font Name, so modification and renaming are unrestricted — but this copy is unmodified and should stay so, since modifying it would move the provenance record from a download to a tool run.",
+      "review": "OFL-1.1 is not on the allowedLicenses list in licenses.json, which covers the Go-era module registry and is not consulted for this file. It is a permissive font licence with an attribution obligation and no copyleft reach into Domowik's own code: the font is aggregated, not linked, and OFL section 2 binds only the Font Software. Adopted on explicit direction from the orchestrating agent (root), 2026-09-12, which is where the dependency decision sits; the OWNER has not ratified OFL-1.1 as a licence family for distributed assets, and this record must not be read as saying they have. If the allowedLicenses list is ever made authoritative for bundled assets as well as modules, this entry is the one to re-review.",
+      "added": "2026-09-12"
+    }
+  ]
+}

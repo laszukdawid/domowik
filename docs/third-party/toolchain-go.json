@@ -1,0 +1,52 @@
+{
+  "recordSchema": 1,
+  "component": "golang.org/toolchain",
+  "version": "go1.27.0",
+  "license": {
+    "spdxId": "BSD-3-Clause",
+    "name": "Go BSD 3-Clause License",
+    "url": "https://go.dev/LICENSE"
+  },
+  "artifacts": [
+    {
+      "filename": "go1.27.0.src.tar.gz",
+      "kind": "source",
+      "os": "",
+      "arch": "",
+      "url": "https://go.dev/dl/go1.27.0.src.tar.gz",
+      "sha256": "7002403d7cc44529ef6d26f69a44818263395ead7c16c05a5808ae047ebeb0e5",
+      "sizeBytes": 35080395
+    },
+    {
+      "filename": "go1.27.0.linux-amd64.tar.gz",
+      "kind": "archive",
+      "os": "linux",
+      "arch": "amd64",
+      "url": "https://go.dev/dl/go1.27.0.linux-amd64.tar.gz",
+      "sha256": "675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685",
+      "sizeBytes": 70523269
+    },
+    {
+      "filename": "go1.27.0.linux-arm64.tar.gz",
+      "kind": "archive",
+      "os": "linux",
+      "arch": "arm64",
+      "url": "https://go.dev/dl/go1.27.0.linux-arm64.tar.gz",
+      "sha256": "51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda",
+      "sizeBytes": 66988980
+    }
+  ],
+  "supportedTargets": [
+    "linux/amd64",
+    "linux/arm64"
+  ],
+  "added": "2026-08-23",
+  "reviewed": true,
+  "revisitTriggers": [
+    "any Go toolchain version change (patch, minor, or major)",
+    "a new distributed target platform outside supportedTargets",
+    "a Go security release affecting the compiler, runtime, or stdlib packages linked into shipped binaries",
+    "the Go project changing its license terms or distribution channel"
+  ],
+  "notes": "Hashes were captured from the canonical go.dev download index (https://go.dev/dl/?mode=json&include=all) for exactly the toolchain version recorded above. These hashes are provenance pins binding this record to exact upstream artifacts; they are NOT re-verified against downloaded archives by the pipeline. What IS verified fail-closed on every run: the installed Go version matches Version, supportedTargets are covered by archive rows, and artifact URLs/filenames/hashes agree internally. Add an archive-download verification step before relying on these hashes for supply-chain verification."
+}

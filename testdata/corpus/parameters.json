@@ -1,0 +1,38 @@
+{
+  "policy": "Symbolic provenance-only table of named provisional parameters. NO numeric values are recorded here (ED-0019; reviewer amendment 1): parameter magnitudes are NOT ratified and must never appear as fixture expectations or bound literals. Fixtures reference parameters by NAME only.",
+  "parameters": [
+    {
+      "name": "coordBoundMm",
+      "definedAt": "FORMAT-SPEC §3.1",
+      "meaning": "Maximum |x|,|y| for every authoritative plan coordinate",
+      "candidateValueSource": "NUMERICAL-MODEL.md §3 (PROVISIONAL, listed NOT APPROVED in docs/evidence/0030-numerical-model/RATIFICATION.md §6)",
+      "ratifiedBy": null,
+      "ownerIssue": "0030"
+    },
+    {
+      "name": "dimensionCapMm",
+      "definedAt": "FORMAT-SPEC §3.1",
+      "meaning": "Inclusive upper cap for strictly-positive dimension fields and non-negative sillMm",
+      "candidateValueSource": "NUMERICAL-MODEL.md §3 (PROVISIONAL, NOT APPROVED)",
+      "ratifiedBy": null,
+      "ownerIssue": "0030"
+    },
+    {
+      "name": "derivedCoordBoundMm",
+      "definedAt": "FORMAT-SPEC §3.1",
+      "meaning": "Upper bound for ideal derived vertices; breach is an implementation defect, never user-input rejection",
+      "candidateValueSource": "NUMERICAL-MODEL.md §3 (PROVISIONAL, NOT APPROVED)",
+      "ratifiedBy": null,
+      "ownerIssue": "0030"
+    },
+    {
+      "name": "lwwHorizon",
+      "definedAt": "FORMAT-SPEC §5.1 S3",
+      "meaning": "Retained competing-write horizon for snapshot winner POSITIONS, creation positions and tombstones (FS 5.1 S1/S3/S4 as widened by ED-0037)",
+      "candidateValueSource": "not a chosen quantity: the horizon is DERIVED from the snapshot's own S2 coverage",
+      "ratifiedBy": "ED-0105 (complete coverage; no count, age or byte window)",
+      "ownerIssue": "0004"
+    }
+  ],
+  "ratifiedQuantitiesNote": "Ratified v0.1 quantities live solely in FORMAT-SPEC §9.3 and are cited there by row ID (L1–L33); this table intentionally does not duplicate them."
+}

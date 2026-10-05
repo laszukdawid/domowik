@@ -1,0 +1,43 @@
+{
+ "vector": "V4b",
+ "setup": "Y's write is causally AFTER X's delete reached Y (Y frontier includes X:80)",
+ "batches": {
+  "X-delete": {
+   "batchId": "01948fe0-0000-7000-8000-000000010001",
+   "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+   "counterBase": 90,
+   "frontier": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 89
+   },
+   "operations": [
+    {
+     "operationId": "01948fe1-0000-7000-8000-000000010002",
+     "kind": "deleteEntity",
+     "entityId": "019534c7-0000-7000-8000-000000000002"
+    }
+   ]
+  },
+  "Y-stale-set": {
+   "batchId": "01948fe2-0000-7000-8000-000000010003",
+   "actorId": "01948f80-0000-7000-8000-00000000bb00",
+   "counterBase": 40,
+   "frontier": {
+    "01948f80-0000-7000-8000-00000000bb00": 39,
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 90
+   },
+   "operations": [
+    {
+     "operationId": "01948fe3-0000-7000-8000-000000010004",
+     "kind": "setFields",
+     "entityId": "019534c7-0000-7000-8000-000000000002",
+     "fields": {
+      "thicknessMm": 200
+     }
+    }
+   ]
+  }
+ },
+ "expectedProjection": {
+  "state": "entire Y batch discarded as STALE (I5), atomic; no resurrection"
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "entities": {
+  "019534c7-0000-7000-8000-000000000001": {
+   "id": "019534c7-0000-7000-8000-000000000001",
+   "type": "level",
+   "name": "Level 1",
+   "elevationMm": 0,
+   "floorThicknessMm": 200,
+   "defaultWallHeightMm": 2500,
+   "defaultCeilingHeightMm": 2500
+  },
+  "019534c7-0000-7000-8000-0000000000b1": {
+   "id": "019534c7-0000-7000-8000-0000000000b1",
+   "type": "level",
+   "name": "Level 2",
+   "elevationMm": 0,
+   "floorThicknessMm": 200,
+   "defaultWallHeightMm": 2500,
+   "defaultCeilingHeightMm": 2500
+  }
+ },
+ "expectedOutcome": "warning-class condition: batch COMMITS, duplicate-elevation warning surfaces alongside effects (BEHAVIOR-SPEC \u00a72 semantics)"
+}

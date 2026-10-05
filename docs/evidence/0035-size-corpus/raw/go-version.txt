@@ -1,0 +1,3 @@
+goVersion=go1.27.0
+goos=linux
+goarch=amd64

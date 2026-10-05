@@ -1,0 +1,60 @@
+[package]
+name = "domowik-devtools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Repository-hygiene tooling, NOT product code. These binaries check the
+# repository's own documentation and issue tracker; nothing in the core, the
+# CLI or the GUI links against them, and nothing here is distributed.
+#
+# They were Go until issue 0062 (`cmd/domowik-jsoncheck`,
+# `cmd/domowik-tracker-check`). Rust rather than shell or Python because both
+# tools carry real logic and real test suites, and the workspace already gates
+# `cargo fmt`, `cargo clippy -- -D warnings` and `cargo test` — a Python script
+# in `scripts/` would be the only unlinted, untested code in the verifier.
+
+[lib]
+name = "domowik_devtools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "domowik-jsoncheck"
+path = "src/bin/jsoncheck.rs"
+
+[[bin]]
+name = "domowik-tracker-check"
+path = "src/bin/tracker_check.rs"
+
+[[bin]]
+name = "domowik-corpusgen"
+path = "src/bin/corpusgen.rs"
+
+[dependencies]
+# No `regex`, still: the three patterns the tracker checker needs are prefix and
+# separator tests that plain string operations express directly, and the corpus
+# gates' patterns are the same shape. Adding a crate to the distributed graph
+# for a development tool is exactly what the dependency inventory exists to make
+# visible, so everything below was already in the graph before this crate named
+# it.
+serde_json = { workspace = true }
+serde = { workspace = true }
+# sha2 and crc32fast are already in the workspace graph and already recorded in
+# docs/RUST-DEPENDENCIES.md as runtime crates, so the corpus generator adds no
+# new third-party code. Both are content digests where a hand-written version
+# fails SILENTLY on inputs no test happens to cover, which is the worst property
+# a checksum can have -- the same reasoning that put sha2 in the workspace.
+sha2 = { workspace = true }
+crc32fast = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# The corpus gates read the committed .domo packages back and INFLATE the two
+# pinned DEFLATE streams, which is how the port proves those streams expand to
+# the documents their packages declare. Test-only: the generator never
+# compresses or decompresses.
+zip = { workspace = true }
+flate2 = { workspace = true }
+

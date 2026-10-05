@@ -1,0 +1,11 @@
+{
+ "note": "\u00a77.4 asset-root table shape: ascending by digest; physical path derived per ASSET-STRATEGY \u00a710.3, never stored.",
+ "assetRoot": [
+  {
+   "digest": "sha256:9ca758f319e76338ee864522157a8733f1ce25b9e101e637d69a8d240b832022"
+  },
+  {
+   "digest": "sha256:524f170c49ff7c181ac9e7c36c7186b476c326499c721d51275bb0d088104e2d"
+  }
+ ]
+}

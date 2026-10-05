@@ -1,0 +1,136 @@
+{
+  "schemaVersion": "0035.budget-records.v1",
+  "scenario": "unfurnished-1000-v1",
+  "scenarioDefinitionDigest": "sha256:2a8d6644f13a6893519a6ba51f96c83abd12d9ea44d5b5f4e1e1a9b683fb9c0a",
+  "specBasis": {
+    "assetStrategy": "ASSET-STRATEGY §10.9",
+    "decisionReference": "ASSET-STRATEGY §10.9 as clarified by ED-0025 (provisional pending issue 0021 amendment)",
+    "provisionalPending0021Amendment": true
+  },
+  "generator": {
+    "version": "0035-part-a.1"
+  },
+  "selfCheck": {
+    "version": "0035-selfcheck.v1",
+    "result": "pass"
+  },
+  "package": {
+    "committedPath": "packages/unfurnished-1000-v1.domo",
+    "profile": "thin",
+    "sha256": "sha256:eb1948ac0945ca90d90c0f851bcb9cafca91e8bbaa78d722ec2a24231f8c8d0e",
+    "byteCount": 119394
+  },
+  "budget": {
+    "targetKiB": 256,
+    "targetBytes": 262144,
+    "comparison": "strict less-than (measured < KiB * 1024)",
+    "headlineBytes": 119394,
+    "previewIncluded": true,
+    "pass": true,
+    "budgetRevisionRequired": false
+  },
+  "classBreakdown": {
+    "containerOverheadDefinition": "bytes outside entry local spans: local headers of the manifest are inside spans; overhead covers EOCD(22) + central directory",
+    "containerOverheadBytes": 402,
+    "classes": {
+      "descriptors": {
+        "logicalBytes": 2,
+        "physicalBytes": 62
+      },
+      "history": {
+        "logicalBytes": 0,
+        "physicalBytes": 0
+      },
+      "manifest": {
+        "logicalBytes": 627,
+        "physicalBytes": 669
+      },
+      "previewData": {
+        "logicalBytes": 1809,
+        "physicalBytes": 1917
+      },
+      "previewIndex": {
+        "logicalBytes": 152,
+        "physicalBytes": 200
+      },
+      "snapshot": {
+        "logicalBytes": 993900,
+        "physicalBytes": 116144
+      }
+    },
+    "entries": [
+      {
+        "name": "assets/descriptors.json",
+        "class": "descriptors",
+        "method": "deflate",
+        "logicalBytes": 2,
+        "physicalBytes": 62
+      },
+      {
+        "name": "domowik.json",
+        "class": "manifest",
+        "method": "store",
+        "logicalBytes": 627,
+        "physicalBytes": 669
+      },
+      {
+        "name": "preview/data/49/c8c56d509296669f01cf18365984d4b4a3920b9da04b137eb0443d6eefe29f",
+        "class": "previewData",
+        "method": "store",
+        "logicalBytes": 1809,
+        "physicalBytes": 1917
+      },
+      {
+        "name": "preview/index.json",
+        "class": "previewIndex",
+        "method": "store",
+        "logicalBytes": 152,
+        "physicalBytes": 200
+      },
+      {
+        "name": "snapshot/state.json",
+        "class": "snapshot",
+        "method": "deflate",
+        "logicalBytes": 993900,
+        "physicalBytes": 116144
+      }
+    ],
+    "accountingIdentity": "sum(entries.physicalBytes) + containerOverheadBytes == package.byteCount"
+  },
+  "externalTotalsExcludedFromHeadline": {
+    "referencedUniverseSize": 0,
+    "logicalExternalBytes": 0,
+    "externalCacheBytes": 0,
+    "externalRemoteBytes": 0,
+    "note": "thin profile embeds only preview-class blobs; U(P) is empty because the scenarios define zero descriptors and zero instances; external/remote totals are excluded from the headline per ASSET-STRATEGY §10.9"
+  },
+  "preview": {
+    "inventoryPath": "preview-inventory-unfurnished-1000-v1.json",
+    "embeddedCount": 2
+  },
+  "versions": {
+    "formatVersion": "0.1",
+    "writerSeam": "internal/persist.BuildPackage (issue 0026 writer seam), branch issue/0035-size-benchmarks",
+    "containerProfile": "zip container per FORMAT-SPEC §7.7; observed per-entry methods in this package: manifest=store; descriptors=deflate; snapshot=deflate; history=absent; previewIndex=store; previewData=store",
+    "compressionLibrary": "Go compress/flate (go1.27.0) for deflated container entries; python3 stdlib zlib 1.3.2 for the reference thumbnail",
+    "previewEncoder": "ASSET-STRATEGY §10.9 reference thumbnail encoder via python3 stdlib zlib (dev-only, docs/third-party/tools.json)",
+    "oracle": "internal/document NewCreateOp/NewBatch/Deliver authoritative validation + persist.LoadFile round-trip"
+  },
+  "environment": {
+    "os": "linux",
+    "kernel": "7.1.8-arch1-3",
+    "cpuModel": "AMD Ryzen 9 7950X 16-Core Processor",
+    "logicalCpus": 32,
+    "memTotalKiB": 64853676,
+    "filesystem": "btrfs",
+    "goVersion": "go1.27.0",
+    "goos": "linux",
+    "goarch": "amd64",
+    "gotoolchain": "local"
+  },
+  "rawOutputs": [
+    "raw/environment.txt",
+    "raw/python3-zlib.txt",
+    "raw/go-version.txt"
+  ]
+}

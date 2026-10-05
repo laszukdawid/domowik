@@ -1,0 +1,2865 @@
+Reading additional input from stdin...
+OpenAI Codex v0.150.1
+--------
+workdir: /Users/dawidlaszuk/projects/personal/domowik
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a05ae2-b9d7-78e1-b9aa-60b8175efef2
+--------
+user
+You are an adversarial reviewer. WRITE YOUR FINDINGS FIRST, then verify them.
+Your final message is read verbatim as your position: a reply that only
+describes what you intend to do is a failed reply. Do not modify any file.
+
+Read ONLY these three files (do not explore the rest of the repository — you
+will exhaust your budget on project docs before reaching the question):
+
+  crates/domowik-document/src/log.rs
+  crates/domowik-document/src/replay.rs
+  crates/domowik-document/src/session.rs
+
+This is a fresh Rust implementation of FORMAT-SPEC §4 (operations, batches,
+causal frontier, idempotency, tombstones, per-field last-writer-wins) and
+BEHAVIOR-SPEC §8 (session-local undo/redo). The relevant spec rules are quoted
+in the doc comments; treat those quotes as the specification.
+
+CLAIMS UNDER TEST — find concrete counter-examples to any of them:
+
+ 1. `OperationLog::deliver` accepts, holds, or rejects each batch correctly:
+    - framing anomalies reject BEFORE replay (empty batch, counterBase < 1,
+      zero-valued frontier member, duplicate batch id, overlapping or
+      duplicate reserved ranges);
+    - a batch whose causal prerequisites are absent is HELD and promoted when
+      they arrive, transitively;
+    - a batch whose whole counter range is at or below the watermark is an I2
+      duplicate and is ignored silently.
+ 2. `canonical_order` is a function of the delivered SET, never of arrival
+    order, and is a linear extension of causality.
+ 3. `replay::project_from` implements I5's THREE-branch staleness test at each
+    operation's OWN write position, not against the current projection; a
+    stale operation discards its WHOLE batch (B1); tombstones block
+    resurrection except for E6's same-actor authorized restoration.
+ 4. Applying batches in canonical order implements §4.6 LWW correctly
+    (LWW1 winner = last write in canonical order; LWW3 deletes dominate;
+    LWW4 create collisions).
+ 5. `Session` implements BEHAVIOR-SPEC R8: one undo entry per accepted batch,
+    fresh operation/batch ids on undo and redo, redo restoring the SAME entity
+    ids, the external-batch fence clearing both stacks, replayed-open batches
+    NOT firing the fence, independent finite capacities.
+
+Areas I suspect most, but do not limit yourself:
+  (a) `prerequisites_present` reduces "every batch its frontier points to is
+      present" to a per-actor watermark comparison, justified by B3
+      contiguity. Is that reduction sound when a HELD batch's own actor stream
+      has a hole, or when the baseline frontier seeds a watermark?
+  (b) `promote_held` loops until no held batch is ready. Can it loop forever,
+      drop a batch, or accept one twice?
+  (c) `apply_batch` clones the whole document and interval map per batch and
+      discards on staleness. Is the rollback complete? Can a partially applied
+      batch leak through `p.discarded`?
+  (d) `authorized_restore` reads authorization from PROVENANCE (same actor
+      wrote the tombstone). Construct a case where that resurrects something
+      it should not, WITHIN one actor stream.
+  (e) `invert_against` builds inverses in reverse order and special-cases an
+      entity created earlier in the same batch. Find a batch whose inverse is
+      wrong or fails to apply.
+  (f) `Session::commit` validates the document the batch WOULD produce, using
+      a scratch log. Can the scratch and the real log diverge?
+  (g) `merge_fields` goes through JSON. What happens when a `setFields`
+      payload names a field with a wrong-typed value, or names `id`, or
+      names `type`?
+  (h) Determinism: any place HashMap/HashSet iteration order can reach output.
+
+For each finding give the exact operations/batches as data, what the correct
+result is, what this code produces, and WHY (name the function and rule). If
+you conclude an area is SOUND, say so explicitly with the argument — a
+grounded negative result is worth more than a vague suspicion.
+hook: SessionStart
+hook: SessionStart Completed
+codex
+I’ll confine inspection and any verification commands strictly to the three named files. I’ll develop concrete findings from the implementation first, then challenge each against the surrounding code and report both confirmed defects and explicitly sound areas.
+exec
+/opt/homebrew/bin/bash -lc "sed -n '1,260p' crates/domowik-document/src/log.rs && sed -n '1,320p' crates/domowik-document/src/replay.rs && sed -n '1,360p' crates/domowik-document/src/session.rs" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+//! The operation log: framing validation, causal holding, and canonical order.
+//!
+//! Implements FORMAT-SPEC §4.3 row 4 (framing rejects, BEFORE replay), §4.4
+//! (frontier, delivery-order independence) and §4.5 I2 (duplicate suppression).
+//!
+//! **This is not a CRDT** (§4 preamble). The log provides replay and
+//! synchronization metadata only; §4.6's conflict rule is deterministic
+//! per-field last-writer-wins and is LOSSY. Nothing here provides convergence.
+
+use crate::operation::Batch;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use thiserror::Error;
+use uuid::Uuid;
+
+/// Why a batch could not enter the log.
+///
+/// Every variant is a §4.3 row 4 framing anomaly: rejected BEFORE replay
+/// begins, never partially applied.
+#[derive(Debug, Error, PartialEq)]
+pub enum LogError {
+    #[error("batch {batch_id} has no operations; an empty batch defines an empty counter range and no frontier position (FORMAT-SPEC B3)")]
+    EmptyBatch { batch_id: Uuid },
+
+    #[error("batch {batch_id} declares counterBase {counter_base}; an actor's counter starts at 1 (FORMAT-SPEC B3)")]
+    CounterBaseBelowOne { batch_id: Uuid, counter_base: u64 },
+
+    #[error("batch {batch_id}: frontier member {actor} has counter zero; absence is the sole spelling of nothing observed (FORMAT-SPEC F1 zero prohibition)")]
+    ZeroFrontierMember { batch_id: Uuid, actor: Uuid },
+
+    #[error("batch {batch_id} is already in the log with different content; batch ids are unique (FORMAT-SPEC E1)")]
+    DuplicateBatchId { batch_id: Uuid },
+
+    #[error("batch {batch_id} reserves counters {from}..={to} for actor {actor}, overlapping a range already reserved")]
+    OverlappingRange {
+        batch_id: Uuid,
+        actor: Uuid,
+        from: u64,
+        to: u64,
+    },
+
+    #[error("batch {batch_id} starts actor {actor} at counter {from}, leaving a gap after {expected}; an actor's ranges are contiguous with no gaps (FORMAT-SPEC B3)")]
+    CounterGap {
+        batch_id: Uuid,
+        actor: Uuid,
+        from: u64,
+        expected: u64,
+    },
+}
+
+/// What happened to a delivered batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// Accepted and now part of the log.
+    Accepted,
+    /// Its whole counter range lies at or below the watermark: already
+    /// applied, ignored silently and deterministically (§4.5 I2).
+    Duplicate,
+    /// Causal prerequisites are not yet present; held until they arrive (F3).
+    Held,
+}
+
+/// A durable log of operation batches.
+///
+/// Batches may arrive in any order (F3). The log holds a batch whose causal
+/// prerequisites are absent and promotes it when they arrive, so the projected
+/// result is a function of the delivered SET and never of arrival sequence.
+#[derive(Debug, Clone, Default)]
+pub struct OperationLog {
+    accepted: Vec<Batch>,
+    held: Vec<Batch>,
+    ids: HashSet<Uuid>,
+    /// actor → highest counter accepted, the per-actor watermark.
+    watermark: HashMap<Uuid, u64>,
+    /// actor → counter covered by the baseline snapshot, if any.
+    baseline: HashMap<Uuid, u64>,
+}
+
+impl OperationLog {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A log that continues from a snapshot's frontier (FORMAT-SPEC §5.1 S2).
+    ///
+    /// The frontier states which counters the snapshot already covers, so the
+    /// log can tell a batch that is ALREADY APPLIED (I2, at or below the
+    /// watermark) from one whose predecessors have not arrived (F3, held).
+    /// Without it a snapshot-seeded log holds every subsequent batch forever,
+    /// because their prerequisites were compacted away.
+    ///
+    /// A zero-valued member is rejected here as it is anywhere else (F1); an
+    /// invalid seed would silently become watermark state, which F1 forbids
+    /// specifically.
+    pub fn with_baseline_frontier(frontier: &BTreeMap<Uuid, u64>) -> Result<Self, LogError> {
+        let mut log = Self::default();
+        for (&actor, &counter) in frontier {
+            if counter == 0 {
+                return Err(LogError::ZeroFrontierMember {
+                    batch_id: Uuid::nil(),
+                    actor,
+                });
+            }
+            log.watermark.insert(actor, counter);
+            log.baseline.insert(actor, counter);
+        }
+        Ok(log)
+    }
+
+    /// The frontier a snapshot of the current state should record (S2).
+    pub fn baseline_frontier(&self) -> BTreeMap<Uuid, u64> {
+        self.frontier()
+    }
+
+    /// The baseline frontier this log was SEEDED with, for rebuilding it.
+    pub fn baseline_frontier_seed(&self) -> BTreeMap<Uuid, u64> {
+        self.baseline.iter().map(|(&a, &c)| (a, c)).collect()
+    }
+
+    /// Batches accepted so far, in arrival order.
+    pub fn batches(&self) -> &[Batch] {
+        &self.accepted
+    }
+
+    /// Batches held for missing causal prerequisites (F3).
+    pub fn held(&self) -> &[Batch] {
+        &self.held
+    }
+
+    /// The per-actor watermark: highest counter accepted for each actor.
+    pub fn watermark(&self) -> &HashMap<Uuid, u64> {
+        &self.watermark
+    }
+
+    /// The frontier a new local batch should declare: everything observed.
+    pub fn frontier(&self) -> BTreeMap<Uuid, u64> {
+        self.watermark
+            .iter()
+            .filter(|(_, &c)| c > 0)
+            .map(|(&a, &c)| (a, c))
+            .collect()
+    }
+
+    /// The next unused counter for `actor`.
+    pub fn next_counter(&self, actor: Uuid) -> u64 {
+        self.watermark.get(&actor).copied().unwrap_or(0) + 1
+    }
+
+    /// Delivers a batch.
+    ///
+    /// Framing is checked BEFORE anything else, because §4.3 row 4 rejects
+    /// framing anomalies before replay begins and I2 explicitly does not
+    /// exempt a duplicate from them: "watermark classification never precedes,
+    /// gates, or replaces the pre-replay structural checks".
+    pub fn deliver(&mut self, batch: Batch) -> Result<Delivery, LogError> {
+        self.check_framing(&batch)?;
+
+        // I2: a range wholly at or below the watermark is already applied.
+        let mark = self.watermark.get(&batch.actor_id).copied().unwrap_or(0);
+        if batch.range_end() <= mark {
+            return Ok(Delivery::Duplicate);
+        }
+
+        if !self.prerequisites_present(&batch) {
+            self.held.push(batch);
+            return Ok(Delivery::Held);
+        }
+
+        self.accept(batch);
+        self.promote_held();
+        Ok(Delivery::Accepted)
+    }
+
+    fn accept(&mut self, batch: Batch) {
+        self.ids.insert(batch.batch_id);
+        let end = batch.range_end();
+        let mark = self.watermark.entry(batch.actor_id).or_insert(0);
+        *mark = (*mark).max(end);
+        self.accepted.push(batch);
+    }
+
+    /// Re-checks held batches after an acceptance, repeatedly, because
+    /// promoting one can satisfy another's prerequisites.
+    fn promote_held(&mut self) {
+        loop {
+            let Some(i) = self.held.iter().position(|b| self.prerequisites_present(b)) else {
+                return;
+            };
+            let batch = self.held.remove(i);
+            // A batch can become a duplicate while held, if the same range
+            // arrived by another route.
+            let mark = self.watermark.get(&batch.actor_id).copied().unwrap_or(0);
+            if batch.range_end() > mark {
+                self.accept(batch);
+            }
+        }
+    }
+
+    /// F3: a batch whose frontier points at batches not yet present is held.
+    ///
+    /// Because B3 makes each actor's ranges contiguous from 1, "every batch
+    /// its frontier points to is present" reduces to "the watermark for each
+    /// frontier actor is at least the counter the frontier names" — the
+    /// contiguity is what makes the watermark a complete answer rather than a
+    /// high-water mark with holes under it.
+    ///
+    /// A batch's own actor is exempt for its own prior counters: those are
+    /// checked by the gap rule in [`Self::check_framing`], which reports a
+    /// missing predecessor as the framing anomaly it is rather than holding
+    /// forever.
+    fn prerequisites_present(&self, batch: &Batch) -> bool {
+        let observed = batch
+            .frontier
+            .iter()
+            .all(|(&actor, &counter)| self.watermark.get(&actor).copied().unwrap_or(0) >= counter);
+        // B3 also makes an actor's OWN prior counters a prerequisite: a batch
+        // at counterBase n needs 1..n-1 of that actor present, or the
+        // watermark would advance over a hole.
+        let mark = self.watermark.get(&batch.actor_id).copied().unwrap_or(0);
+        observed && batch.counter_base <= mark + 1
+    }
+
+    fn check_framing(&self, batch: &Batch) -> Result<(), LogError> {
+        if batch.operations.is_empty() {
+            return Err(LogError::EmptyBatch {
+                batch_id: batch.batch_id,
+            });
+        }
+        if batch.counter_base < 1 {
+            return Err(LogError::CounterBaseBelowOne {
+                batch_id: batch.batch_id,
+                counter_base: batch.counter_base,
+            });
+        }
+        if let Some((&actor, _)) = batch.frontier.iter().find(|(_, &c)| c == 0) {
+            return Err(LogError::ZeroFrontierMember {
+                batch_id: batch.batch_id,
+                actor,
+            });
+        }
+
+        // A re-delivery of the SAME batch is a duplicate, not a collision; a
+        // different batch reusing an accepted id is a framing anomaly.
+        if self.ids.contains(&batch.batch_id)
+            && !self
+                .accepted
+                .iter()
+                .any(|b| b.batch_id == batch.batch_id && b == batch)
+        {
+            return Err(LogError::DuplicateBatchId {
+                batch_id: batch.batch_id,
+            });
+        }
+
+        // Duplicate reserved ranges and overlapping ranges are the same
+        // §7.6 anomaly seen from two angles, and both are decided against the
+        // ACCEPTED batches rather than against the watermark. A watermark test
+        // alone cannot tell a re-delivery of a batch from a DIFFERENT batch
+        // claiming the same counters: both sit at or below the mark, and only
+        // the second is malformed.
+        let (from, to) = batch.counter_range();
+//! Replay: projecting an operation log into a document.
+//!
+//! Implements FORMAT-SPEC §4.5 (tombstones, the I5 three-branch staleness
+//! test) and §4.6 (per-field last-writer-wins), by applying batches in the
+//! canonical order §4.4 F3 defines.
+//!
+//! # Why applying in canonical order IS the conflict rule
+//!
+//! LWW1 says the winning write for a field is the one with the greatest write
+//! position, and that this "is exactly the LAST write to that field in
+//! canonical order". So there is no separate merge step: sort by position,
+//! apply in order, and let a later write overwrite an earlier one. LWW3
+//! (deletes dominate) falls out the same way — a canonically later delete
+//! tombstones whatever a set wrote — and so does LWW4, where the surviving
+//! create is simply the last one applied.
+//!
+//! What does NOT fall out, and is therefore explicit below, is I5: an
+//! operation must be classified against its target's LIVE INTERVAL at its own
+//! write position, not against the current projection. The two-way reading —
+//! present-or-absent right now — makes I5's branch 2 indistinguishable from
+//! branch 3 and silently changes an unrelated field's value.
+
+use crate::log::OperationLog;
+use crate::operation::{Batch, Operation, OperationKind, WritePosition};
+use domowik_format::{Document, Entity};
+use serde_json::Value;
+use std::collections::HashMap;
+use uuid::Uuid;
+
+/// An entity's live interval (FORMAT-SPEC §4.5 I3).
+///
+/// `[creation_position, deleting_position)`. A tombstone keeps the interval so
+/// deletion does not erase the fact that the entity once existed at a
+/// position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LiveInterval {
+    /// Write position of the create that opened the interval.
+    pub created_at: WritePosition,
+    /// Write position of the delete that closed it, if any.
+    pub deleted_at: Option<WritePosition>,
+    /// The actor whose delete closed it. Used for E6's authorized restoration.
+    pub deleted_by: Option<Uuid>,
+}
+
+/// Where an operation's target stands at that operation's write position.
+///
+/// I5 classifies in exactly THREE ways rather than two. The third is the one a
+/// present-or-absent test cannot express.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetState {
+    /// Branch 1: the target's creation is not earlier than this write.
+    BeforeCreation,
+    /// Branch 2: the target exists at this position.
+    Live,
+    /// Branch 3: the target's deletion is earlier than this write.
+    AfterDeletion,
+}
+
+/// Why a batch was discarded during replay.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Discard {
+    pub batch_id: Uuid,
+    pub operation_id: Uuid,
+    pub entity_id: Uuid,
+    pub reason: TargetState,
+}
+
+/// The result of replaying a log.
+#[derive(Debug, Clone, Default)]
+pub struct Projection {
+    /// The authoritative document.
+    pub document: Document,
+    /// Live intervals, including closed ones (tombstones).
+    pub intervals: HashMap<Uuid, LiveInterval>,
+    /// Batches discarded as stale, in canonical order. A projection outcome,
+    /// not an error: silent to end users, recorded here (I5).
+    pub discarded: Vec<Discard>,
+}
+
+impl Projection {
+    /// True when `id` has been created and not since deleted.
+    pub fn is_live(&self, id: Uuid) -> bool {
+        self.intervals
+            .get(&id)
+            .is_some_and(|i| i.deleted_at.is_none())
+    }
+
+    /// True when `id` carries a tombstone.
+    pub fn is_tombstoned(&self, id: Uuid) -> bool {
+        self.intervals
+            .get(&id)
+            .is_some_and(|i| i.deleted_at.is_some())
+    }
+}
+
+/// Replays `log` into a projection.
+pub fn project(log: &OperationLog) -> Projection {
+    project_from(&Document::default(), log)
+}
+
+/// A write position that strictly precedes every valid one.
+///
+/// Valid batches have `counterBase >= 1` (B3), so `(0, 0, 0)` is below every
+/// real position at the same causal past size and below every larger one. This
+/// is what lets a baseline document's entities be LIVE for operations that
+/// follow it without inventing a fake batch to have created them.
+pub const BASELINE: WritePosition = WritePosition {
+    batch: crate::operation::Position {
+        causal_past_size: 0,
+        counter_base: 0,
+        actor: 0,
+    },
+    operation_index: 0,
+};
+
+/// Replays `log` on top of `baseline`.
+///
+/// `baseline` is a previously projected state — FORMAT-SPEC §5's snapshot
+/// role. Its entities are seeded as live from [`BASELINE`], so a later
+/// `setFields` finds its target within a live interval (I5 branch 2) rather
+/// than before creation. Replaying `log` on top of the state `log`'s own
+/// prefix produced must give the same answer as replaying the whole log, which
+/// is vector V6's requirement.
+///
+/// Tombstones are NOT carried by a baseline document, because a document is a
+/// set of live entities. A baseline therefore cannot block resurrection of
+/// something deleted before it was taken; §5.1 S4 exists to carry tombstones
+/// alongside a snapshot and is not implemented (issue 0027). Until it is, do
+/// not use a baseline across a compaction that dropped a delete.
+pub fn project_from(baseline: &Document, log: &OperationLog) -> Projection {
+    let mut p = Projection {
+        document: baseline.clone(),
+        ..Projection::default()
+    };
+    for entity in baseline_ids(baseline) {
+        p.intervals.insert(
+            entity,
+            LiveInterval {
+                created_at: BASELINE,
+                deleted_at: None,
+                deleted_by: None,
+            },
+        );
+    }
+    for batch in log.canonical_order() {
+        apply_batch(&mut p, batch);
+    }
+    p
+}
+
+fn baseline_ids(document: &Document) -> Vec<Uuid> {
+    document
+        .levels
+        .iter()
+        .map(|l| l.id)
+        .chain(document.walls.iter().map(|w| w.id))
+        .chain(document.openings.iter().map(|o| o.id))
+        .chain(document.joins.iter().map(|j| j.id))
+        .collect()
+}
+
+/// Applies one batch atomically, or discards it as stale (B1, I5).
+///
+/// The batch is classified against a SCRATCH copy so a discard leaves no trace:
+/// atomicity forbids partial application, and "check everything first" is not
+/// enough on its own because an operation may legitimately depend on an
+/// earlier operation of the same batch (B4).
+fn apply_batch(p: &mut Projection, batch: &Batch) {
+    let mut document = p.document.clone();
+    let mut intervals = p.intervals.clone();
+
+    for (index, op) in batch.operations.iter().enumerate() {
+        let at = batch.write_position(index);
+        let state = classify(&intervals, op.entity_id, at);
+
+        let stale = match &op.kind {
+            // A create ESTABLISHES existence at its own position: it is never
+            // stale for want of its own target. It is refused only against a
+            // tombstone it is not authorized to restore.
+            OperationKind::CreateEntity { .. } => {
+                state == TargetState::AfterDeletion && !authorized_restore(&intervals, op, batch)
+            }
+            // A delete against a live target closes the interval; against an
+            // absent or already-tombstoned target it is stale on the same
+            // terms as branch 1 or branch 3.
+            OperationKind::DeleteEntity => state != TargetState::Live,
+            // The interval test governs operations REQUIRING a pre-existing
+            // target, classified at that operation's own write position.
+            OperationKind::SetFields { .. } => state != TargetState::Live,
+        };
+
+        if stale {
+            p.discarded.push(Discard {
+                batch_id: batch.batch_id,
+                operation_id: op.operation_id,
+                entity_id: op.entity_id,
+                reason: state,
+            });
+            // If ANY operation is stale the WHOLE batch is discarded,
+            // including operations whose own targets were live (B1).
+            return;
+        }
+
+        apply_operation(&mut document, &mut intervals, op, at, batch.actor_id);
+    }
+
+    p.document = document;
+    p.intervals = intervals;
+}
+
+/// I5's three-branch classification, evaluated at `at` rather than "now".
+fn classify(intervals: &HashMap<Uuid, LiveInterval>, id: Uuid, at: WritePosition) -> TargetState {
+    let Some(interval) = intervals.get(&id) else {
+        return TargetState::BeforeCreation;
+    };
+    if interval.created_at >= at {
+        return TargetState::BeforeCreation;
+    }
+    match interval.deleted_at {
+        Some(d) if d < at => TargetState::AfterDeletion,
+        _ => TargetState::Live,
+    }
+}
+
+/// E6's sole reuse exception: authorized restoration of a tombstoned identity
+/// by the same device's own undo (BEHAVIOR-SPEC R8.1.3).
+///
+/// Authorization is read from PROVENANCE rather than from a flag on the
+/// operation: the restoring create is authorized exactly when the tombstone it
+/// would reopen was written by the same actor. "Tombstones created by sync
+/// merge are never resurrected" is then automatic, because a merged tombstone
+/// carries another actor's id.
+///
+/// The limit of this reading, stated because it is a real one: within a single
+/// actor stream it also permits a create of a tombstoned id that is NOT a
+/// redo. Nothing downstream of the log can tell the two apart. §4.2 O4 puts
+/// that check on the AUTHORING replica at command time, and
+/// [`crate::session::Session`] is where it lives here — it mints a restoring
+/// create only from its own redo stack.
+fn authorized_restore(
+    intervals: &HashMap<Uuid, LiveInterval>,
+    op: &Operation,
+    batch: &Batch,
+) -> bool {
+    intervals
+        .get(&op.entity_id)
+        .and_then(|i| i.deleted_by)
+        .is_some_and(|by| by == batch.actor_id)
+}
+
+fn apply_operation(
+    document: &mut Document,
+    intervals: &mut HashMap<Uuid, LiveInterval>,
+    op: &Operation,
+    at: WritePosition,
+    actor: Uuid,
+) {
+    match &op.kind {
+        OperationKind::CreateEntity { entity } => {
+            document.insert_entity(entity.clone());
+            intervals.insert(
+                op.entity_id,
+                LiveInterval {
+                    created_at: at,
+                    deleted_at: None,
+                    deleted_by: None,
+                },
+            );
+        }
+        OperationKind::SetFields { fields } => {
+            if let Some(current) = document.entity(op.entity_id) {
+                if let Some(updated) = merge_fields(&current, fields) {
+                    document.insert_entity(updated);
+                }
+            }
+        }
+        OperationKind::DeleteEntity => {
+            document.remove_entity(op.entity_id);
+            if let Some(interval) = intervals.get_mut(&op.entity_id) {
+                interval.deleted_at = Some(at);
+                interval.deleted_by = Some(actor);
+            }
+        }
+    }
+}
+
+/// Applies a `setFields` payload to an entity.
+///
+/// O3: fields are addressed by SERIALIZED NAME at top level, and set- or
+/// array-valued fields are replaced WHOLESALE. Going through JSON is what
+/// makes that literally true rather than approximately true — the payload
+/// names the same strings the format writes, and no field is merged
+/// element-wise because none is descended into.
+///
+/// Returns `None` when the result would not deserialize, which means the
+/// payload named a field with an incompatible value. The operation then has no
+/// effect; commit-time validation (O4) is what should have caught it, and
+/// [`crate::session::Session`] runs it.
+fn merge_fields(entity: &Entity, fields: &serde_json::Map<String, Value>) -> Option<Entity> {
+    let mut value = serde_json::to_value(entity).ok()?;
+    let object = value.as_object_mut()?;
+    for (name, new) in fields {
+        // `null` clears an optional field to absent (§4.2 O2). Every other
+        // value replaces wholesale.
+        if new.is_null() {
+            object.remove(name);
+        } else {
+            object.insert(name.clone(), new.clone());
+        }
+    }
+    serde_json::from_value(value).ok()
+}
+
+/// The `setFields` payload that would restore `entity`'s current values for
+/// the field names `fields` names.
+///
+/// This is how an undo of a field edit is built: capture the prior values of
+/// exactly the fields the forward operation touched. A field the forward
+/// operation ADDED (absent before) is restored by `null`, which §4.2 O2
+/// defines as clearing to absent.
+//! The local command session: commands, undo, and redo.
+//!
+//! Implements BEHAVIOR-SPEC §8 (normative) and FORMAT-SPEC §4.8's boundary.
+//!
+//! # The shape of undo here, and why it is not a stack of old states
+//!
+//! R8.1.1: executing undo appends a NEW compensating batch built from inverse
+//! effects. History grows monotonically and is never mutated or reordered, so
+//! replay and synchronization metadata stay correct. R8.1.2: every executed
+//! undo AND redo mints fresh operation and batch identities and advances the
+//! actor counter — entries are never popped and reused.
+//!
+//! R8.1.3 is the one rule that reaches back into identity: redo restores the
+//! SAME ENTITY ids its undone command created, including reopening a tombstone
+//! this device's own undo wrote. Operation and batch ids are always fresh; only
+//! entity ids are reused, and only under that authorization.
+
+use crate::log::{Delivery, LogError, OperationLog};
+use crate::operation::{Batch, Operation, OperationKind};
+use crate::replay::{prior_values, project_from, Projection};
+use domowik_format::{Document, ValidationError};
+use std::collections::VecDeque;
+use thiserror::Error;
+use uuid::Uuid;
+
+/// Why a command did not commit.
+#[derive(Debug, Error)]
+pub enum CommandError {
+    /// The resulting document would be invalid. Rejected atomically BEFORE any
+    /// effect, with no undo entry (FORMAT-SPEC §4.3 row 1, R8.2.2).
+    #[error("command rejected: {}", .0.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; "))]
+    Invalid(Vec<ValidationError>),
+    /// The batch could not enter the log.
+    #[error(transparent)]
+    Framing(#[from] LogError),
+    /// The batch was discarded as stale at its canonical position, or held.
+    #[error("batch was not applied: {0}")]
+    NotApplied(&'static str),
+}
+
+/// One entry on the undo or redo stack.
+///
+/// Holds both directions, because R8.1.2 forbids reusing the original batch:
+/// undo emits `inverse` under fresh identities and redo emits `forward` under
+/// fresh identities, and the entry moves between the stacks unchanged.
+#[derive(Debug, Clone)]
+struct StackEntry {
+    forward: Vec<Operation>,
+    inverse: Vec<Operation>,
+}
+
+impl StackEntry {
+    /// A copy with freshly minted operation ids, preserving ENTITY ids.
+    ///
+    /// R8.1.2 and R8.1.3 together: operation identity is always new, entity
+    /// identity is deliberately reused.
+    fn refreshed(ops: &[Operation]) -> Vec<Operation> {
+        ops.iter()
+            .map(|op| Operation {
+                operation_id: Uuid::now_v7(),
+                entity_id: op.entity_id,
+                kind: op.kind.clone(),
+            })
+            .collect()
+    }
+}
+
+/// Default capacities. R8.4.4 makes the EXISTENCE of a bound normative and the
+/// values implementation policy; these are ours, and they are independent.
+pub const DEFAULT_UNDO_CAPACITY: usize = 200;
+pub const DEFAULT_REDO_CAPACITY: usize = 200;
+
+/// An open document on one device.
+///
+/// Owns the durable log, the current projection, and the session-local undo
+/// and redo stacks. The stacks are never persisted (R8.4.2).
+#[derive(Debug)]
+pub struct Session {
+    actor: Uuid,
+    /// The state the log replays on top of: FORMAT-SPEC §5's snapshot role.
+    /// Empty for a session that starts from nothing.
+    baseline: Document,
+    log: OperationLog,
+    projection: Projection,
+    undo: VecDeque<StackEntry>,
+    redo: VecDeque<StackEntry>,
+    undo_capacity: usize,
+    redo_capacity: usize,
+    dirty: bool,
+    /// Non-blocking diagnostics: capacity drops (R8.4.4), stale discards.
+    diagnostics: Vec<String>,
+}
+
+impl Session {
+    /// Opens an empty session for a fresh actor.
+    pub fn new() -> Self {
+        Self::with_actor(Uuid::now_v7())
+    }
+
+    /// Opens an empty session for a named actor.
+    pub fn with_actor(actor: Uuid) -> Self {
+        Self {
+            actor,
+            baseline: Document::default(),
+            log: OperationLog::new(),
+            projection: Projection::default(),
+            undo: VecDeque::new(),
+            redo: VecDeque::new(),
+            undo_capacity: DEFAULT_UNDO_CAPACITY,
+            redo_capacity: DEFAULT_REDO_CAPACITY,
+            dirty: false,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    /// Sets both stack capacities. R8.4.4: the two bounds are independent, and
+    /// exhausting one leaves the other unchanged.
+    pub fn with_capacities(mut self, undo: usize, redo: usize) -> Self {
+        self.undo_capacity = undo;
+        self.redo_capacity = redo;
+        self
+    }
+
+    /// This session's actor id.
+    pub fn actor(&self) -> Uuid {
+        self.actor
+    }
+
+    /// The current projection's document.
+    pub fn document(&self) -> &Document {
+        &self.projection.document
+    }
+
+    /// The current projection, including tombstones and discards.
+    pub fn projection(&self) -> &Projection {
+        &self.projection
+    }
+
+    /// The durable operation log.
+    pub fn log(&self) -> &OperationLog {
+        &self.log
+    }
+
+    /// Whether the document has changed relative to the saved target.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Clears dirty. §9.1's save contract is the only thing that may call this.
+    pub fn mark_saved(&mut self) {
+        self.dirty = false;
+    }
+
+    /// Non-blocking diagnostics accumulated this session.
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+
+    /// Number of entries available to undo.
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// Number of entries available to redo.
+    pub fn redo_depth(&self) -> usize {
+        self.redo.len()
+    }
+
+    /// Commits a local command as one atomic batch and one undo entry.
+    ///
+    /// R8.2.1: exactly one undo entry per accepted operation batch. R8.4.1:
+    /// an accepted local command outside redo execution clears the redo stack.
+    ///
+    /// The document is validated BEFORE the batch enters the log. A command
+    /// that would produce an invalid document is rejected atomically with zero
+    /// effects and no undo entry (R8.2.2, FORMAT-SPEC §4.3 row 1) — the log
+    /// must never contain a batch whose projection is invalid, because replay
+    /// has no way to decline it later.
+    pub fn commit(&mut self, operations: Vec<Operation>) -> Result<Uuid, CommandError> {
+        let inverse = invert_against(&self.projection.document, &operations)?;
+        let id = self.apply_local(operations.clone())?;
+        self.push_undo(StackEntry {
+            forward: operations,
+            inverse,
+        });
+        self.redo.clear();
+        Ok(id)
+    }
+
+    /// Undoes the most recent command, appending a compensating batch.
+    ///
+    /// Returns the compensating batch's id, or `None` when the undo stack is
+    /// empty. R8.4.1: compensation batches generated by executed undos do NOT
+    /// clear redo.
+    pub fn undo(&mut self) -> Result<Option<Uuid>, CommandError> {
+        let Some(entry) = self.undo.pop_back() else {
+            return Ok(None);
+        };
+        let ops = StackEntry::refreshed(&entry.inverse);
+        match self.apply_local(ops) {
+            Ok(id) => {
+                self.push_redo(entry);
+                Ok(Some(id))
+            }
+            Err(e) => {
+                // Restore the entry: a failed undo must leave the stacks as
+                // they were, exactly like a rejected command (R8.2.2).
+                self.undo.push_back(entry);
+                Err(e)
+            }
+        }
+    }
+
+    /// Redoes the most recently undone command.
+    ///
+    /// R8.1.3: this restores the SAME entity ids the undone command created,
+    /// including reopening a tombstone written by this session's own undo.
+    /// That authorization is exactly what [`crate::replay`] checks by
+    /// provenance, and this is the only place that mints such a create.
+    pub fn redo(&mut self) -> Result<Option<Uuid>, CommandError> {
+        let Some(entry) = self.redo.pop_back() else {
+            return Ok(None);
+        };
+        let ops = StackEntry::refreshed(&entry.forward);
+        match self.apply_local(ops) {
+            Ok(id) => {
+                self.push_undo(entry);
+                Ok(Some(id))
+            }
+            Err(e) => {
+                self.redo.push_back(entry);
+                Err(e)
+            }
+        }
+    }
+
+    /// Accepts an external or replayed batch: sync-delivered, recovery-restored
+    /// or CLI-applied.
+    ///
+    /// R8.3.1: an accepted external batch clears BOTH stacks, so local undo
+    /// never crosses one. R8.3.2: it never enters them. R8.3.3: it makes the
+    /// document dirty relative to the saved target.
+    pub fn accept_external(&mut self, batch: Batch) -> Result<Delivery, CommandError> {
+        let delivery = self.log.deliver(batch)?;
+        self.reproject();
+        if delivery == Delivery::Accepted {
+            self.undo.clear();
+            self.redo.clear();
+            self.dirty = true;
+        }
+        Ok(delivery)
+    }
+
+    /// Opens a session over a stored snapshot and the batches after it.
+    ///
+    /// This is [`Self::open_with`] for a package that has been compacted: the
+    /// baseline is the snapshot's projection and `frontier` is what it covers
+    /// (FORMAT-SPEC §5.1 S2). Like `open_with`, the batches are part of the
+    /// open — they never fire the R8.3.1 fence and leave the document clean.
+    pub fn open_snapshot(
+        actor: Uuid,
+        baseline: Document,
+        frontier: &std::collections::BTreeMap<Uuid, u64>,
+        batches: Vec<Batch>,
+    ) -> Result<Self, CommandError> {
+        let mut s = Self::with_actor(actor);
+        s.log = OperationLog::with_baseline_frontier(frontier)?;
+        s.baseline = baseline;
+        s.open_with(batches)?;
+        Ok(s)
+    }
+
+    /// The snapshot this session replays on top of.
+    pub fn baseline(&self) -> &Document {
+        &self.baseline
+    }
+
+    /// Replays batches while CONSTRUCTING this session's projection.
+    ///
+    /// R8.4.2: batches replayed while constructing an open are part of that
+    /// open. They establish the baseline, never fire the R8.3.1 fence, and
+    /// leave the document NOT dirty relative to the opened source. This is a
+    /// different operation from [`Self::accept_external`] for exactly that
+    /// reason, and conflating the two is how a freshly opened document reports
+    /// unsaved changes it does not have.
+    pub fn open_with(&mut self, batches: Vec<Batch>) -> Result<(), CommandError> {
+        for batch in batches {
+            self.log.deliver(batch)?;
+        }
+        self.reproject();
+        self.undo.clear();
+        self.redo.clear();
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// The projection as it stood BEFORE `batch` was applied.
+    ///
+    /// Replays every other accepted batch. That is the honest way to answer
+    /// the question — the canonical order is a function of the delivered set,
+    /// so removing one batch and replaying is exactly the state that set
+    /// produced without it.
+    pub fn projection_without(&self, batch: &Batch) -> Projection {
+        let mut log = OperationLog::with_baseline_frontier(&self.log.baseline_frontier_seed())
+            .unwrap_or_default();
+        for other in self.log.batches() {
+            if other.batch_id == batch.batch_id {
+                continue;
+            }
+            let _ = log.deliver(other.clone());
+        }
+        project_from(&self.baseline, &log)
+    }
+
+    /// The inverse of `batch`, built against the state it was applied to.
+    ///
+    /// Exposed so a front end that does NOT hold a session across commands —
+    /// a CLI process, for instance — can still compensate a batch. Inverting
+    /// against the CURRENT projection would fail for a batch that deleted
+    /// something, because the entity whose fields the inverse must restore is
+    /// no longer there to read them from.
+    pub fn invert_batch(&self, batch: &Batch) -> Result<Vec<Operation>, CommandError> {
+        let prior = self.projection_without(batch);
+        invert_against(&prior.document, &batch.operations)
+    }
+
+    /// Builds and delivers a batch of local operations, then reprojects.
+    fn apply_local(&mut self, operations: Vec<Operation>) -> Result<Uuid, CommandError> {
+        let candidate = self.would_be(&operations);
+        let errors = candidate.validate();
+        if !errors.is_empty() {
+            return Err(CommandError::Invalid(errors));
+        }
+
+        let batch = Batch::new(
+            self.actor,
+            self.log.next_counter(self.actor),
+            self.log.frontier(),
+            operations,
+        );
+        let id = batch.batch_id;
+        let discarded_before = self.projection.discarded.len();
+
+        match self.log.deliver(batch)? {
+            Delivery::Accepted => {}
+            Delivery::Duplicate => return Err(CommandError::NotApplied("already applied")),
+            Delivery::Held => return Err(CommandError::NotApplied("causal prerequisites missing")),
+        }
+        self.reproject();
+
+        if self.projection.discarded.len() > discarded_before {
+            // A locally authored batch that replay discards is an internal
+            // inconsistency, not a user error: O4 validation should have
+            // caught the cause at command time. Surfacing it is better than
+            // reporting success for a batch that produced no state.
+            self.diagnostics.push(format!(
+                "locally authored batch {id} was discarded as stale"
+            ));
+            return Err(CommandError::NotApplied(
+                "discarded as stale at its position",
+
+codex
+The first pass exposed several high-risk seams worth proving: held-batch identity/range checks appear scoped only to accepted batches; replay records a discard outside its scratch state; and session validation may be checking a different history shape than the real insertion. I’m now reading the omitted portions and will try to falsify those candidate findings before treating them as defects.
+exec
+/opt/homebrew/bin/bash -lc "sed -n '240,620p' crates/domowik-document/src/log.rs; sed -n '280,700p' crates/domowik-document/src/replay.rs; sed -n '320,820p' crates/domowik-document/src/session.rs" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+exec
+/opt/homebrew/bin/bash -lc "rg -n \"wrong|type|\\\"id\\\"|merge_fields|invalid|would_be|discard|restore|collision|overlap|held|capacity|open_with|external\" crates/domowik-document/src/log.rs crates/domowik-document/src/replay.rs crates/domowik-document/src/session.rs" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 51ms:
+crates/domowik-document/src/replay.rs:59:/// Why a batch was discarded during replay.
+crates/domowik-document/src/replay.rs:75:    /// Batches discarded as stale, in canonical order. A projection outcome,
+crates/domowik-document/src/replay.rs:77:    pub discarded: Vec<Discard>,
+crates/domowik-document/src/replay.rs:162:/// Applies one batch atomically, or discards it as stale (B1, I5).
+crates/domowik-document/src/replay.rs:164:/// The batch is classified against a SCRATCH copy so a discard leaves no trace:
+crates/domowik-document/src/replay.rs:179:            // tombstone it is not authorized to restore.
+crates/domowik-document/src/replay.rs:181:                state == TargetState::AfterDeletion && !authorized_restore(&intervals, op, batch)
+crates/domowik-document/src/replay.rs:193:            p.discarded.push(Discard {
+crates/domowik-document/src/replay.rs:199:            // If ANY operation is stale the WHOLE batch is discarded,
+crates/domowik-document/src/replay.rs:240:fn authorized_restore(
+crates/domowik-document/src/replay.rs:272:                if let Some(updated) = merge_fields(&current, fields) {
+crates/domowik-document/src/replay.rs:299:fn merge_fields(entity: &Entity, fields: &serde_json::Map<String, Value>) -> Option<Entity> {
+crates/domowik-document/src/replay.rs:314:/// The `setFields` payload that would restore `entity`'s current values for
+crates/domowik-document/src/replay.rs:319:/// operation ADDED (absent before) is restored by `null`, which §4.2 O2
+crates/domowik-document/src/replay.rs:386:        assert!(p.discarded.is_empty());
+crates/domowik-document/src/replay.rs:445:    fn a_stale_operation_discards_its_whole_batch() {
+crates/domowik-document/src/replay.rs:446:        // I5: if ANY operation is stale the whole batch is discarded,
+crates/domowik-document/src/replay.rs:466:        assert_eq!(p.discarded.len(), 1);
+crates/domowik-document/src/replay.rs:467:        assert_eq!(p.discarded[0].reason, TargetState::BeforeCreation);
+crates/domowik-document/src/replay.rs:472:        // V4b: discarded as stale (I3); no resurrection.
+crates/domowik-document/src/replay.rs:491:        assert_eq!(p.discarded.len(), 1);
+crates/domowik-document/src/replay.rs:492:        assert_eq!(p.discarded[0].reason, TargetState::AfterDeletion);
+crates/domowik-document/src/replay.rs:516:        assert!(p.discarded.is_empty(), "got {:?}", p.discarded);
+crates/domowik-document/src/replay.rs:539:        assert_eq!(p.discarded.len(), 1);
+crates/domowik-document/src/replay.rs:540:        assert_eq!(p.discarded[0].reason, TargetState::AfterDeletion);
+crates/domowik-document/src/replay.rs:572:        assert_eq!(p.discarded.len(), 1);
+crates/domowik-document/src/replay.rs:573:        assert_eq!(p.discarded[0].reason, TargetState::AfterDeletion);
+crates/domowik-document/src/replay.rs:589:        let mut restored = wall(level_id);
+crates/domowik-document/src/replay.rs:590:        restored.id = wall_id;
+crates/domowik-document/src/replay.rs:595:            vec![Operation::create(Entity::Wall(restored))],
+crates/domowik-document/src/replay.rs:597:        .expect("restore");
+crates/domowik-document/src/replay.rs:600:        assert_eq!(p.document.walls.len(), 1, "got {:?}", p.discarded);
+crates/domowik-document/src/replay.rs:608:        // Winner per LWW1; loser discarded; outcome independent of arrival.
+crates/domowik-document/src/replay.rs:641:        // V4: deleted (LWW3); the concurrent write is discarded; tombstone
+crates/domowik-document/src/replay.rs:707:        // held: its predecessors are covered, not missing (§5.1 S2).
+crates/domowik-document/src/replay.rs:717:            seeded_replay.discarded.is_empty(),
+crates/domowik-document/src/replay.rs:725:        // (before creation) and discard every edit made after an open.
+crates/domowik-document/src/replay.rs:739:        assert!(p.discarded.is_empty(), "got {:?}", p.discarded);
+crates/domowik-document/src/log.rs:33:    #[error("batch {batch_id} reserves counters {from}..={to} for actor {actor}, overlapping a range already reserved")]
+crates/domowik-document/src/log.rs:58:    /// Causal prerequisites are not yet present; held until they arrive (F3).
+crates/domowik-document/src/log.rs:70:    held: Vec<Batch>,
+crates/domowik-document/src/log.rs:87:    /// watermark) from one whose predecessors have not arrived (F3, held).
+crates/domowik-document/src/log.rs:92:    /// invalid seed would silently become watermark state, which F1 forbids
+crates/domowik-document/src/log.rs:124:    /// Batches held for missing causal prerequisites (F3).
+crates/domowik-document/src/log.rs:125:    pub fn held(&self) -> &[Batch] {
+crates/domowik-document/src/log.rs:126:        &self.held
+crates/domowik-document/src/log.rs:164:            self.held.push(batch);
+crates/domowik-document/src/log.rs:169:        self.promote_held();
+crates/domowik-document/src/log.rs:181:    /// Re-checks held batches after an acceptance, repeatedly, because
+crates/domowik-document/src/log.rs:183:    fn promote_held(&mut self) {
+crates/domowik-document/src/log.rs:185:            let Some(i) = self.held.iter().position(|b| self.prerequisites_present(b)) else {
+crates/domowik-document/src/log.rs:188:            let batch = self.held.remove(i);
+crates/domowik-document/src/log.rs:189:            // A batch can become a duplicate while held, if the same range
+crates/domowik-document/src/log.rs:198:    /// F3: a batch whose frontier points at batches not yet present is held.
+crates/domowik-document/src/log.rs:241:        // A re-delivery of the SAME batch is a duplicate, not a collision; a
+crates/domowik-document/src/log.rs:254:        // Duplicate reserved ranges and overlapping ranges are the same
+crates/domowik-document/src/log.rs:318:        if let Some(b) = self.held.first() {
+crates/domowik-document/src/log.rs:424:    fn a_range_straddling_an_accepted_one_is_an_overlap_not_a_duplicate() {
+crates/domowik-document/src/log.rs:426:        // counters overlap an accepted range would apply some counters twice.
+crates/domowik-document/src/log.rs:471:        log.deliver(batch(a, 5, 1)).expect("held");
+crates/domowik-document/src/log.rs:484:        assert_eq!(log.batches().len(), 2, "the held batch must promote");
+crates/domowik-document/src/log.rs:504:    fn vector_v2_a_causally_later_batch_is_held_until_its_prerequisite_arrives() {
+crates/domowik-document/src/log.rs:505:        // V2: B causally after A arrives first; B is held (F3) and the final
+crates/domowik-document/src/log.rs:515:        assert_eq!(log.held().len(), 1);
+crates/domowik-document/src/log.rs:519:        assert!(log.held().is_empty());
+crates/domowik-document/src/log.rs:543:        assert_eq!(log.batches().len(), 3, "both held batches must promote");
+crates/domowik-document/src/log.rs:544:        assert!(log.held().is_empty());
+crates/domowik-document/src/log.rs:588:        // predecessors were compacted would be held forever.
+crates/domowik-document/src/session.rs:13://! R8.1.3 is the one rule that reaches back into identity: redo restores the
+crates/domowik-document/src/session.rs:29:    /// The resulting document would be invalid. Rejected atomically BEFORE any
+crates/domowik-document/src/session.rs:36:    /// The batch was discarded as stale at its canonical position, or held.
+crates/domowik-document/src/session.rs:87:    undo_capacity: usize,
+crates/domowik-document/src/session.rs:88:    redo_capacity: usize,
+crates/domowik-document/src/session.rs:90:    /// Non-blocking diagnostics: capacity drops (R8.4.4), stale discards.
+crates/domowik-document/src/session.rs:109:            undo_capacity: DEFAULT_UNDO_CAPACITY,
+crates/domowik-document/src/session.rs:110:            redo_capacity: DEFAULT_REDO_CAPACITY,
+crates/domowik-document/src/session.rs:119:        self.undo_capacity = undo;
+crates/domowik-document/src/session.rs:120:        self.redo_capacity = redo;
+crates/domowik-document/src/session.rs:134:    /// The current projection, including tombstones and discards.
+crates/domowik-document/src/session.rs:175:    /// that would produce an invalid document is rejected atomically with zero
+crates/domowik-document/src/session.rs:177:    /// must never contain a batch whose projection is invalid, because replay
+crates/domowik-document/src/session.rs:216:    /// R8.1.3: this restores the SAME entity ids the undone command created,
+crates/domowik-document/src/session.rs:237:    /// Accepts an external or replayed batch: sync-delivered, recovery-restored
+crates/domowik-document/src/session.rs:240:    /// R8.3.1: an accepted external batch clears BOTH stacks, so local undo
+crates/domowik-document/src/session.rs:243:    pub fn accept_external(&mut self, batch: Batch) -> Result<Delivery, CommandError> {
+crates/domowik-document/src/session.rs:256:    /// This is [`Self::open_with`] for a package that has been compacted: the
+crates/domowik-document/src/session.rs:258:    /// (FORMAT-SPEC §5.1 S2). Like `open_with`, the batches are part of the
+crates/domowik-document/src/session.rs:269:        s.open_with(batches)?;
+crates/domowik-document/src/session.rs:283:    /// different operation from [`Self::accept_external`] for exactly that
+crates/domowik-document/src/session.rs:286:    pub fn open_with(&mut self, batches: Vec<Batch>) -> Result<(), CommandError> {
+crates/domowik-document/src/session.rs:320:    /// something, because the entity whose fields the inverse must restore is
+crates/domowik-document/src/session.rs:329:        let candidate = self.would_be(&operations);
+crates/domowik-document/src/session.rs:342:        let discarded_before = self.projection.discarded.len();
+crates/domowik-document/src/session.rs:351:        if self.projection.discarded.len() > discarded_before {
+crates/domowik-document/src/session.rs:352:            // A locally authored batch that replay discards is an internal
+crates/domowik-document/src/session.rs:357:                "locally authored batch {id} was discarded as stale"
+crates/domowik-document/src/session.rs:360:                "discarded as stale at its position",
+crates/domowik-document/src/session.rs:372:    fn would_be(&self, operations: &[Operation]) -> Document {
+crates/domowik-document/src/session.rs:397:        let mut out = Vec::with_capacity(operations.len());
+crates/domowik-document/src/session.rs:447:    /// R8.4.4: exceeding capacity drops the OLDEST entry of THAT stack and
+crates/domowik-document/src/session.rs:451:        while self.undo.len() > self.undo_capacity {
+crates/domowik-document/src/session.rs:460:        while self.redo.len() > self.redo_capacity {
+crates/domowik-document/src/session.rs:596:    fn redo_restores_the_same_entity_id_through_its_own_tombstone() {
+crates/domowik-document/src/session.rs:617:            "redo must restore the SAME entity id"
+crates/domowik-document/src/session.rs:662:            s.projection().discarded.is_empty(),
+crates/domowik-document/src/session.rs:663:            "a dangling reference would have discarded the batch: {:?}",
+crates/domowik-document/src/session.rs:664:            s.projection().discarded
+crates/domowik-document/src/session.rs:684:        assert!(s.projection().discarded.is_empty());
+crates/domowik-document/src/session.rs:688:    fn undo_of_a_delete_restores_the_entity_with_its_fields() {
+crates/domowik-document/src/session.rs:709:    // ---- R8.4.1: redo invalidation ----
+crates/domowik-document/src/session.rs:752:    // ---- R8.3: the external-batch fence ----
+crates/domowik-document/src/session.rs:755:    fn an_accepted_external_batch_clears_both_stacks() {
+crates/domowik-document/src/session.rs:756:        // R8.3.1: local undo never crosses an external batch.
+crates/domowik-document/src/session.rs:765:        let external = Batch::new(
+crates/domowik-document/src/session.rs:772:            s.accept_external(external).expect("accepted"),
+crates/domowik-document/src/session.rs:781:    fn an_external_batch_never_becomes_a_local_undo_entry() {
+crates/domowik-document/src/session.rs:782:        // R8.3.2: external batches appear only in durable history.
+crates/domowik-document/src/session.rs:785:        s.accept_external(Batch::new(
+crates/domowik-document/src/session.rs:797:    fn an_accepted_external_batch_makes_the_document_dirty() {
+crates/domowik-document/src/session.rs:802:        s.accept_external(Batch::new(
+crates/domowik-document/src/session.rs:813:    fn a_duplicate_external_batch_does_not_fire_the_fence() {
+crates/domowik-document/src/session.rs:820:        let external = Batch::new(
+crates/domowik-document/src/session.rs:826:        s.accept_external(external.clone()).expect("first");
+crates/domowik-document/src/session.rs:833:            s.accept_external(external).expect("second"),
+crates/domowik-document/src/session.rs:862:        s.open_with(vec![seed]).expect("open");
+crates/domowik-document/src/session.rs:876:        s.open_with(vec![Batch::new(
+crates/domowik-document/src/session.rs:889:    // ---- R8.4.4: finite capacity on both stacks, independently ----
+crates/domowik-document/src/session.rs:892:    fn exceeding_undo_capacity_drops_the_oldest_entry_and_blocks_nothing() {
+crates/domowik-document/src/session.rs:902:        assert_eq!(s.undo_depth(), 3, "capacity holds");
+crates/domowik-document/src/session.rs:1008:            "undo-all then redo-all must restore the projection exactly"
+
+exec
+/opt/homebrew/bin/bash -lc "nl -ba crates/domowik-document/src/replay.rs | sed -n '430,680p'; nl -ba crates/domowik-document/src/session.rs | sed -n '800,1040p'; nl -ba crates/domowik-document/src/log.rs | sed -n '580,700p'" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+   430	            3,
+   431	            log.frontier(),
+   432	            vec![Operation::delete(wall_id)],
+   433	        ))
+   434	        .expect("delete");
+   435	        let p = project(&log);
+   436	        assert!(p.document.walls.is_empty());
+   437	        assert!(p.is_tombstoned(wall_id));
+   438	        assert!(!p.is_live(wall_id));
+   439	        let interval = p.intervals.get(&wall_id).expect("interval retained");
+   440	        assert!(interval.deleted_at.is_some());
+   441	        assert!(interval.created_at < interval.deleted_at.unwrap());
+   442	    }
+   443	
+   444	    #[test]
+   445	    fn a_stale_operation_discards_its_whole_batch() {
+   446	        // I5: if ANY operation is stale the whole batch is discarded,
+   447	        // INCLUDING operations whose own targets were live (B1).
+   448	        let actor = Uuid::now_v7();
+   449	        let (mut log, _, wall_id) = seeded(actor);
+   450	        let ghost = Uuid::now_v7();
+   451	        log.deliver(Batch::new(
+   452	            actor,
+   453	            3,
+   454	            log.frontier(),
+   455	            vec![
+   456	                set(wall_id, "thicknessMm", json!(999.0)),
+   457	                set(ghost, "thicknessMm", json!(1.0)),
+   458	            ],
+   459	        ))
+   460	        .expect("delivered");
+   461	        let p = project(&log);
+   462	        assert_eq!(
+   463	            p.document.walls[0].thickness_mm, 200.0,
+   464	            "the live operation must not have applied"
+   465	        );
+   466	        assert_eq!(p.discarded.len(), 1);
+   467	        assert_eq!(p.discarded[0].reason, TargetState::BeforeCreation);
+   468	    }
+   469	
+   470	    #[test]
+   471	    fn vector_v4b_a_write_after_an_observed_delete_is_stale_and_resurrects_nothing() {
+   472	        // V4b: discarded as stale (I3); no resurrection.
+   473	        let actor = Uuid::now_v7();
+   474	        let (mut log, _, wall_id) = seeded(actor);
+   475	        log.deliver(Batch::new(
+   476	            actor,
+   477	            3,
+   478	            log.frontier(),
+   479	            vec![Operation::delete(wall_id)],
+   480	        ))
+   481	        .expect("delete");
+   482	        log.deliver(Batch::new(
+   483	            actor,
+   484	            4,
+   485	            log.frontier(),
+   486	            vec![set(wall_id, "thicknessMm", json!(999.0))],
+   487	        ))
+   488	        .expect("delivered");
+   489	        let p = project(&log);
+   490	        assert!(p.document.walls.is_empty(), "nothing may be resurrected");
+   491	        assert_eq!(p.discarded.len(), 1);
+   492	        assert_eq!(p.discarded[0].reason, TargetState::AfterDeletion);
+   493	    }
+   494	
+   495	    #[test]
+   496	    fn a_target_created_earlier_in_the_same_batch_is_present_for_later_operations() {
+   497	        // I5: presence is evaluated at the OPERATION's write position, so an
+   498	        // entity created by an earlier operation of the same batch is present.
+   499	        let actor = Uuid::now_v7();
+   500	        let level = Level::new("Level 1");
+   501	        let w = wall(level.id);
+   502	        let wall_id = w.id;
+   503	        let mut log = OperationLog::new();
+   504	        log.deliver(Batch::new(
+   505	            actor,
+   506	            1,
+   507	            BTreeMap::new(),
+   508	            vec![
+   509	                Operation::create(Entity::Level(level)),
+   510	                Operation::create(Entity::Wall(w)),
+   511	                set(wall_id, "thicknessMm", json!(150.0)),
+   512	            ],
+   513	        ))
+   514	        .expect("one batch");
+   515	        let p = project(&log);
+   516	        assert!(p.discarded.is_empty(), "got {:?}", p.discarded);
+   517	        assert_eq!(p.document.walls[0].thickness_mm, 150.0);
+   518	    }
+   519	
+   520	    #[test]
+   521	    fn a_delete_of_an_already_tombstoned_target_is_stale() {
+   522	        let actor = Uuid::now_v7();
+   523	        let (mut log, _, wall_id) = seeded(actor);
+   524	        log.deliver(Batch::new(
+   525	            actor,
+   526	            3,
+   527	            log.frontier(),
+   528	            vec![Operation::delete(wall_id)],
+   529	        ))
+   530	        .expect("delete");
+   531	        log.deliver(Batch::new(
+   532	            actor,
+   533	            4,
+   534	            log.frontier(),
+   535	            vec![Operation::delete(wall_id)],
+   536	        ))
+   537	        .expect("delivered");
+   538	        let p = project(&log);
+   539	        assert_eq!(p.discarded.len(), 1);
+   540	        assert_eq!(p.discarded[0].reason, TargetState::AfterDeletion);
+   541	    }
+   542	
+   543	    #[test]
+   544	    fn a_create_after_a_tombstone_by_another_actor_never_resurrects() {
+   545	        // I3/E6: tombstones created by sync merge are never resurrected.
+   546	        let (x, y) = (Uuid::from_u128(1), Uuid::from_u128(2));
+   547	        let (mut log, _, wall_id) = seeded(x);
+   548	        let level_id = log.batches()[0].operations[0].entity_id;
+   549	
+   550	        // Y observes everything and deletes the wall.
+   551	        log.deliver(Batch::new(
+   552	            y,
+   553	            1,
+   554	            log.frontier(),
+   555	            vec![Operation::delete(wall_id)],
+   556	        ))
+   557	        .expect("y deletes");
+   558	
+   559	        // X now tries to recreate it. X did not write the tombstone.
+   560	        let mut revived = wall(level_id);
+   561	        revived.id = wall_id;
+   562	        log.deliver(Batch::new(
+   563	            x,
+   564	            3,
+   565	            log.frontier(),
+   566	            vec![Operation::create(Entity::Wall(revived))],
+   567	        ))
+   568	        .expect("delivered");
+   569	
+   570	        let p = project(&log);
+   571	        assert!(p.document.walls.is_empty(), "must stay tombstoned");
+   572	        assert_eq!(p.discarded.len(), 1);
+   573	        assert_eq!(p.discarded[0].reason, TargetState::AfterDeletion);
+   574	    }
+   575	
+   576	    #[test]
+   577	    fn a_create_after_this_actors_own_tombstone_is_an_authorized_restoration() {
+   578	        // E6's sole reuse exception, the mechanism BEHAVIOR-SPEC R8.1.3 needs.
+   579	        let actor = Uuid::now_v7();
+   580	        let (mut log, level_id, wall_id) = seeded(actor);
+   581	        log.deliver(Batch::new(
+   582	            actor,
+   583	            3,
+   584	            log.frontier(),
+   585	            vec![Operation::delete(wall_id)],
+   586	        ))
+   587	        .expect("delete");
+   588	
+   589	        let mut restored = wall(level_id);
+   590	        restored.id = wall_id;
+   591	        log.deliver(Batch::new(
+   592	            actor,
+   593	            4,
+   594	            log.frontier(),
+   595	            vec![Operation::create(Entity::Wall(restored))],
+   596	        ))
+   597	        .expect("restore");
+   598	
+   599	        let p = project(&log);
+   600	        assert_eq!(p.document.walls.len(), 1, "got {:?}", p.discarded);
+   601	        assert_eq!(p.document.walls[0].id, wall_id, "the SAME entity id");
+   602	        assert!(p.is_live(wall_id));
+   603	    }
+   604	
+   605	    #[test]
+   606	    fn vector_v3_concurrent_writes_resolve_by_position_independent_of_arrival() {
+   607	        // V3: two actors write the same field, neither observing the other.
+   608	        // Winner per LWW1; loser discarded; outcome independent of arrival.
+   609	        let (x, y) = (Uuid::from_u128(1), Uuid::from_u128(2));
+   610	        let (seed, _, wall_id) = seeded(x);
+   611	        let base = seed.frontier();
+   612	
+   613	        let a = Batch::new(
+   614	            x,
+   615	            3,
+   616	            base.clone(),
+   617	            vec![set(wall_id, "thicknessMm", json!(111.0))],
+   618	        );
+   619	        let b = Batch::new(y, 1, base, vec![set(wall_id, "thicknessMm", json!(222.0))]);
+   620	
+   621	        let replay = |order: Vec<Batch>| -> f64 {
+   622	            // The SAME seed for both runs, so only arrival order differs.
+   623	            let mut log = seed.clone();
+   624	            for batch in order {
+   625	                log.deliver(batch).expect("delivers");
+   626	            }
+   627	            project(&log).document.walls[0].thickness_mm
+   628	        };
+   629	
+   630	        let forward = replay(vec![a.clone(), b.clone()]);
+   631	        let backward = replay(vec![b.clone(), a.clone()]);
+   632	        assert_eq!(forward, backward, "arrival order must not decide");
+   633	
+   634	        // Equal causal pasts, so counterBase decides: x's base 3 beats y's 1.
+   635	        assert_eq!(a.causal_past_size(), b.causal_past_size());
+   636	        assert_eq!(forward, 111.0);
+   637	    }
+   638	
+   639	    #[test]
+   640	    fn vector_v4_a_delete_dominates_a_concurrent_set() {
+   641	        // V4: deleted (LWW3); the concurrent write is discarded; tombstone
+   642	        // retained. Two actors that both observe the seed and neither the
+   643	        // other; equal causal pasts and equal counter bases, so actorId
+   644	        // decides and the DELETE sorts last.
+   645	        let seed_actor = Uuid::from_u128(1);
+   646	        let setter = Uuid::from_u128(2);
+   647	        let deleter = Uuid::from_u128(9);
+   648	        let (mut log, _, wall_id) = seeded(seed_actor);
+   649	        let base = log.frontier();
+   650	
+   651	        log.deliver(Batch::new(
+   652	            setter,
+   653	            1,
+   654	            base.clone(),
+   655	            vec![set(wall_id, "thicknessMm", json!(999.0))],
+   656	        ))
+   657	        .expect("setter sets");
+   658	        log.deliver(Batch::new(
+   659	            deleter,
+   660	            1,
+   661	            base,
+   662	            vec![Operation::delete(wall_id)],
+   663	        ))
+   664	        .expect("deleter deletes");
+   665	
+   666	        let p = project(&log);
+   667	        assert!(p.document.walls.is_empty(), "delete dominates");
+   668	        assert!(p.is_tombstoned(wall_id), "tombstone retained");
+   669	    }
+   670	
+   671	    #[test]
+   672	    fn null_in_a_set_fields_payload_clears_a_field_to_absent() {
+   673	        // §4.2 O2. `name` is required on a level, so clearing it must FAIL to
+   674	        // deserialize and leave the entity untouched rather than corrupt it.
+   675	        let actor = Uuid::now_v7();
+   676	        let (mut log, level_id, _) = seeded(actor);
+   677	        log.deliver(Batch::new(
+   678	            actor,
+   679	            3,
+   680	            log.frontier(),
+   800	        s.mark_saved();
+   801	        assert!(!s.is_dirty());
+   802	        s.accept_external(Batch::new(
+   803	            Uuid::now_v7(),
+   804	            1,
+   805	            s.log().frontier(),
+   806	            vec![Operation::create(Entity::Level(Level::new("Level 2")))],
+   807	        ))
+   808	        .expect("accepted");
+   809	        assert!(s.is_dirty(), "R8.3.3");
+   810	    }
+   811	
+   812	    #[test]
+   813	    fn a_duplicate_external_batch_does_not_fire_the_fence() {
+   814	        // R8.3.1 fires on an ACCEPTED batch. A duplicate is ignored silently
+   815	        // (I2) and produces no effects, so clearing the stacks would destroy
+   816	        // a user's undo history for nothing.
+   817	        let (mut s, level) = with_level();
+   818	        s.commit(vec![Operation::create(Entity::Wall(wall_on(level)))])
+   819	            .expect("wall");
+   820	        let external = Batch::new(
+   821	            Uuid::now_v7(),
+   822	            1,
+   823	            s.log().frontier(),
+   824	            vec![Operation::create(Entity::Level(Level::new("Level 2")))],
+   825	        );
+   826	        s.accept_external(external.clone()).expect("first");
+   827	        let depth_after_fence = s.undo_depth();
+   828	        s.commit(vec![Operation::create(Entity::Wall(wall_on(level)))])
+   829	            .expect("local");
+   830	        assert_eq!(s.undo_depth(), depth_after_fence + 1);
+   831	
+   832	        assert_eq!(
+   833	            s.accept_external(external).expect("second"),
+   834	            Delivery::Duplicate
+   835	        );
+   836	        assert_eq!(
+   837	            s.undo_depth(),
+   838	            depth_after_fence + 1,
+   839	            "the fence must not fire"
+   840	        );
+   841	    }
+   842	
+   843	    // ---- R8.4.2: session scope ----
+   844	
+   845	    #[test]
+   846	    fn opening_with_replayed_batches_leaves_the_document_clean_and_the_stacks_empty() {
+   847	        // R8.4.2: batches replayed WHILE CONSTRUCTING the projection are part
+   848	        // of that open. They never fire the R8.3.1 fence and dirty is FALSE
+   849	        // relative to the opened source. Conflating this with a post-open
+   850	        // delivery is how a freshly opened document claims unsaved changes.
+   851	        let actor = Uuid::now_v7();
+   852	        let level = Level::new("Level 1");
+   853	        let level_id = level.id;
+   854	        let seed = Batch::new(
+   855	            actor,
+   856	            1,
+   857	            BTreeMap::new(),
+   858	            vec![Operation::create(Entity::Level(level))],
+   859	        );
+   860	
+   861	        let mut s = Session::with_actor(Uuid::now_v7());
+   862	        s.open_with(vec![seed]).expect("open");
+   863	        assert_eq!(s.document().levels.len(), 1);
+   864	        assert!(s.projection().is_live(level_id));
+   865	        assert!(!s.is_dirty(), "R8.4.2: clean relative to the opened source");
+   866	        assert_eq!(s.undo_depth(), 0);
+   867	        assert_eq!(s.redo_depth(), 0);
+   868	    }
+   869	
+   870	    #[test]
+   871	    fn the_first_edit_after_an_open_marks_the_document_dirty() {
+   872	        let actor = Uuid::now_v7();
+   873	        let level = Level::new("Level 1");
+   874	        let level_id = level.id;
+   875	        let mut s = Session::with_actor(Uuid::now_v7());
+   876	        s.open_with(vec![Batch::new(
+   877	            actor,
+   878	            1,
+   879	            BTreeMap::new(),
+   880	            vec![Operation::create(Entity::Level(level))],
+   881	        )])
+   882	        .expect("open");
+   883	        assert!(!s.is_dirty());
+   884	        s.commit(vec![Operation::create(Entity::Wall(wall_on(level_id)))])
+   885	            .expect("wall");
+   886	        assert!(s.is_dirty());
+   887	    }
+   888	
+   889	    // ---- R8.4.4: finite capacity on both stacks, independently ----
+   890	
+   891	    #[test]
+   892	    fn exceeding_undo_capacity_drops_the_oldest_entry_and_blocks_nothing() {
+   893	        let mut s = Session::new().with_capacities(3, 10);
+   894	        let level = Level::new("Level 1");
+   895	        let level_id = level.id;
+   896	        s.commit(vec![Operation::create(Entity::Level(level))])
+   897	            .expect("level");
+   898	        for _ in 0..5 {
+   899	            s.commit(vec![Operation::create(Entity::Wall(wall_on(level_id)))])
+   900	                .expect("wall");
+   901	        }
+   902	        assert_eq!(s.undo_depth(), 3, "capacity holds");
+   903	        assert_eq!(s.document().walls.len(), 5, "nothing was blocked");
+   904	        assert!(
+   905	            s.diagnostics()
+   906	                .iter()
+   907	                .any(|d| d.contains("undo stack full")),
+   908	            "a drop MAY surface a non-blocking diagnostic"
+   909	        );
+   910	    }
+   911	
+   912	    #[test]
+   913	    fn redo_overflow_is_reachable_through_undos_alone() {
+   914	        // R8.4.4 says so explicitly (U11), and it is only true because the two
+   915	        // bounds are INDEPENDENT: a small redo bound overflows while the undo
+   916	        // stack is merely draining.
+   917	        let mut s = Session::new().with_capacities(10, 2);
+   918	        let level = Level::new("Level 1");
+   919	        let level_id = level.id;
+   920	        s.commit(vec![Operation::create(Entity::Level(level))])
+   921	            .expect("level");
+   922	        for _ in 0..4 {
+   923	            s.commit(vec![Operation::create(Entity::Wall(wall_on(level_id)))])
+   924	                .expect("wall");
+   925	        }
+   926	        for _ in 0..4 {
+   927	            s.undo().expect("undo").expect("entry");
+   928	        }
+   929	        assert_eq!(s.redo_depth(), 2, "redo overflowed through undos alone");
+   930	        assert_eq!(s.undo_depth(), 1, "the undo stack is untouched by that");
+   931	    }
+   932	
+   933	    #[test]
+   934	    fn exhausting_one_stack_leaves_the_other_unchanged() {
+   935	        let mut s = Session::new().with_capacities(2, 10);
+   936	        let level = Level::new("Level 1");
+   937	        let level_id = level.id;
+   938	        s.commit(vec![Operation::create(Entity::Level(level))])
+   939	            .expect("level");
+   940	        for _ in 0..4 {
+   941	            s.commit(vec![Operation::create(Entity::Wall(wall_on(level_id)))])
+   942	                .expect("wall");
+   943	        }
+   944	        assert_eq!(s.undo_depth(), 2);
+   945	        assert_eq!(s.redo_depth(), 0);
+   946	        s.undo().expect("undo").expect("entry");
+   947	        assert_eq!(s.undo_depth(), 1);
+   948	        assert_eq!(s.redo_depth(), 1);
+   949	    }
+   950	
+   951	    // ---- property-style coverage over random command streams (R8 criteria) ----
+   952	
+   953	    #[test]
+   954	    fn undo_then_redo_returns_the_document_to_where_it_was() {
+   955	        // A deterministic pseudo-random command stream: create, edit, delete,
+   956	        // interleaved. After N undos and N redos the projection must equal the
+   957	        // one before the undos.
+   958	        let mut s = Session::new();
+   959	        let level = Level::new("Level 1");
+   960	        let level_id = level.id;
+   961	        s.commit(vec![Operation::create(Entity::Level(level))])
+   962	            .expect("level");
+   963	
+   964	        let mut walls: Vec<Uuid> = Vec::new();
+   965	        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+   966	        let mut next = || {
+   967	            seed ^= seed << 13;
+   968	            seed ^= seed >> 7;
+   969	            seed ^= seed << 17;
+   970	            seed
+   971	        };
+   972	
+   973	        for _ in 0..40 {
+   974	            let choice = next() % 3;
+   975	            let committed = if choice == 0 || walls.is_empty() {
+   976	                let w = wall_on(level_id);
+   977	                let id = w.id;
+   978	                s.commit(vec![Operation::create(Entity::Wall(w))])
+   979	                    .map(|_| walls.push(id))
+   980	                    .is_ok()
+   981	            } else if choice == 1 {
+   982	                let id = walls[(next() as usize) % walls.len()];
+   983	                s.commit(vec![set(id, "thicknessMm", json!(120.0))]).is_ok()
+   984	            } else {
+   985	                let i = (next() as usize) % walls.len();
+   986	                let id = walls[i];
+   987	                let ok = s.commit(vec![Operation::delete(id)]).is_ok();
+   988	                if ok {
+   989	                    walls.remove(i);
+   990	                }
+   991	                ok
+   992	            };
+   993	            assert!(committed, "every command in this stream is valid");
+   994	        }
+   995	
+   996	        let before = s.document().clone();
+   997	        let depth = s.undo_depth();
+   998	        for _ in 0..depth {
+   999	            s.undo().expect("undo").expect("entry");
+  1000	        }
+  1001	        assert!(s.document().walls.is_empty(), "everything undone");
+  1002	        for _ in 0..depth {
+  1003	            s.redo().expect("redo").expect("entry");
+  1004	        }
+  1005	        assert_eq!(
+  1006	            s.document(),
+  1007	            &before,
+  1008	            "undo-all then redo-all must restore the projection exactly"
+  1009	        );
+  1010	    }
+  1011	
+  1012	    #[test]
+  1013	    fn a_failed_command_in_a_stream_leaves_undo_and_redo_consistent() {
+  1014	        let (mut s, level) = with_level();
+  1015	        s.commit(vec![Operation::create(Entity::Wall(wall_on(level)))])
+  1016	            .expect("wall");
+  1017	        s.undo().expect("undo").expect("entry");
+  1018	        let (u, r) = (s.undo_depth(), s.redo_depth());
+  1019	
+  1020	        let bad = Wall::new(
+  1021	            level,
+  1022	            Point::new(1.0, 1.0),
+  1023	            Point::new(1.0, 1.0),
+  1024	            200.0,
+  1025	            2500.0,
+  1026	        );
+  1027	        s.commit(vec![Operation::create(Entity::Wall(bad))])
+  1028	            .expect_err("rejected");
+  1029	        assert_eq!((s.undo_depth(), s.redo_depth()), (u, r), "R8.2.2");
+  1030	
+  1031	        // Redo must still work after the rejection.
+  1032	        s.redo().expect("redo").expect("entry");
+  1033	        assert_eq!(s.document().walls.len(), 1);
+  1034	    }
+  1035	
+  1036	    #[test]
+  1037	    fn no_public_api_mutates_the_projection_directly() {
+  1038	        // Issue 0011 acceptance criterion. `document()` and `projection()`
+  1039	        // hand out shared references; the only way to change state is to
+  1040	        // commit, undo, redo, or accept a batch. This test is a compile-time
+   580	        log.deliver(later.clone()).expect("later");
+   581	        let order: Vec<Uuid> = log.canonical_order().iter().map(|b| b.batch_id).collect();
+   582	        assert_eq!(order, vec![early.batch_id, later.batch_id]);
+   583	    }
+   584	
+   585	    #[test]
+   586	    fn a_baseline_frontier_lets_the_log_continue_from_a_snapshot() {
+   587	        // §5.1 S2. Without the seed, a batch at counterBase 3 whose
+   588	        // predecessors were compacted would be held forever.
+   589	        let a = actor();
+   590	        let mut seed = BTreeMap::new();
+   591	        seed.insert(a, 2);
+   592	        let mut log = OperationLog::with_baseline_frontier(&seed).expect("seed");
+   593	        assert_eq!(log.next_counter(a), 3);
+   594	        assert_eq!(log.deliver(batch(a, 3, 1)), Ok(Delivery::Accepted));
+   595	        assert!(log.validate_retained().is_ok());
+   596	    }
+   597	
+   598	    #[test]
+   599	    fn a_baseline_frontier_still_suppresses_a_covered_batch() {
+   600	        // I2: a range wholly at or below the watermark is already applied.
+   601	        let a = actor();
+   602	        let mut seed = BTreeMap::new();
+   603	        seed.insert(a, 5);
+   604	        let mut log = OperationLog::with_baseline_frontier(&seed).expect("seed");
+   605	        assert_eq!(log.deliver(batch(a, 1, 3)), Ok(Delivery::Duplicate));
+   606	    }
+   607	
+   608	    #[test]
+   609	    fn a_zero_valued_baseline_frontier_member_is_rejected() {
+   610	        let mut seed = BTreeMap::new();
+   611	        seed.insert(actor(), 0);
+   612	        assert!(matches!(
+   613	            OperationLog::with_baseline_frontier(&seed),
+   614	            Err(LogError::ZeroFrontierMember { .. })
+   615	        ));
+   616	    }
+   617	
+   618	    #[test]
+   619	    fn the_frontier_a_new_batch_should_declare_omits_unobserved_actors() {
+   620	        // F1: absent actor means nothing observed; zero is never written.
+   621	        let a = actor();
+   622	        let mut log = OperationLog::new();
+   623	        log.deliver(batch(a, 1, 2)).expect("first");
+   624	        let f = log.frontier();
+   625	        assert_eq!(f.get(&a), Some(&2));
+   626	        assert_eq!(f.len(), 1);
+   627	        assert!(f.values().all(|&c| c > 0));
+   628	    }
+   629	}
+
+codex
+The candidate defects survive the code-path challenge. The strongest are now concrete: malformed held batches bypass framing when promoted; a snapshot-straddling range is accepted; causal-frontier regression can reverse one actor’s own batches; same-actor provenance is insufficient restoration authorization; and two session paths append a batch before discovering that replay discarded it. I’m doing a final line-by-line verification of those paths and separating them from the areas that are actually sound.
+exec
+/opt/homebrew/bin/bash -lc "nl -ba crates/domowik-document/src/log.rs | sed -n '140,335p'; nl -ba crates/domowik-document/src/replay.rs | sed -n '155,330p'; nl -ba crates/domowik-document/src/session.rs | sed -n '170,470p'" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+   140	            .collect()
+   141	    }
+   142	
+   143	    /// The next unused counter for `actor`.
+   144	    pub fn next_counter(&self, actor: Uuid) -> u64 {
+   145	        self.watermark.get(&actor).copied().unwrap_or(0) + 1
+   146	    }
+   147	
+   148	    /// Delivers a batch.
+   149	    ///
+   150	    /// Framing is checked BEFORE anything else, because §4.3 row 4 rejects
+   151	    /// framing anomalies before replay begins and I2 explicitly does not
+   152	    /// exempt a duplicate from them: "watermark classification never precedes,
+   153	    /// gates, or replaces the pre-replay structural checks".
+   154	    pub fn deliver(&mut self, batch: Batch) -> Result<Delivery, LogError> {
+   155	        self.check_framing(&batch)?;
+   156	
+   157	        // I2: a range wholly at or below the watermark is already applied.
+   158	        let mark = self.watermark.get(&batch.actor_id).copied().unwrap_or(0);
+   159	        if batch.range_end() <= mark {
+   160	            return Ok(Delivery::Duplicate);
+   161	        }
+   162	
+   163	        if !self.prerequisites_present(&batch) {
+   164	            self.held.push(batch);
+   165	            return Ok(Delivery::Held);
+   166	        }
+   167	
+   168	        self.accept(batch);
+   169	        self.promote_held();
+   170	        Ok(Delivery::Accepted)
+   171	    }
+   172	
+   173	    fn accept(&mut self, batch: Batch) {
+   174	        self.ids.insert(batch.batch_id);
+   175	        let end = batch.range_end();
+   176	        let mark = self.watermark.entry(batch.actor_id).or_insert(0);
+   177	        *mark = (*mark).max(end);
+   178	        self.accepted.push(batch);
+   179	    }
+   180	
+   181	    /// Re-checks held batches after an acceptance, repeatedly, because
+   182	    /// promoting one can satisfy another's prerequisites.
+   183	    fn promote_held(&mut self) {
+   184	        loop {
+   185	            let Some(i) = self.held.iter().position(|b| self.prerequisites_present(b)) else {
+   186	                return;
+   187	            };
+   188	            let batch = self.held.remove(i);
+   189	            // A batch can become a duplicate while held, if the same range
+   190	            // arrived by another route.
+   191	            let mark = self.watermark.get(&batch.actor_id).copied().unwrap_or(0);
+   192	            if batch.range_end() > mark {
+   193	                self.accept(batch);
+   194	            }
+   195	        }
+   196	    }
+   197	
+   198	    /// F3: a batch whose frontier points at batches not yet present is held.
+   199	    ///
+   200	    /// Because B3 makes each actor's ranges contiguous from 1, "every batch
+   201	    /// its frontier points to is present" reduces to "the watermark for each
+   202	    /// frontier actor is at least the counter the frontier names" — the
+   203	    /// contiguity is what makes the watermark a complete answer rather than a
+   204	    /// high-water mark with holes under it.
+   205	    ///
+   206	    /// A batch's own actor is exempt for its own prior counters: those are
+   207	    /// checked by the gap rule in [`Self::check_framing`], which reports a
+   208	    /// missing predecessor as the framing anomaly it is rather than holding
+   209	    /// forever.
+   210	    fn prerequisites_present(&self, batch: &Batch) -> bool {
+   211	        let observed = batch
+   212	            .frontier
+   213	            .iter()
+   214	            .all(|(&actor, &counter)| self.watermark.get(&actor).copied().unwrap_or(0) >= counter);
+   215	        // B3 also makes an actor's OWN prior counters a prerequisite: a batch
+   216	        // at counterBase n needs 1..n-1 of that actor present, or the
+   217	        // watermark would advance over a hole.
+   218	        let mark = self.watermark.get(&batch.actor_id).copied().unwrap_or(0);
+   219	        observed && batch.counter_base <= mark + 1
+   220	    }
+   221	
+   222	    fn check_framing(&self, batch: &Batch) -> Result<(), LogError> {
+   223	        if batch.operations.is_empty() {
+   224	            return Err(LogError::EmptyBatch {
+   225	                batch_id: batch.batch_id,
+   226	            });
+   227	        }
+   228	        if batch.counter_base < 1 {
+   229	            return Err(LogError::CounterBaseBelowOne {
+   230	                batch_id: batch.batch_id,
+   231	                counter_base: batch.counter_base,
+   232	            });
+   233	        }
+   234	        if let Some((&actor, _)) = batch.frontier.iter().find(|(_, &c)| c == 0) {
+   235	            return Err(LogError::ZeroFrontierMember {
+   236	                batch_id: batch.batch_id,
+   237	                actor,
+   238	            });
+   239	        }
+   240	
+   241	        // A re-delivery of the SAME batch is a duplicate, not a collision; a
+   242	        // different batch reusing an accepted id is a framing anomaly.
+   243	        if self.ids.contains(&batch.batch_id)
+   244	            && !self
+   245	                .accepted
+   246	                .iter()
+   247	                .any(|b| b.batch_id == batch.batch_id && b == batch)
+   248	        {
+   249	            return Err(LogError::DuplicateBatchId {
+   250	                batch_id: batch.batch_id,
+   251	            });
+   252	        }
+   253	
+   254	        // Duplicate reserved ranges and overlapping ranges are the same
+   255	        // §7.6 anomaly seen from two angles, and both are decided against the
+   256	        // ACCEPTED batches rather than against the watermark. A watermark test
+   257	        // alone cannot tell a re-delivery of a batch from a DIFFERENT batch
+   258	        // claiming the same counters: both sit at or below the mark, and only
+   259	        // the second is malformed.
+   260	        let (from, to) = batch.counter_range();
+   261	        for other in &self.accepted {
+   262	            if other.actor_id != batch.actor_id || other.batch_id == batch.batch_id {
+   263	                continue;
+   264	            }
+   265	            let (o_from, o_to) = other.counter_range();
+   266	            if from <= o_to && o_from <= to {
+   267	                return Err(LogError::OverlappingRange {
+   268	                    batch_id: batch.batch_id,
+   269	                    actor: batch.actor_id,
+   270	                    from,
+   271	                    to,
+   272	                });
+   273	            }
+   274	        }
+   275	        Ok(())
+   276	    }
+   277	
+   278	    /// B3's no-gap rule, checked over the log as a whole.
+   279	    ///
+   280	    /// This is NOT part of [`Self::deliver`], and the distinction is the point.
+   281	    /// A batch that starts after a gap in its own actor's stream may simply
+   282	    /// have overtaken its predecessor in transit — F3 says batches may arrive
+   283	    /// in any order — so delivery HOLDS it rather than rejecting it. The gap
+   284	    /// is a framing anomaly only once the log is final: a retained log with a
+   285	    /// permanent hole in an actor's stream is malformed under §4.3 row 4,
+   286	    /// because the watermark stops being a complete answer to what has been
+   287	    /// seen.
+   288	    ///
+   289	    /// Call this when reading a package, not when receiving a batch.
+   290	    pub fn validate_retained(&self) -> Result<(), LogError> {
+   291	        let mut ends: HashMap<Uuid, Vec<(u64, u64, Uuid)>> = HashMap::new();
+   292	        for b in &self.accepted {
+   293	            let (from, to) = b.counter_range();
+   294	            ends.entry(b.actor_id)
+   295	                .or_default()
+   296	                .push((from, to, b.batch_id));
+   297	        }
+   298	        for (actor, mut ranges) in ends {
+   299	            ranges.sort();
+   300	            // A baseline-seeded log starts above 1 for the actors its snapshot
+   301	            // covers: those counters were compacted, not lost.
+   302	            let mut expected = ranges
+   303	                .first()
+   304	                .map(|&(from, _, _)| from.min(self.baseline.get(&actor).copied().unwrap_or(1) + 1))
+   305	                .unwrap_or(1);
+   306	            for (from, to, batch_id) in ranges {
+   307	                if from != expected {
+   308	                    return Err(LogError::CounterGap {
+   309	                        batch_id,
+   310	                        actor,
+   311	                        from,
+   312	                        expected: expected.saturating_sub(1),
+   313	                    });
+   314	                }
+   315	                expected = to + 1;
+   316	            }
+   317	        }
+   318	        if let Some(b) = self.held.first() {
+   319	            return Err(LogError::CounterGap {
+   320	                batch_id: b.batch_id,
+   321	                actor: b.actor_id,
+   322	                from: b.counter_base,
+   323	                expected: self.watermark.get(&b.actor_id).copied().unwrap_or(0),
+   324	            });
+   325	        }
+   326	        Ok(())
+   327	    }
+   328	
+   329	    /// The accepted batches in CANONICAL ORDER: ascending by ordering position
+   330	    /// `P = (causalPastSize, counterBase, actorId)` (F3).
+   331	    ///
+   332	    /// P is unique per batch because B3 makes `(counterBase, actorId)` unique,
+   333	    /// so exactly one canonical order exists. A batch's causal past strictly
+   334	    /// contains the past of every batch it observes, so `causalPastSize`
+   335	    /// strictly increases along causality and this sort is always a linear
+   155	        .map(|l| l.id)
+   156	        .chain(document.walls.iter().map(|w| w.id))
+   157	        .chain(document.openings.iter().map(|o| o.id))
+   158	        .chain(document.joins.iter().map(|j| j.id))
+   159	        .collect()
+   160	}
+   161	
+   162	/// Applies one batch atomically, or discards it as stale (B1, I5).
+   163	///
+   164	/// The batch is classified against a SCRATCH copy so a discard leaves no trace:
+   165	/// atomicity forbids partial application, and "check everything first" is not
+   166	/// enough on its own because an operation may legitimately depend on an
+   167	/// earlier operation of the same batch (B4).
+   168	fn apply_batch(p: &mut Projection, batch: &Batch) {
+   169	    let mut document = p.document.clone();
+   170	    let mut intervals = p.intervals.clone();
+   171	
+   172	    for (index, op) in batch.operations.iter().enumerate() {
+   173	        let at = batch.write_position(index);
+   174	        let state = classify(&intervals, op.entity_id, at);
+   175	
+   176	        let stale = match &op.kind {
+   177	            // A create ESTABLISHES existence at its own position: it is never
+   178	            // stale for want of its own target. It is refused only against a
+   179	            // tombstone it is not authorized to restore.
+   180	            OperationKind::CreateEntity { .. } => {
+   181	                state == TargetState::AfterDeletion && !authorized_restore(&intervals, op, batch)
+   182	            }
+   183	            // A delete against a live target closes the interval; against an
+   184	            // absent or already-tombstoned target it is stale on the same
+   185	            // terms as branch 1 or branch 3.
+   186	            OperationKind::DeleteEntity => state != TargetState::Live,
+   187	            // The interval test governs operations REQUIRING a pre-existing
+   188	            // target, classified at that operation's own write position.
+   189	            OperationKind::SetFields { .. } => state != TargetState::Live,
+   190	        };
+   191	
+   192	        if stale {
+   193	            p.discarded.push(Discard {
+   194	                batch_id: batch.batch_id,
+   195	                operation_id: op.operation_id,
+   196	                entity_id: op.entity_id,
+   197	                reason: state,
+   198	            });
+   199	            // If ANY operation is stale the WHOLE batch is discarded,
+   200	            // including operations whose own targets were live (B1).
+   201	            return;
+   202	        }
+   203	
+   204	        apply_operation(&mut document, &mut intervals, op, at, batch.actor_id);
+   205	    }
+   206	
+   207	    p.document = document;
+   208	    p.intervals = intervals;
+   209	}
+   210	
+   211	/// I5's three-branch classification, evaluated at `at` rather than "now".
+   212	fn classify(intervals: &HashMap<Uuid, LiveInterval>, id: Uuid, at: WritePosition) -> TargetState {
+   213	    let Some(interval) = intervals.get(&id) else {
+   214	        return TargetState::BeforeCreation;
+   215	    };
+   216	    if interval.created_at >= at {
+   217	        return TargetState::BeforeCreation;
+   218	    }
+   219	    match interval.deleted_at {
+   220	        Some(d) if d < at => TargetState::AfterDeletion,
+   221	        _ => TargetState::Live,
+   222	    }
+   223	}
+   224	
+   225	/// E6's sole reuse exception: authorized restoration of a tombstoned identity
+   226	/// by the same device's own undo (BEHAVIOR-SPEC R8.1.3).
+   227	///
+   228	/// Authorization is read from PROVENANCE rather than from a flag on the
+   229	/// operation: the restoring create is authorized exactly when the tombstone it
+   230	/// would reopen was written by the same actor. "Tombstones created by sync
+   231	/// merge are never resurrected" is then automatic, because a merged tombstone
+   232	/// carries another actor's id.
+   233	///
+   234	/// The limit of this reading, stated because it is a real one: within a single
+   235	/// actor stream it also permits a create of a tombstoned id that is NOT a
+   236	/// redo. Nothing downstream of the log can tell the two apart. §4.2 O4 puts
+   237	/// that check on the AUTHORING replica at command time, and
+   238	/// [`crate::session::Session`] is where it lives here — it mints a restoring
+   239	/// create only from its own redo stack.
+   240	fn authorized_restore(
+   241	    intervals: &HashMap<Uuid, LiveInterval>,
+   242	    op: &Operation,
+   243	    batch: &Batch,
+   244	) -> bool {
+   245	    intervals
+   246	        .get(&op.entity_id)
+   247	        .and_then(|i| i.deleted_by)
+   248	        .is_some_and(|by| by == batch.actor_id)
+   249	}
+   250	
+   251	fn apply_operation(
+   252	    document: &mut Document,
+   253	    intervals: &mut HashMap<Uuid, LiveInterval>,
+   254	    op: &Operation,
+   255	    at: WritePosition,
+   256	    actor: Uuid,
+   257	) {
+   258	    match &op.kind {
+   259	        OperationKind::CreateEntity { entity } => {
+   260	            document.insert_entity(entity.clone());
+   261	            intervals.insert(
+   262	                op.entity_id,
+   263	                LiveInterval {
+   264	                    created_at: at,
+   265	                    deleted_at: None,
+   266	                    deleted_by: None,
+   267	                },
+   268	            );
+   269	        }
+   270	        OperationKind::SetFields { fields } => {
+   271	            if let Some(current) = document.entity(op.entity_id) {
+   272	                if let Some(updated) = merge_fields(&current, fields) {
+   273	                    document.insert_entity(updated);
+   274	                }
+   275	            }
+   276	        }
+   277	        OperationKind::DeleteEntity => {
+   278	            document.remove_entity(op.entity_id);
+   279	            if let Some(interval) = intervals.get_mut(&op.entity_id) {
+   280	                interval.deleted_at = Some(at);
+   281	                interval.deleted_by = Some(actor);
+   282	            }
+   283	        }
+   284	    }
+   285	}
+   286	
+   287	/// Applies a `setFields` payload to an entity.
+   288	///
+   289	/// O3: fields are addressed by SERIALIZED NAME at top level, and set- or
+   290	/// array-valued fields are replaced WHOLESALE. Going through JSON is what
+   291	/// makes that literally true rather than approximately true — the payload
+   292	/// names the same strings the format writes, and no field is merged
+   293	/// element-wise because none is descended into.
+   294	///
+   295	/// Returns `None` when the result would not deserialize, which means the
+   296	/// payload named a field with an incompatible value. The operation then has no
+   297	/// effect; commit-time validation (O4) is what should have caught it, and
+   298	/// [`crate::session::Session`] runs it.
+   299	fn merge_fields(entity: &Entity, fields: &serde_json::Map<String, Value>) -> Option<Entity> {
+   300	    let mut value = serde_json::to_value(entity).ok()?;
+   301	    let object = value.as_object_mut()?;
+   302	    for (name, new) in fields {
+   303	        // `null` clears an optional field to absent (§4.2 O2). Every other
+   304	        // value replaces wholesale.
+   305	        if new.is_null() {
+   306	            object.remove(name);
+   307	        } else {
+   308	            object.insert(name.clone(), new.clone());
+   309	        }
+   310	    }
+   311	    serde_json::from_value(value).ok()
+   312	}
+   313	
+   314	/// The `setFields` payload that would restore `entity`'s current values for
+   315	/// the field names `fields` names.
+   316	///
+   317	/// This is how an undo of a field edit is built: capture the prior values of
+   318	/// exactly the fields the forward operation touched. A field the forward
+   319	/// operation ADDED (absent before) is restored by `null`, which §4.2 O2
+   320	/// defines as clearing to absent.
+   321	pub fn prior_values(
+   322	    entity: &Entity,
+   323	    fields: &serde_json::Map<String, Value>,
+   324	) -> serde_json::Map<String, Value> {
+   325	    let before = serde_json::to_value(entity).unwrap_or(Value::Null);
+   326	    let mut out = serde_json::Map::new();
+   327	    for name in fields.keys() {
+   328	        let prior = before.get(name).cloned().unwrap_or(Value::Null);
+   329	        out.insert(name.clone(), prior);
+   330	    }
+   170	    ///
+   171	    /// R8.2.1: exactly one undo entry per accepted operation batch. R8.4.1:
+   172	    /// an accepted local command outside redo execution clears the redo stack.
+   173	    ///
+   174	    /// The document is validated BEFORE the batch enters the log. A command
+   175	    /// that would produce an invalid document is rejected atomically with zero
+   176	    /// effects and no undo entry (R8.2.2, FORMAT-SPEC §4.3 row 1) — the log
+   177	    /// must never contain a batch whose projection is invalid, because replay
+   178	    /// has no way to decline it later.
+   179	    pub fn commit(&mut self, operations: Vec<Operation>) -> Result<Uuid, CommandError> {
+   180	        let inverse = invert_against(&self.projection.document, &operations)?;
+   181	        let id = self.apply_local(operations.clone())?;
+   182	        self.push_undo(StackEntry {
+   183	            forward: operations,
+   184	            inverse,
+   185	        });
+   186	        self.redo.clear();
+   187	        Ok(id)
+   188	    }
+   189	
+   190	    /// Undoes the most recent command, appending a compensating batch.
+   191	    ///
+   192	    /// Returns the compensating batch's id, or `None` when the undo stack is
+   193	    /// empty. R8.4.1: compensation batches generated by executed undos do NOT
+   194	    /// clear redo.
+   195	    pub fn undo(&mut self) -> Result<Option<Uuid>, CommandError> {
+   196	        let Some(entry) = self.undo.pop_back() else {
+   197	            return Ok(None);
+   198	        };
+   199	        let ops = StackEntry::refreshed(&entry.inverse);
+   200	        match self.apply_local(ops) {
+   201	            Ok(id) => {
+   202	                self.push_redo(entry);
+   203	                Ok(Some(id))
+   204	            }
+   205	            Err(e) => {
+   206	                // Restore the entry: a failed undo must leave the stacks as
+   207	                // they were, exactly like a rejected command (R8.2.2).
+   208	                self.undo.push_back(entry);
+   209	                Err(e)
+   210	            }
+   211	        }
+   212	    }
+   213	
+   214	    /// Redoes the most recently undone command.
+   215	    ///
+   216	    /// R8.1.3: this restores the SAME entity ids the undone command created,
+   217	    /// including reopening a tombstone written by this session's own undo.
+   218	    /// That authorization is exactly what [`crate::replay`] checks by
+   219	    /// provenance, and this is the only place that mints such a create.
+   220	    pub fn redo(&mut self) -> Result<Option<Uuid>, CommandError> {
+   221	        let Some(entry) = self.redo.pop_back() else {
+   222	            return Ok(None);
+   223	        };
+   224	        let ops = StackEntry::refreshed(&entry.forward);
+   225	        match self.apply_local(ops) {
+   226	            Ok(id) => {
+   227	                self.push_undo(entry);
+   228	                Ok(Some(id))
+   229	            }
+   230	            Err(e) => {
+   231	                self.redo.push_back(entry);
+   232	                Err(e)
+   233	            }
+   234	        }
+   235	    }
+   236	
+   237	    /// Accepts an external or replayed batch: sync-delivered, recovery-restored
+   238	    /// or CLI-applied.
+   239	    ///
+   240	    /// R8.3.1: an accepted external batch clears BOTH stacks, so local undo
+   241	    /// never crosses one. R8.3.2: it never enters them. R8.3.3: it makes the
+   242	    /// document dirty relative to the saved target.
+   243	    pub fn accept_external(&mut self, batch: Batch) -> Result<Delivery, CommandError> {
+   244	        let delivery = self.log.deliver(batch)?;
+   245	        self.reproject();
+   246	        if delivery == Delivery::Accepted {
+   247	            self.undo.clear();
+   248	            self.redo.clear();
+   249	            self.dirty = true;
+   250	        }
+   251	        Ok(delivery)
+   252	    }
+   253	
+   254	    /// Opens a session over a stored snapshot and the batches after it.
+   255	    ///
+   256	    /// This is [`Self::open_with`] for a package that has been compacted: the
+   257	    /// baseline is the snapshot's projection and `frontier` is what it covers
+   258	    /// (FORMAT-SPEC §5.1 S2). Like `open_with`, the batches are part of the
+   259	    /// open — they never fire the R8.3.1 fence and leave the document clean.
+   260	    pub fn open_snapshot(
+   261	        actor: Uuid,
+   262	        baseline: Document,
+   263	        frontier: &std::collections::BTreeMap<Uuid, u64>,
+   264	        batches: Vec<Batch>,
+   265	    ) -> Result<Self, CommandError> {
+   266	        let mut s = Self::with_actor(actor);
+   267	        s.log = OperationLog::with_baseline_frontier(frontier)?;
+   268	        s.baseline = baseline;
+   269	        s.open_with(batches)?;
+   270	        Ok(s)
+   271	    }
+   272	
+   273	    /// The snapshot this session replays on top of.
+   274	    pub fn baseline(&self) -> &Document {
+   275	        &self.baseline
+   276	    }
+   277	
+   278	    /// Replays batches while CONSTRUCTING this session's projection.
+   279	    ///
+   280	    /// R8.4.2: batches replayed while constructing an open are part of that
+   281	    /// open. They establish the baseline, never fire the R8.3.1 fence, and
+   282	    /// leave the document NOT dirty relative to the opened source. This is a
+   283	    /// different operation from [`Self::accept_external`] for exactly that
+   284	    /// reason, and conflating the two is how a freshly opened document reports
+   285	    /// unsaved changes it does not have.
+   286	    pub fn open_with(&mut self, batches: Vec<Batch>) -> Result<(), CommandError> {
+   287	        for batch in batches {
+   288	            self.log.deliver(batch)?;
+   289	        }
+   290	        self.reproject();
+   291	        self.undo.clear();
+   292	        self.redo.clear();
+   293	        self.dirty = false;
+   294	        Ok(())
+   295	    }
+   296	
+   297	    /// The projection as it stood BEFORE `batch` was applied.
+   298	    ///
+   299	    /// Replays every other accepted batch. That is the honest way to answer
+   300	    /// the question — the canonical order is a function of the delivered set,
+   301	    /// so removing one batch and replaying is exactly the state that set
+   302	    /// produced without it.
+   303	    pub fn projection_without(&self, batch: &Batch) -> Projection {
+   304	        let mut log = OperationLog::with_baseline_frontier(&self.log.baseline_frontier_seed())
+   305	            .unwrap_or_default();
+   306	        for other in self.log.batches() {
+   307	            if other.batch_id == batch.batch_id {
+   308	                continue;
+   309	            }
+   310	            let _ = log.deliver(other.clone());
+   311	        }
+   312	        project_from(&self.baseline, &log)
+   313	    }
+   314	
+   315	    /// The inverse of `batch`, built against the state it was applied to.
+   316	    ///
+   317	    /// Exposed so a front end that does NOT hold a session across commands —
+   318	    /// a CLI process, for instance — can still compensate a batch. Inverting
+   319	    /// against the CURRENT projection would fail for a batch that deleted
+   320	    /// something, because the entity whose fields the inverse must restore is
+   321	    /// no longer there to read them from.
+   322	    pub fn invert_batch(&self, batch: &Batch) -> Result<Vec<Operation>, CommandError> {
+   323	        let prior = self.projection_without(batch);
+   324	        invert_against(&prior.document, &batch.operations)
+   325	    }
+   326	
+   327	    /// Builds and delivers a batch of local operations, then reprojects.
+   328	    fn apply_local(&mut self, operations: Vec<Operation>) -> Result<Uuid, CommandError> {
+   329	        let candidate = self.would_be(&operations);
+   330	        let errors = candidate.validate();
+   331	        if !errors.is_empty() {
+   332	            return Err(CommandError::Invalid(errors));
+   333	        }
+   334	
+   335	        let batch = Batch::new(
+   336	            self.actor,
+   337	            self.log.next_counter(self.actor),
+   338	            self.log.frontier(),
+   339	            operations,
+   340	        );
+   341	        let id = batch.batch_id;
+   342	        let discarded_before = self.projection.discarded.len();
+   343	
+   344	        match self.log.deliver(batch)? {
+   345	            Delivery::Accepted => {}
+   346	            Delivery::Duplicate => return Err(CommandError::NotApplied("already applied")),
+   347	            Delivery::Held => return Err(CommandError::NotApplied("causal prerequisites missing")),
+   348	        }
+   349	        self.reproject();
+   350	
+   351	        if self.projection.discarded.len() > discarded_before {
+   352	            // A locally authored batch that replay discards is an internal
+   353	            // inconsistency, not a user error: O4 validation should have
+   354	            // caught the cause at command time. Surfacing it is better than
+   355	            // reporting success for a batch that produced no state.
+   356	            self.diagnostics.push(format!(
+   357	                "locally authored batch {id} was discarded as stale"
+   358	            ));
+   359	            return Err(CommandError::NotApplied(
+   360	                "discarded as stale at its position",
+   361	            ));
+   362	        }
+   363	
+   364	        self.dirty = true;
+   365	        Ok(id)
+   366	    }
+   367	
+   368	    /// The document that would result from applying `operations` now.
+   369	    ///
+   370	    /// Built by projecting a scratch log rather than by mutating the live one,
+   371	    /// so a rejected command leaves no trace anywhere.
+   372	    fn would_be(&self, operations: &[Operation]) -> Document {
+   373	        let mut scratch = self.log.clone();
+   374	        let batch = Batch::new(
+   375	            self.actor,
+   376	            scratch.next_counter(self.actor),
+   377	            scratch.frontier(),
+   378	            operations.to_vec(),
+   379	        );
+   380	        if scratch.deliver(batch).is_err() {
+   381	            return self.projection.document.clone();
+   382	        }
+   383	        project_from(&self.baseline, &scratch).document
+   384	    }
+   385	}
+   386	
+   387	/// Builds the inverse of `operations` against the document they applied to.
+   388	///
+   389	/// R3.1.5/R8.1.1: inverse effects along reverse dependency edges. The inverses
+   390	/// are emitted in reverse order, so undoing a batch that creates A then B
+   391	/// deletes B then A.
+   392	fn invert_against(
+   393	    prior: &Document,
+   394	    operations: &[Operation],
+   395	) -> Result<Vec<Operation>, CommandError> {
+   396	    {
+   397	        let mut out = Vec::with_capacity(operations.len());
+   398	        // Track what the batch itself creates, so inverting a batch that
+   399	        // creates an entity and then edits it does not look for the entity's
+   400	        // prior state in a projection that has never seen it.
+   401	        let mut created_here: Vec<Uuid> = Vec::new();
+   402	
+   403	        for op in operations {
+   404	            match &op.kind {
+   405	                OperationKind::CreateEntity { entity } => {
+   406	                    created_here.push(entity.id());
+   407	                    out.push(Operation::delete(entity.id()));
+   408	                }
+   409	                OperationKind::SetFields { fields } => {
+   410	                    match prior.entity(op.entity_id) {
+   411	                        Some(current) => out.push(Operation::set_fields(
+   412	                            op.entity_id,
+   413	                            prior_values(&current, fields),
+   414	                        )),
+   415	                        None if created_here.contains(&op.entity_id) => {
+   416	                            // The delete already queued for the create undoes
+   417	                            // this edit too; a second inverse would be a write
+   418	                            // to a deleted entity.
+   419	                        }
+   420	                        None => {
+   421	                            return Err(CommandError::NotApplied(
+   422	                                "cannot invert an edit to an entity that is not present",
+   423	                            ))
+   424	                        }
+   425	                    }
+   426	                }
+   427	                OperationKind::DeleteEntity => match prior.entity(op.entity_id) {
+   428	                    Some(current) => out.push(Operation::create(current)),
+   429	                    None => {
+   430	                        return Err(CommandError::NotApplied(
+   431	                            "cannot invert a delete of an entity that is not present",
+   432	                        ))
+   433	                    }
+   434	                },
+   435	            }
+   436	        }
+   437	        out.reverse();
+   438	        Ok(out)
+   439	    }
+   440	}
+   441	
+   442	impl Session {
+   443	    fn reproject(&mut self) {
+   444	        self.projection = project_from(&self.baseline, &self.log);
+   445	    }
+   446	
+   447	    /// R8.4.4: exceeding capacity drops the OLDEST entry of THAT stack and
+   448	    /// never blocks or corrupts anything.
+   449	    fn push_undo(&mut self, entry: StackEntry) {
+   450	        self.undo.push_back(entry);
+   451	        while self.undo.len() > self.undo_capacity {
+   452	            self.undo.pop_front();
+   453	            self.diagnostics
+   454	                .push("undo stack full: oldest entry dropped".to_owned());
+   455	        }
+   456	    }
+   457	
+   458	    fn push_redo(&mut self, entry: StackEntry) {
+   459	        self.redo.push_back(entry);
+   460	        while self.redo.len() > self.redo_capacity {
+   461	            self.redo.pop_front();
+   462	            self.diagnostics
+   463	                .push("redo stack full: oldest entry dropped".to_owned());
+   464	        }
+   465	    }
+   466	}
+   467	
+   468	impl Default for Session {
+   469	    fn default() -> Self {
+   470	        Self::new()
+
+exec
+/opt/homebrew/bin/bash -lc "nl -ba crates/domowik-document/src/log.rs | sed -n '329,348p'; nl -ba crates/domowik-document/src/session.rs | sed -n '40,75p'" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+   329	    /// The accepted batches in CANONICAL ORDER: ascending by ordering position
+   330	    /// `P = (causalPastSize, counterBase, actorId)` (F3).
+   331	    ///
+   332	    /// P is unique per batch because B3 makes `(counterBase, actorId)` unique,
+   333	    /// so exactly one canonical order exists. A batch's causal past strictly
+   334	    /// contains the past of every batch it observes, so `causalPastSize`
+   335	    /// strictly increases along causality and this sort is always a linear
+   336	    /// extension of it.
+   337	    pub fn canonical_order(&self) -> Vec<&Batch> {
+   338	        let mut out: Vec<&Batch> = self.accepted.iter().collect();
+   339	        out.sort_by_key(|b| b.position());
+   340	        out
+   341	    }
+   342	}
+   343	
+   344	#[cfg(test)]
+   345	mod tests {
+   346	    use super::*;
+   347	    use crate::operation::Operation;
+   348	    use domowik_format::{Entity, Level};
+    40	
+    41	/// One entry on the undo or redo stack.
+    42	///
+    43	/// Holds both directions, because R8.1.2 forbids reusing the original batch:
+    44	/// undo emits `inverse` under fresh identities and redo emits `forward` under
+    45	/// fresh identities, and the entry moves between the stacks unchanged.
+    46	#[derive(Debug, Clone)]
+    47	struct StackEntry {
+    48	    forward: Vec<Operation>,
+    49	    inverse: Vec<Operation>,
+    50	}
+    51	
+    52	impl StackEntry {
+    53	    /// A copy with freshly minted operation ids, preserving ENTITY ids.
+    54	    ///
+    55	    /// R8.1.2 and R8.1.3 together: operation identity is always new, entity
+    56	    /// identity is deliberately reused.
+    57	    fn refreshed(ops: &[Operation]) -> Vec<Operation> {
+    58	        ops.iter()
+    59	            .map(|op| Operation {
+    60	                operation_id: Uuid::now_v7(),
+    61	                entity_id: op.entity_id,
+    62	                kind: op.kind.clone(),
+    63	            })
+    64	            .collect()
+    65	    }
+    66	}
+    67	
+    68	/// Default capacities. R8.4.4 makes the EXISTENCE of a bound normative and the
+    69	/// values implementation policy; these are ours, and they are independent.
+    70	pub const DEFAULT_UNDO_CAPACITY: usize = 200;
+    71	pub const DEFAULT_REDO_CAPACITY: usize = 200;
+    72	
+    73	/// An open document on one device.
+    74	///
+    75	/// Owns the durable log, the current projection, and the session-local undo
+
+codex
+## Findings
+
+Notation: `B(id, actor, base, frontier, operations)`. Each operation reserves one counter. All omitted operation IDs are distinct.
+
+### 1. Held batches bypass duplicate-ID and overlapping-range validation
+
+`check_framing` compares only against `accepted`; held IDs and ranges are not indexed. `promote_held` removes a batch and calls `accept` without re-running framing ([log.rs:183](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:183), [log.rs:241](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:241)).
+
+Concrete duplicate-ID case:
+
+```text
+H1 = B(Q, A, 1, {X:1}, [create Level E1])
+H2 = B(Q, A, 2, {X:1, A:1}, [create Level E2])
+G  = B(G, X, 1, {},    [create Level EG])
+
+deliver(H1) -> Held
+deliver(H2) -> Held
+deliver(G)  -> Accepted
+```
+
+Correct: `H2` is rejected for reusing batch ID `Q`.
+
+Actual: `H1` and `H2` are both promoted and accepted. `ids.insert(Q)` in `accept` does not report that `Q` was already present. The accepted log therefore contains two different batches with the same batch ID.
+
+Concrete overlap case:
+
+```text
+H1 = B(Q1, A, 1, {X:1},      [create E1, create E2])  // range 1..=2
+H2 = B(Q2, A, 2, {X:1, A:1}, [create E3, create E4])  // range 2..=3
+G  = B(G,  X, 1, {},          [create EG])
+```
+
+Both held batches are accepted after `G`; counter 2 is reserved twice. Correct: `H2` must be rejected as `OverlappingRange` before replay.
+
+There is also direct arrival-order dependence:
+
+```text
+R = B(R, A, 1, {X:1}, [create Level ER])
+S = B(S, A, 1, {X:1}, [create Level ES])
+```
+
+Delivering `R,S,G` retains `R` and silently drops `S`; delivering `S,R,G` retains `S` and drops `R`. `promote_held` mistakes the loser for an I2 duplicate solely because its range is now below the watermark ([log.rs:189](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:189)). Thus claims 1 and 2 are false for the same delivered set.
+
+### 2. A range straddling the baseline watermark is accepted and replayed
+
+Concrete case:
+
+```text
+baseline frontier = {A:5}
+B = B(B, A, 4, {}, [op4, op5, op6])  // range 4..=6
+```
+
+Correct: reject the whole batch. Counters 4 and 5 are already covered by the snapshot; a batch cannot be split around the watermark.
+
+Actual:
+
+- No accepted batch records baseline ranges, so `check_framing` finds no overlap.
+- `range_end = 6 > watermark 5`, so it is not classified as an I2 duplicate.
+- `counter_base 4 <= watermark + 1`, so prerequisites pass.
+- The whole batch is accepted and all three operations are replayed atop the snapshot.
+
+The fault is the gap between the whole-range I2 check and accepted-only overlap check ([log.rs:157](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:157), [log.rs:254](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:254)).
+
+### 3. Frontier regression reverses one actor’s own causal order
+
+Concrete batches:
+
+```text
+Y1 = B(Y1, Y, 1, {},      [create EY1, create EY2])   // range 1..=2
+A1 = B(A1, A, 1, {Y:2},   [create Level E name="old"])
+A2 = B(A2, A, 2, {A:1},   [setFields E {"name":"new"}])
+```
+
+Deliver `Y1`, `A1`, `A2`. All are accepted.
+
+The positions have causal-past sizes 0, 2, and 1 respectively, so sorting by `(causalPastSize, counterBase, actorId)` places `A2` before `A1`. Replay consequently classifies the set as `BeforeCreation`, discards `A2`, and leaves `E.name == "old"`.
+
+Correct: actor counter 2 is causally after actor counter 1, so `A1` must precede `A2` and the result must be `"new"`. Alternatively, `A2` must be rejected for omitting the inherited `{Y:2}` causal past.
+
+`prerequisites_present` establishes only that named frontier counters and the actor’s previous counters exist; it does not establish causal closure or frontier monotonicity ([log.rs:210](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:210)). Therefore the assertion underlying `canonical_order` is not enforced ([log.rs:329](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:329)).
+
+### 4. Any same-actor create can resurrect that actor’s tombstone
+
+Concrete ordinary commands—not undo or redo:
+
+```text
+B1 = B(B1, A, 1, {},    [create Level E name="old"])
+B2 = B(B2, A, 2, {A:1}, [delete E])
+B3 = B(B3, A, 3, {A:2}, [create Level E name="unrelated replacement"])
+```
+
+Correct: `B3` is stale and discarded; `E` remains tombstoned because this is an ordinary create, not authorized undo/redo restoration.
+
+Actual: `authorized_restore` tests only `deleted_by == batch.actor_id`, so `B3` reopens `E` ([replay.rs:240](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/replay.rs:240)). `Session::commit` is public and accepts arbitrary create operations, so the claim that only `redo` mints such a create is not enforced.
+
+This is the exact within-one-actor counterexample requested in area (d).
+
+### 5. Invalid and identity-changing `setFields` operations are accepted
+
+After creating `Level E`:
+
+```text
+setFields E {"name": 7}
+```
+
+Correct: reject the command before it enters the log because `name` has the wrong type.
+
+Actual: `merge_fields` cannot deserialize the result and returns `None`; `apply_operation` silently does nothing ([replay.rs:270](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/replay.rs:270)). `would_be` sees the unchanged valid document, so `Session::commit` accepts the batch, marks dirty, and pushes an undo entry.
+
+Similarly:
+
+```text
+setFields E {"type": "not-a-real-entity-type"}
+```
+
+is silently accepted as a no-op rather than rejected.
+
+Identity is worse:
+
+```text
+setFields E {"id": E2}
+```
+
+If the resulting entity deserializes, `merge_fields` returns an entity whose ID is `E2`. `apply_operation` inserts that entity but never removes target `E`; it cannot, because `insert_entity` receives only the updated entity. The document therefore retains `E` and gains/replaces `E2`, while the live interval remains keyed only by `E`. Undo captures `"id": E`, targets `E`, and cannot remove the inserted `E2`.
+
+Correct: `id` and `type` must not be writable as ordinary fields, or the operation must be validated with explicit identity/type invariants before replay.
+
+### 6. `invert_against` mishandles LWW4 create collisions
+
+Start with:
+
+```text
+B1 = [create Level E name="old"]
+B2 = [create Level E name="new"]  // later create collision
+```
+
+Replay correctly makes the last create survive. But `invert_against` turns every create into `delete(E)` without checking whether `E` existed in the prior document ([session.rs:403](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:403)).
+
+Correct undo of `B2`: restore `Level E name="old"`.
+
+Actual undo: deletes `E`, leaving it absent and tombstoned.
+
+A single-batch failure is also concrete:
+
+```text
+B = [create Level E name="old",
+     create Level E name="new"]
+```
+
+Correct inverse: one `delete(E)`.
+
+Actual inverse after reversal: `[delete(E), delete(E)]`. During undo, the second delete is stale, so B1 discards the whole compensating batch. `undo()` returns an error, restores the stack entry, but the discarded compensation batch remains accepted in the durable log.
+
+### 7. A rejected stale local command still mutates durable history
+
+Concrete session sequence:
+
+```text
+Session actor A commits: create Level E
+External actor B observes it and delivers: delete E
+A commits ordinarily: create Level E again
+```
+
+The final create is unauthorized because B wrote the tombstone.
+
+`would_be` does replay the scratch batch and discard it, but returns only the unchanged document ([session.rs:372](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:372)). That document validates. `apply_local` then accepts the real batch into `self.log`, reprojects, notices the increased discard count, and returns `NotApplied` ([session.rs:344](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:344)).
+
+Correct: reject before mutating the real log, with no diagnostic/history/dirty-state change.
+
+Actual: the caller receives an error and no undo entry, but the rejected batch remains in durable history and a diagnostic is appended. This directly contradicts R8.2.2 and the comment that validation occurs before the batch enters the log.
+
+### 8. Promotion of a previously held external batch does not fire the session fence
+
+Concrete sequence:
+
+```text
+Session actor A:
+C1 = B(C1, A, 1, {}, [create Level E1])       // undo depth 1
+
+External:
+H = B(H, B, 1, {A:2}, [create Level EH])
+accept_external(H) -> Held                    // no fence yet
+
+Local:
+C2 = B(C2, A, 2, {A:1}, [create Level E2])
+commit(C2)
+```
+
+Accepting `C2` promotes `H` transitively. `H` is now an accepted external batch and is causally after `C2`.
+
+Correct: H’s acceptance fires R8.3.1 and clears both stacks.
+
+Actual: `OperationLog::deliver(C2)` reports only `Accepted` for the supplied local batch; it does not report promoted batches. Because the call came through `commit`, the external-fence code in `accept_external` never runs. The session finishes with undo entries for both `C1` and `C2`, crossing the accepted external batch ([session.rs:179](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:179), [session.rs:243](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:243)).
+
+## Verification and sound areas
+
+- `promote_held` cannot loop forever: every successful iteration removes one element from the finite held vector. It does, however, improperly drop conflicts and accept malformed promoted batches as described above.
+- B1 document/interval rollback is complete. Both are cloned and assigned back only after every operation succeeds. The only direct mutation on failure is `p.discarded`, which is the intended discard record, not a partial document effect ([replay.rs:168](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/replay.rs:168)).
+- The three-branch I5 classifier itself is sound for a correctly ordered history: it uses each operation’s `write_position(index)`, distinguishes `created_at >= at`, live interval, and `deleted_at < at`, and evaluates later operations against earlier operations in the same scratch batch. Finding 3 breaks the ordering supplied to it; finding 4 breaks restoration authorization.
+- For schema-valid, identity-preserving `setFields`, sequential canonical replay implements per-field LWW correctly: each update starts from the current entity and changes only named top-level fields. Later deletes tombstone the target, and subsequent sets are stale.
+- Fresh undo/redo operation IDs and batch IDs are implemented, and entity IDs are preserved. The two capacity queues are independently bounded and each drops only its own oldest entry.
+- Ordinary `open_with` replay does not fire the external fence and leaves the session clean as claimed. Direct `accept_external(…)=Accepted` clears both stacks. The missing case is an external batch promoted during a later local delivery.
+- Hash iteration does not affect normal canonical document output: frontiers are converted to `BTreeMap`, and projection lookups do not iterate intervals. However, after exploiting finding 1 to create overlapping accepted ranges for two actors, `validate_retained` returns whichever actor its `HashMap` visits first, so the reported `CounterGap` is nondeterministic ([log.rs:290](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:290)).
+
+No files were modified.
+tokens used
+78,828
+## Findings
+
+Notation: `B(id, actor, base, frontier, operations)`. Each operation reserves one counter. All omitted operation IDs are distinct.
+
+### 1. Held batches bypass duplicate-ID and overlapping-range validation
+
+`check_framing` compares only against `accepted`; held IDs and ranges are not indexed. `promote_held` removes a batch and calls `accept` without re-running framing ([log.rs:183](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:183), [log.rs:241](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:241)).
+
+Concrete duplicate-ID case:
+
+```text
+H1 = B(Q, A, 1, {X:1}, [create Level E1])
+H2 = B(Q, A, 2, {X:1, A:1}, [create Level E2])
+G  = B(G, X, 1, {},    [create Level EG])
+
+deliver(H1) -> Held
+deliver(H2) -> Held
+deliver(G)  -> Accepted
+```
+
+Correct: `H2` is rejected for reusing batch ID `Q`.
+
+Actual: `H1` and `H2` are both promoted and accepted. `ids.insert(Q)` in `accept` does not report that `Q` was already present. The accepted log therefore contains two different batches with the same batch ID.
+
+Concrete overlap case:
+
+```text
+H1 = B(Q1, A, 1, {X:1},      [create E1, create E2])  // range 1..=2
+H2 = B(Q2, A, 2, {X:1, A:1}, [create E3, create E4])  // range 2..=3
+G  = B(G,  X, 1, {},          [create EG])
+```
+
+Both held batches are accepted after `G`; counter 2 is reserved twice. Correct: `H2` must be rejected as `OverlappingRange` before replay.
+
+There is also direct arrival-order dependence:
+
+```text
+R = B(R, A, 1, {X:1}, [create Level ER])
+S = B(S, A, 1, {X:1}, [create Level ES])
+```
+
+Delivering `R,S,G` retains `R` and silently drops `S`; delivering `S,R,G` retains `S` and drops `R`. `promote_held` mistakes the loser for an I2 duplicate solely because its range is now below the watermark ([log.rs:189](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:189)). Thus claims 1 and 2 are false for the same delivered set.
+
+### 2. A range straddling the baseline watermark is accepted and replayed
+
+Concrete case:
+
+```text
+baseline frontier = {A:5}
+B = B(B, A, 4, {}, [op4, op5, op6])  // range 4..=6
+```
+
+Correct: reject the whole batch. Counters 4 and 5 are already covered by the snapshot; a batch cannot be split around the watermark.
+
+Actual:
+
+- No accepted batch records baseline ranges, so `check_framing` finds no overlap.
+- `range_end = 6 > watermark 5`, so it is not classified as an I2 duplicate.
+- `counter_base 4 <= watermark + 1`, so prerequisites pass.
+- The whole batch is accepted and all three operations are replayed atop the snapshot.
+
+The fault is the gap between the whole-range I2 check and accepted-only overlap check ([log.rs:157](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:157), [log.rs:254](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:254)).
+
+### 3. Frontier regression reverses one actor’s own causal order
+
+Concrete batches:
+
+```text
+Y1 = B(Y1, Y, 1, {},      [create EY1, create EY2])   // range 1..=2
+A1 = B(A1, A, 1, {Y:2},   [create Level E name="old"])
+A2 = B(A2, A, 2, {A:1},   [setFields E {"name":"new"}])
+```
+
+Deliver `Y1`, `A1`, `A2`. All are accepted.
+
+The positions have causal-past sizes 0, 2, and 1 respectively, so sorting by `(causalPastSize, counterBase, actorId)` places `A2` before `A1`. Replay consequently classifies the set as `BeforeCreation`, discards `A2`, and leaves `E.name == "old"`.
+
+Correct: actor counter 2 is causally after actor counter 1, so `A1` must precede `A2` and the result must be `"new"`. Alternatively, `A2` must be rejected for omitting the inherited `{Y:2}` causal past.
+
+`prerequisites_present` establishes only that named frontier counters and the actor’s previous counters exist; it does not establish causal closure or frontier monotonicity ([log.rs:210](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:210)). Therefore the assertion underlying `canonical_order` is not enforced ([log.rs:329](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:329)).
+
+### 4. Any same-actor create can resurrect that actor’s tombstone
+
+Concrete ordinary commands—not undo or redo:
+
+```text
+B1 = B(B1, A, 1, {},    [create Level E name="old"])
+B2 = B(B2, A, 2, {A:1}, [delete E])
+B3 = B(B3, A, 3, {A:2}, [create Level E name="unrelated replacement"])
+```
+
+Correct: `B3` is stale and discarded; `E` remains tombstoned because this is an ordinary create, not authorized undo/redo restoration.
+
+Actual: `authorized_restore` tests only `deleted_by == batch.actor_id`, so `B3` reopens `E` ([replay.rs:240](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/replay.rs:240)). `Session::commit` is public and accepts arbitrary create operations, so the claim that only `redo` mints such a create is not enforced.
+
+This is the exact within-one-actor counterexample requested in area (d).
+
+### 5. Invalid and identity-changing `setFields` operations are accepted
+
+After creating `Level E`:
+
+```text
+setFields E {"name": 7}
+```
+
+Correct: reject the command before it enters the log because `name` has the wrong type.
+
+Actual: `merge_fields` cannot deserialize the result and returns `None`; `apply_operation` silently does nothing ([replay.rs:270](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/replay.rs:270)). `would_be` sees the unchanged valid document, so `Session::commit` accepts the batch, marks dirty, and pushes an undo entry.
+
+Similarly:
+
+```text
+setFields E {"type": "not-a-real-entity-type"}
+```
+
+is silently accepted as a no-op rather than rejected.
+
+Identity is worse:
+
+```text
+setFields E {"id": E2}
+```
+
+If the resulting entity deserializes, `merge_fields` returns an entity whose ID is `E2`. `apply_operation` inserts that entity but never removes target `E`; it cannot, because `insert_entity` receives only the updated entity. The document therefore retains `E` and gains/replaces `E2`, while the live interval remains keyed only by `E`. Undo captures `"id": E`, targets `E`, and cannot remove the inserted `E2`.
+
+Correct: `id` and `type` must not be writable as ordinary fields, or the operation must be validated with explicit identity/type invariants before replay.
+
+### 6. `invert_against` mishandles LWW4 create collisions
+
+Start with:
+
+```text
+B1 = [create Level E name="old"]
+B2 = [create Level E name="new"]  // later create collision
+```
+
+Replay correctly makes the last create survive. But `invert_against` turns every create into `delete(E)` without checking whether `E` existed in the prior document ([session.rs:403](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:403)).
+
+Correct undo of `B2`: restore `Level E name="old"`.
+
+Actual undo: deletes `E`, leaving it absent and tombstoned.
+
+A single-batch failure is also concrete:
+
+```text
+B = [create Level E name="old",
+     create Level E name="new"]
+```
+
+Correct inverse: one `delete(E)`.
+
+Actual inverse after reversal: `[delete(E), delete(E)]`. During undo, the second delete is stale, so B1 discards the whole compensating batch. `undo()` returns an error, restores the stack entry, but the discarded compensation batch remains accepted in the durable log.
+
+### 7. A rejected stale local command still mutates durable history
+
+Concrete session sequence:
+
+```text
+Session actor A commits: create Level E
+External actor B observes it and delivers: delete E
+A commits ordinarily: create Level E again
+```
+
+The final create is unauthorized because B wrote the tombstone.
+
+`would_be` does replay the scratch batch and discard it, but returns only the unchanged document ([session.rs:372](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:372)). That document validates. `apply_local` then accepts the real batch into `self.log`, reprojects, notices the increased discard count, and returns `NotApplied` ([session.rs:344](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:344)).
+
+Correct: reject before mutating the real log, with no diagnostic/history/dirty-state change.
+
+Actual: the caller receives an error and no undo entry, but the rejected batch remains in durable history and a diagnostic is appended. This directly contradicts R8.2.2 and the comment that validation occurs before the batch enters the log.
+
+### 8. Promotion of a previously held external batch does not fire the session fence
+
+Concrete sequence:
+
+```text
+Session actor A:
+C1 = B(C1, A, 1, {}, [create Level E1])       // undo depth 1
+
+External:
+H = B(H, B, 1, {A:2}, [create Level EH])
+accept_external(H) -> Held                    // no fence yet
+
+Local:
+C2 = B(C2, A, 2, {A:1}, [create Level E2])
+commit(C2)
+```
+
+Accepting `C2` promotes `H` transitively. `H` is now an accepted external batch and is causally after `C2`.
+
+Correct: H’s acceptance fires R8.3.1 and clears both stacks.
+
+Actual: `OperationLog::deliver(C2)` reports only `Accepted` for the supplied local batch; it does not report promoted batches. Because the call came through `commit`, the external-fence code in `accept_external` never runs. The session finishes with undo entries for both `C1` and `C2`, crossing the accepted external batch ([session.rs:179](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:179), [session.rs:243](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/session.rs:243)).
+
+## Verification and sound areas
+
+- `promote_held` cannot loop forever: every successful iteration removes one element from the finite held vector. It does, however, improperly drop conflicts and accept malformed promoted batches as described above.
+- B1 document/interval rollback is complete. Both are cloned and assigned back only after every operation succeeds. The only direct mutation on failure is `p.discarded`, which is the intended discard record, not a partial document effect ([replay.rs:168](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/replay.rs:168)).
+- The three-branch I5 classifier itself is sound for a correctly ordered history: it uses each operation’s `write_position(index)`, distinguishes `created_at >= at`, live interval, and `deleted_at < at`, and evaluates later operations against earlier operations in the same scratch batch. Finding 3 breaks the ordering supplied to it; finding 4 breaks restoration authorization.
+- For schema-valid, identity-preserving `setFields`, sequential canonical replay implements per-field LWW correctly: each update starts from the current entity and changes only named top-level fields. Later deletes tombstone the target, and subsequent sets are stale.
+- Fresh undo/redo operation IDs and batch IDs are implemented, and entity IDs are preserved. The two capacity queues are independently bounded and each drops only its own oldest entry.
+- Ordinary `open_with` replay does not fire the external fence and leaves the session clean as claimed. Direct `accept_external(…)=Accepted` clears both stacks. The missing case is an external batch promoted during a later local delivery.
+- Hash iteration does not affect normal canonical document output: frontiers are converted to `BTreeMap`, and projection lookups do not iterate intervals. However, after exploiting finding 1 to create overlapping accepted ranges for two actors, `validate_retained` returns whichever actor its `HashMap` visits first, so the reported `CounterGap` is nondeterministic ([log.rs:290](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-document/src/log.rs:290)).
+
+No files were modified.

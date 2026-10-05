@@ -1,0 +1,36 @@
+# issues/ was once a standalone nested git repository; since commit 00893a5 it
+# is TRACKED here as regular files. The ignore rule is retained, commented, as
+# the record of that change -- do not re-enable it without moving the tracker.
+#/issues/
+
+# Go
+*.test
+*.out
+
+# Dart/Flutter
+.dart_tool/
+.flutter-plugins*
+build/
+
+# Go build, coverage, and profiling output
+/domowik
+coverage.out
+*.prof
+
+# Native bridge output
+*.so
+*.dylib
+*.dll
+
+# editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Rust
+/target/
+
+# Python (scripts/releaselib.py is imported, not run, so it caches)
+__pycache__/
+*.pyc

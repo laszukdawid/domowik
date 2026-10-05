@@ -1,0 +1,78 @@
+{
+  "manifestSchema": 1,
+  "description": "Declarative distribution manifest for the RUST product (issue 0036). The Go manifest it replaces is frozen at _reference/go/release/manifest.json and describes binaries that no longer exist. Generated documents are never written into this file or into docs/third-party/; they go to releaseOutputDir, which is not committed. Nothing here publishes, tags, uploads or reserves anything.",
+  "sourceDateEpoch": {
+    "policy": "require-env-or-git-commit",
+    "notes": "SOURCE_DATE_EPOCH when set and valid, otherwise the HEAD commit time. The wall clock is never read, because a document that differs every run cannot be diffed, and diffing is the only mechanism that has actually held for docs/RUST-DEPENDENCIES.md and NOTICE."
+  },
+  "sbomDir": "build/release/sbom",
+  "releaseOutputDir": "build/release",
+  "inputs": {
+    "toolchainRecord": "docs/third-party/toolchain-rust.json",
+    "assetsRecord": "docs/third-party/assets.json",
+    "toolsRecord": "docs/third-party/tools.json",
+    "notice": "NOTICE",
+    "dependencyInventory": "docs/RUST-DEPENDENCIES.md"
+  },
+  "embedScanSubtrees": [
+    "crates",
+    "spikes/0024-flutter-rust-bridge"
+  ],
+  "artifacts": [
+    {
+      "id": "domowik-cli",
+      "kind": "rust-binary",
+      "status": "built",
+      "description": "The command-line application. The only artifact Domowik builds today that a user could be given.",
+      "workspaceRoot": ".",
+      "rootPackage": "domowik-cli",
+      "binaryName": "domowik",
+      "binaryLayout": "cargo's own layout under the active target directory: <target-dir>/release/<binaryName> for a host build and <target-dir>/<triple>/release/<binaryName> for a cross build. The target directory is CARGO_TARGET_DIR when set, otherwise target/. It is derived rather than declared because a declared path drifts from cargo's layout silently, and CI and parallel worktrees both move the target directory.",
+      "embedSubtree": "crates/domowik-cli",
+      "targets": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "targetEvidence": ".github/workflows/ci.yml: the cross-build job builds x86_64/aarch64 linux-gnu for real, and the macos-15 job installs both darwin triples. These are the targets a binary is actually produced for, not an aspiration."
+    },
+    {
+      "id": "domowik-gui-macos",
+      "kind": "flutter-bundle",
+      "status": "staged",
+      "description": "The macOS application bundle built from the issue-0024 Flutter app. SPIKE IS NOT THE SAME AS UNSHIPPED for a licence inventory (root, 2026-09-12): this bundle is locally runnable and redistributes a Flutter engine, an AOT-compiled Dart runtime, plugin frameworks and a Material icon font, none of which cargo metadata can see. It is declared so that the obligation is visible and countable, NOT so that it can be claimed as covered.",
+      "workspaceRoot": "spikes/0024-flutter-rust-bridge",
+      "rootPackage": "domowik-bridge-spike",
+      "embedSubtree": "spikes/0024-flutter-rust-bridge",
+      "dartLock": "spikes/0024-flutter-rust-bridge/flutter_app/pubspec.lock",
+      "sdkTool": "flutter-sdk",
+      "bundlePath": "spikes/0024-flutter-rust-bridge/flutter_app/build/macos/Build/Products/Release/domowik_spike_app.app",
+      "bundleScan": {
+        "frameworks": "Contents/Frameworks",
+        "flutterAssets": "Contents/Frameworks/App.framework/Resources/flutter_assets"
+      },
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "coverage": {
+        "implemented": [
+          "rust: the bridge crate's own resolved graph, from its OWN workspace (it is excluded from the root one, so root-workspace metadata does not describe it)",
+          "rust: the standard library, from the pinned toolchain record",
+          "dart: every package resolved in pubspec.lock, classified direct/transitive and sdk/hosted/path"
+        ],
+        "requiresBuiltBundle": [
+          "the Flutter engine framework and its version",
+          "plugin and platform frameworks actually embedded, with their digests",
+          "fonts and other flutter_assets entries shipped in the bundle"
+        ],
+        "notes": "Running without --bundle emits a document explicitly marked incomplete and exits non-zero when --release-grade is asked for. That is a staged gap with a named owner (issue 0024 / platform0024), not a refusal to cover the artifact kind."
+      }
+    }
+  ],
+  "bundledAssetPolicy": {
+    "record": "docs/third-party/assets.json",
+    "notes": "Every file compiled into an artifact by include_bytes!/include_str! must have a row in the assets record. scripts/release-validate.py scans for them and fails closed on an undeclared one. Before this scan nothing checked: the assets record is hand-maintained, so an undeclared embed changed no generated file and failed no stage."
+  }
+}

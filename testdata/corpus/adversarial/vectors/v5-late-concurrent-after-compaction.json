@@ -1,0 +1,44 @@
+{
+ "vector": "V5",
+ "setup": "snapshot covers through frontier {X:100}; its retained winner position for endMm is batch 0000000000000000100-X operation 0, whose referenced frontier {X:99} gives causalPastSize 99; a late batch from Y with causalPastSize 49 arrives",
+ "snapshot": {
+  "frontier": {
+   "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 100
+  },
+  "batchPositions": {
+   "0000000000000000100-01948f5a-ca77-7a09-9e76-5ace11b12fd2": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 99
+   }
+  },
+  "winnerPositions": {
+   "019534c7-0000-7000-8000-000000000002.endMm": {
+    "batch": "0000000000000000100-01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+    "operationIndex": 0
+   }
+  }
+ },
+ "lateBatch": {
+  "batchId": "01948ff0-0000-7000-8000-000000011001",
+  "actorId": "01948f80-0000-7000-8000-00000000bb00",
+  "counterBase": 50,
+  "frontier": {
+   "01948f80-0000-7000-8000-00000000bb00": 49
+  },
+  "operations": [
+   {
+    "operationId": "01948ff1-0000-7000-8000-000000011002",
+    "kind": "setFields",
+    "entityId": "019534c7-0000-7000-8000-000000000002",
+    "fields": {
+     "endMm": [
+      12000,
+      2500
+     ]
+    }
+   }
+  ]
+ },
+ "expectedProjection": {
+  "state": "the late batch's causalPastSize 49 loses to the retained winner position's 99, so the field keeps its snapshot value; operations at/below watermarks are skipped (I2/S3/LWW5); outcome identical to the uncompacted replica"
+ }
+}

@@ -1,0 +1,42 @@
+[package]
+name = "domowik-geometry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+domowik-format = { path = "../domowik-format" }
+uuid = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "predicates"
+harness = false
+
+[[bench]]
+name = "regions"
+harness = false
+
+[[bench]]
+name = "spatial"
+harness = false
+
+[[bench]]
+name = "locality"
+harness = false
+
+[[bench]]
+name = "distance"
+harness = false
+
+[[bench]]
+name = "exact_area"
+harness = false
+
+[[bench]]
+name = "snap"
+harness = false

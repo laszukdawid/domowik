@@ -1,0 +1,3082 @@
+Reading additional input from stdin...
+OpenAI Codex v0.150.1
+--------
+workdir: /Users/dawidlaszuk/projects/personal/domowik
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a05807-26df-7bc2-b754-0f1853bb8c5e
+--------
+user
+You are an adversarial reviewer. WRITE YOUR FINDINGS FIRST, then verify them.
+Your final message is read verbatim as your position: a reply that only
+describes what you intend to do is a failed reply. Do not modify any file.
+
+Read ONLY these three files (do not explore the rest of the repository, you
+will run out of budget before you reach the question):
+
+  crates/domowik-geometry/src/boolean.rs
+  crates/domowik-geometry/src/walls.rs
+  crates/domowik-geometry/src/arrangement.rs
+
+CLAIM UNDER TEST: `boolean::union` correctly computes the union of a set of
+simple polygons, and `walls::rooms` correctly returns the bounded components
+of the complement of the occupied region.
+
+The union works by boundary classification:
+ 1. Every input ring is normalized counter-clockwise (interior on the LEFT of
+    each directed edge).
+ 2. Every ring's edges are split at all intersections with OTHER rings' edges
+    (never against its own).
+ 3. A directed fragment is DROPPED if a reversed twin exists (same two welded
+    vertex keys, opposite direction), or if its midpoint is strictly inside
+    another ring. Same-direction duplicates are deduplicated to one.
+ 4. Surviving directed edges are traced into rings by taking, at each vertex,
+    the first outgoing edge met sweeping CLOCKWISE from the direction back to
+    where we came from (delta normalized into (0, 360]).
+ 5. Positive-area rings are outers, negative-area rings are holes; each hole is
+    assigned to the SMALLEST containing outer.
+
+Find CONCRETE INPUTS that make this produce a wrong answer. I want counter-
+examples, not a taxonomy. For each finding give:
+  - the exact input rings as coordinate lists,
+  - what the correct union/rooms result is,
+  - what this code produces instead, and WHY (name the line or the rule).
+
+Areas I consider most likely to be wrong, but do not limit yourself to them:
+  (a) Three or more rings overlapping the same region at once — does the
+      "midpoint strictly inside another ring" rule survive when the fragment is
+      inside a ring that is ITSELF entirely inside a third?
+  (b) The reversed-twin rule when THREE rings share one edge span.
+  (c) Vertices of degree 4 or more where the clockwise-sweep tie-breaks.
+  (d) A hole that touches its outer ring at a single point.
+  (e) `ring_contains_ring` deciding containment from vertices alone when a
+      hole and an outer share every vertex.
+  (f) Zero-area or sliver rings surviving `canonical_ring`.
+  (g) Determinism: any place where HashMap/HashSet iteration order can change
+      the output.
+
+If you conclude a listed area is actually SOUND, say so explicitly and give the
+argument. A finding you cannot ground in specific coordinates is worth less
+than an honest "I could not break this".
+hook: SessionStart
+hook: SessionStart Completed
+codex
+I’ll restrict inspection and any test harness input to the three named files. I’ll derive concrete candidate failures from the implementation first, then verify each by tracing or running isolated, read-only experiments without changing the repository.
+exec
+/opt/homebrew/bin/bash -lc "sed -n '1,260p' crates/domowik-geometry/src/boolean.rs && sed -n '1,300p' crates/domowik-geometry/src/walls.rs && sed -n '1,360p' crates/domowik-geometry/src/arrangement.rs" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+//! Union of simple polygons by boundary classification.
+//!
+//! # Why a union at all
+//!
+//! BEHAVIOR-SPEC R3.2.1 defines a wall cluster's occupied region as the UNION
+//! of each wall's butt-capped rectangle and each join's patch, and R5.1.1
+//! defines the rooms of a level as the bounded components of the complement of
+//! that region. Both the drawing and the floor area therefore depend on one
+//! operation: unioning overlapping rectangles into a single boundary.
+//!
+//! # How it works
+//!
+//! Every input ring is oriented counter-clockwise, so each directed edge
+//! carries its polygon's interior on its LEFT. Edges are split at every mutual
+//! intersection, after which an edge fragment is either wholly inside another
+//! polygon, wholly outside every other polygon, or exactly coincident with a
+//! fragment of another polygon. Each case has one rule:
+//!
+//! - A fragment with a REVERSED twin has union interior on both sides — the
+//!   two polygons meet back to back — so it is not on the union boundary.
+//! - A fragment strictly inside another polygon is not on the union boundary.
+//! - Anything else is on the boundary; same-direction duplicates keep one copy.
+//!
+//! The surviving directed edges are then traced into rings by always taking
+//! the first outgoing edge encountered when sweeping CLOCKWISE from the edge
+//! we arrived on. That is the `next` rule of a doubly connected edge list for
+//! a face lying to the left of its boundary, and it splits a vertex where two
+//! components touch at a single point into two simple rings rather than one
+//! figure-eight — which is what R5.1.2 requires of pinch points.
+
+use crate::arrangement::classify_point;
+use crate::arrangement::{cut_params, lerp, ring_contains_ring, Containment, VertexKey, WELD_MM};
+use crate::polygon::{canonical_ring, compare_polygons, signed_double_area, Polygon, Winding};
+use domowik_format::Point;
+use std::collections::{HashMap, HashSet};
+
+/// The union of `rings`, as canonical polygons with holes.
+///
+/// Each input is treated as a simple closed ring; winding is normalized, so
+/// callers need not supply a particular direction. Rings that enclose no area
+/// contribute nothing: a degenerate join patch (R3.2.3) is a closed segment
+/// through the join node and is always covered by the cross-section it came
+/// from, so dropping it changes neither the region nor its boundary.
+///
+/// Output is deterministic: components are sorted by the R3.2.4 canonical
+/// ordering, so the same document always renders the same sequence.
+pub fn union(rings: &[Vec<Point>]) -> Vec<Polygon> {
+    let inputs: Vec<Vec<Point>> = rings
+        .iter()
+        .filter_map(|r| canonical_ring(r, Winding::CounterClockwise))
+        .collect();
+    if inputs.is_empty() {
+        return Vec::new();
+    }
+
+    let fragments = split_all(&inputs);
+    let kept = classify_fragments(&inputs, &fragments);
+    let rings = trace_rings(&kept);
+    assemble(rings)
+}
+
+/// A directed edge fragment and the index of the polygon it came from.
+struct Fragment {
+    owner: usize,
+    from: Point,
+    to: Point,
+}
+
+/// Splits every ring edge at every intersection with every other ring's edges.
+///
+/// Edges of the SAME ring are not cut against each other: inputs are simple
+/// rings, so their own edges meet only at shared endpoints, and passing them
+/// through the collinear-overlap test would cut every edge at its own
+/// neighbours for nothing.
+fn split_all(inputs: &[Vec<Point>]) -> Vec<Fragment> {
+    let edges_of: Vec<Vec<(Point, Point)>> = inputs
+        .iter()
+        .map(|ring| {
+            (0..ring.len())
+                .map(|i| (ring[i], ring[(i + 1) % ring.len()]))
+                .collect()
+        })
+        .collect();
+
+    // Rings that cannot touch cannot cut each other. Without this every ring
+    // is tested against every other, which is the whole cost on a plan where
+    // most walls are nowhere near each other.
+    let boxes: Vec<Bounds> = inputs.iter().map(|r| Bounds::of(r)).collect();
+
+    let mut out = Vec::new();
+    for (i, edges) in edges_of.iter().enumerate() {
+        let others: Vec<(Point, Point)> = edges_of
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i && boxes[i].overlaps(&boxes[*j]))
+            .flat_map(|(_, e)| e.iter().copied())
+            .collect();
+
+        for &(a, b) in edges {
+            if VertexKey::of(a) == VertexKey::of(b) {
+                continue;
+            }
+            for w in cut_params(a, b, &others).windows(2) {
+                let (p, q) = (lerp(a, b, w[0]), lerp(a, b, w[1]));
+                if VertexKey::of(p) != VertexKey::of(q) {
+                    out.push(Fragment {
+                        owner: i,
+                        from: p,
+                        to: q,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// An axis-aligned bounding box, used only to reject pairs that cannot
+/// interact before any exact predicate runs.
+#[derive(Debug, Clone, Copy)]
+struct Bounds {
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64,
+}
+
+impl Bounds {
+    fn of(ring: &[Point]) -> Self {
+        let mut b = Self {
+            min_x: f64::INFINITY,
+            min_y: f64::INFINITY,
+            max_x: f64::NEG_INFINITY,
+            max_y: f64::NEG_INFINITY,
+        };
+        for p in ring {
+            b.min_x = b.min_x.min(p.x);
+            b.min_y = b.min_y.min(p.y);
+            b.max_x = b.max_x.max(p.x);
+            b.max_y = b.max_y.max(p.y);
+        }
+        b
+    }
+
+    /// Overlap is tested with a weld-width margin, so two rings that only
+    /// TOUCH — the normal case for a wall meeting a join patch — are never
+    /// rejected by a boundary comparison that rounding could tip either way.
+    fn overlaps(&self, other: &Self) -> bool {
+        self.min_x <= other.max_x + WELD_MM
+            && other.min_x <= self.max_x + WELD_MM
+            && self.min_y <= other.max_y + WELD_MM
+            && other.min_y <= self.max_y + WELD_MM
+    }
+
+    fn contains(&self, p: Point) -> bool {
+        p.x >= self.min_x - WELD_MM
+            && p.x <= self.max_x + WELD_MM
+            && p.y >= self.min_y - WELD_MM
+            && p.y <= self.max_y + WELD_MM
+    }
+}
+
+/// Applies the three boundary rules and returns the surviving directed edges.
+fn classify_fragments(inputs: &[Vec<Point>], fragments: &[Fragment]) -> Vec<(Point, Point)> {
+    let mut directed: HashSet<(VertexKey, VertexKey)> = HashSet::new();
+    for f in fragments {
+        directed.insert((VertexKey::of(f.from), VertexKey::of(f.to)));
+    }
+
+    let boxes: Vec<Bounds> = inputs.iter().map(|r| Bounds::of(r)).collect();
+    let mut emitted: HashSet<(VertexKey, VertexKey)> = HashSet::new();
+    let mut kept = Vec::new();
+
+    for f in fragments {
+        let key = (VertexKey::of(f.from), VertexKey::of(f.to));
+        // Rule 1: a reversed twin means interior on both sides.
+        if directed.contains(&(key.1, key.0)) {
+            continue;
+        }
+        // Rule 3 (dedupe): identical direction from two polygons is one edge.
+        if emitted.contains(&key) {
+            continue;
+        }
+        // Rule 2: strictly inside any other polygon.
+        let mid = Point::new((f.from.x + f.to.x) / 2.0, (f.from.y + f.to.y) / 2.0);
+        let swallowed = inputs.iter().enumerate().any(|(j, ring)| {
+            j != f.owner
+                && boxes[j].contains(mid)
+                && classify_point(mid, ring) == Containment::Inside
+        });
+        if swallowed {
+            continue;
+        }
+        emitted.insert(key);
+        kept.push((f.from, f.to));
+    }
+    kept
+}
+
+/// Walks the surviving directed edges into closed rings.
+fn trace_rings(edges: &[(Point, Point)]) -> Vec<Vec<Point>> {
+    let mut position: HashMap<VertexKey, Point> = HashMap::new();
+    let mut outgoing: HashMap<VertexKey, Vec<VertexKey>> = HashMap::new();
+    for &(a, b) in edges {
+        let (ka, kb) = (VertexKey::of(a), VertexKey::of(b));
+        position.entry(ka).or_insert(a);
+        position.entry(kb).or_insert(b);
+        outgoing.entry(ka).or_default().push(kb);
+        outgoing.entry(kb).or_default();
+    }
+
+    // Deterministic start order: HashMap iteration order must never reach the
+    // output, or the same document renders a different component sequence
+    // between runs.
+    let mut starts: Vec<(VertexKey, VertexKey)> = edges
+        .iter()
+        .map(|&(a, b)| (VertexKey::of(a), VertexKey::of(b)))
+        .collect();
+    starts.sort();
+    starts.dedup();
+
+    let total = starts.len();
+    let mut visited: HashSet<(VertexKey, VertexKey)> = HashSet::new();
+    let mut rings = Vec::new();
+
+    for start in starts {
+        if visited.contains(&start) {
+            continue;
+        }
+        let mut ring_keys = Vec::new();
+        let (mut from, mut to) = start;
+
+        loop {
+            if !visited.insert((from, to)) {
+                break;
+            }
+            ring_keys.push(from);
+            let Some(next) = next_clockwise(&outgoing, &position, from, to) else {
+                break;
+            };
+            from = to;
+            to = next;
+            if (from, to) == start {
+                break;
+            }
+            // A ring cannot use more half-edges than exist; this bounds the
+            // walk against a malformed adjacency rather than hanging.
+            if ring_keys.len() > total {
+                break;
+            }
+        }
+
+        if ring_keys.len() >= 3 {
+            rings.push(ring_keys.iter().map(|k| position[k]).collect());
+        }
+    }
+    rings
+}
+
+/// The DCEL `next` rule: from the edge `from → to`, the continuation is the
+//! Wall solids, join patches, occupied regions, and room faces.
+//!
+//! This module implements BEHAVIOR-SPEC R3.2 (derived occupied geometry) and
+//! R5.1 (room topology) directly:
+//!
+//! - R3.2.1 — the occupied region is the union of every wall's centred
+//!   butt-capped rectangle and one patch per join.
+//! - R3.2.2 — at a join member endpoint, a wall contributes its cross-section:
+//!   the closed segment of length `thicknessMm`, centred on the endpoint,
+//!   perpendicular to that wall's own axis.
+//! - R3.2.3 — the join patch is the CONVEX HULL of the member cross-sections.
+//!   The specification is explicit that patches "need no miter construction
+//!   and carry no miter-ratio constant", so no miter appears here.
+//! - R5.1.1/R5.1.2 — a room is a bounded connected component of the complement
+//!   of the occupied region, which is exactly a hole of a region component.
+//!
+//! Because rooms are complement components, floor area is measured to the
+//! INNER faces of the walls. That is the difference between the area a person
+//! can furnish and the area enclosed by the wall centre lines, and for a small
+//! flat with 200 mm walls it is several square metres.
+
+use crate::arrangement::ring_contains_ring;
+use crate::polygon::{compare_polygons, convex_hull, Polygon};
+use crate::wall_polygon;
+use domowik_format::Point;
+
+/// A wall reduced to what plan geometry needs: an axis and a thickness.
+///
+/// Height is deliberately absent. R3.0.6: "Height affects vertical extrusion
+/// only: it never influences plan contact, splitting, joining, or derived
+/// occupied geometry, so walls of unequal heights join in plan."
+///
+/// Coordinates and thickness are millimetres.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WallSolid {
+    /// Axis start.
+    pub start: Point,
+    /// Axis end.
+    pub end: Point,
+    /// Full thickness; the rectangle offsets half of it to each side.
+    pub thickness_mm: f64,
+}
+
+impl WallSolid {
+    /// Creates a wall solid.
+    pub fn new(start: Point, end: Point, thickness_mm: f64) -> Self {
+        Self {
+            start,
+            end,
+            thickness_mm,
+        }
+    }
+
+    /// The centred butt-capped rectangle of R3.0.2/R3.0.3, counter-clockwise.
+    ///
+    /// `None` for a zero-length axis, which R3.0.5 rejects as a wall.
+    pub fn rectangle(&self) -> Option<[Point; 4]> {
+        wall_polygon(self.start, self.end, self.thickness_mm)
+    }
+
+    /// Axis length in millimetres.
+    pub fn length_mm(&self) -> f64 {
+        (self.end.x - self.start.x).hypot(self.end.y - self.start.y)
+    }
+}
+
+/// Which end of a wall a join member refers to (FORMAT-SPEC `wallJoin.role`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Endpoint {
+    /// The wall's `startMm`.
+    Start,
+    /// The wall's `endMm`.
+    End,
+}
+
+/// One member of a join: a wall and which of its endpoints participates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JoinMember {
+    /// Index into the wall slice passed alongside.
+    pub wall: usize,
+    /// Which endpoint of that wall.
+    pub endpoint: Endpoint,
+}
+
+/// A join: at least two wall endpoints meeting at one point (R3.3.1).
+///
+/// Joins store no coordinates of their own; the node position is whatever the
+/// member endpoints agree on (R3.3.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinSpec {
+    /// The participating wall endpoints, order irrelevant.
+    pub members: Vec<JoinMember>,
+}
+
+/// The cross-section a wall contributes at one of its endpoints (R3.2.2).
+///
+/// The returned pair is the two ends of a closed segment of length
+/// `thickness_mm`, centred on the endpoint and perpendicular to the wall axis.
+/// `None` when the axis has zero length and has no perpendicular.
+pub fn cross_section(wall: &WallSolid, endpoint: Endpoint) -> Option<[Point; 2]> {
+    let (at, away) = match endpoint {
+        Endpoint::Start => (wall.start, wall.end),
+        Endpoint::End => (wall.end, wall.start),
+    };
+    let (dx, dy) = (away.x - at.x, away.y - at.y);
+    let len = dx.hypot(dy);
+    if !len.is_finite() || len == 0.0 {
+        return None;
+    }
+    let half = wall.thickness_mm / 2.0;
+    let (nx, ny) = (-dy / len * half, dx / len * half);
+    Some([
+        Point::new(at.x + nx, at.y + ny),
+        Point::new(at.x - nx, at.y - ny),
+    ])
+}
+
+/// The patch filling a join: the convex hull of its members' cross-sections
+/// (R3.2.3).
+///
+/// Returns the hull vertices counter-clockwise. When every contributed point
+/// is collinear — a straight continuation, fixture F3 — the hull degenerates
+/// to the two extremes of a closed segment; the caller unions it as a closed
+/// set, and since every cross-section is centred on the shared node, that
+/// segment always lies within the thickest member's own rectangle.
+pub fn join_patch(walls: &[WallSolid], join: &JoinSpec) -> Vec<Point> {
+    let mut points = Vec::with_capacity(join.members.len() * 2);
+    for m in &join.members {
+        let Some(wall) = walls.get(m.wall) else {
+            continue;
+        };
+        if let Some(cs) = cross_section(wall, m.endpoint) {
+            points.extend_from_slice(&cs);
+        }
+    }
+    convex_hull(&points)
+}
+
+/// The occupied region of a set of walls and their joins (R3.2.1).
+///
+/// The result is a canonical, deterministically ordered multipolygon; it may
+/// be disconnected, and components may carry holes. Walls of unequal height
+/// join in plan (R3.0.6) because height is not an input here.
+///
+/// All walls passed in must belong to the SAME level: R3.0.6 and R5.1.1 make
+/// levels non-interacting, and mixing them would fuse geometry that never
+/// touches.
+pub fn occupied_region(walls: &[WallSolid], joins: &[JoinSpec]) -> Vec<Polygon> {
+    let mut rings: Vec<Vec<Point>> = Vec::with_capacity(walls.len() + joins.len());
+    for wall in walls {
+        if let Some(rect) = wall.rectangle() {
+            rings.push(rect.to_vec());
+        }
+    }
+    for join in joins {
+        let patch = join_patch(walls, join);
+        if patch.len() >= 3 {
+            rings.push(patch);
+        }
+    }
+    crate::boolean::union(&rings)
+}
+
+/// The rooms of a level: the bounded components of the complement of `region`
+/// (R5.1.1, R5.1.2).
+///
+/// Every hole of the occupied region is one room, bounded by the inner faces
+/// of the surrounding walls. A separate wall cluster standing inside such a
+/// hole — an island in a courtyard — becomes a hole of that room (R5.1.4), so
+/// its footprint is not counted as floor area.
+///
+/// Output is totally ordered by the R5.1.3 canonical comparison.
+pub fn rooms(region: &[Polygon]) -> Vec<Polygon> {
+    let mut out = Vec::new();
+
+    for component in region {
+        for hole in &component.holes {
+            // The hole ring winds clockwise as a void; as a room boundary it
+            // is an exterior ring and must wind counter-clockwise.
+            let outer: Vec<Point> = hole.iter().rev().copied().collect();
+
+            // Islands standing in this room. Only the IMMEDIATE ones: an
+            // island inside another island's own courtyard belongs to that
+            // courtyard, and charging it here would subtract it twice.
+            let inside: Vec<&Polygon> = region
+                .iter()
+                .filter(|c| ring_contains_ring(&outer, &c.outer))
+                .collect();
+            let holes: Vec<Vec<Point>> = inside
+                .iter()
+                .filter(|c| {
+                    !inside.iter().any(|other| {
+                        !std::ptr::eq(*other, **c) && ring_contains_ring(&other.outer, &c.outer)
+                    })
+                })
+                .map(|c| c.outer.clone())
+                .collect();
+
+            if let Some(room) = (Polygon { outer, holes }).canonicalize() {
+                out.push(room);
+            }
+        }
+    }
+
+    out.sort_by(compare_polygons);
+    out
+}
+
+/// Convenience: the rooms enclosed by `walls` and `joins` on one level.
+pub fn rooms_of(walls: &[WallSolid], joins: &[JoinSpec]) -> Vec<Polygon> {
+    rooms(&occupied_region(walls, joins))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const P: fn(f64, f64) -> Point = Point::new;
+
+    fn wall(x0: f64, y0: f64, x1: f64, y1: f64) -> WallSolid {
+        WallSolid::new(P(x0, y0), P(x1, y1), 200.0)
+    }
+
+    fn join(a: (usize, Endpoint), b: (usize, Endpoint)) -> JoinSpec {
+        JoinSpec {
+            members: vec![
+                JoinMember {
+                    wall: a.0,
+                    endpoint: a.1,
+                },
+                JoinMember {
+                    wall: b.0,
+                    endpoint: b.1,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn cross_section_is_perpendicular_and_thickness_long() {
+        let w = wall(0.0, 0.0, 4000.0, 0.0);
+        let cs = cross_section(&w, Endpoint::End).expect("non-degenerate");
+        assert_eq!(cs, [P(4000.0, -100.0), P(4000.0, 100.0)]);
+        let len = (cs[1].x - cs[0].x).hypot(cs[1].y - cs[0].y);
+        assert_eq!(len, 200.0);
+    }
+
+    #[test]
+    fn cross_section_uses_the_walls_own_axis_at_either_end() {
+        let w = wall(0.0, 0.0, 0.0, 3000.0);
+        assert_eq!(
+            cross_section(&w, Endpoint::Start).expect("ok"),
+            [P(-100.0, 0.0), P(100.0, 0.0)]
+        );
+    }
+
+    #[test]
+    fn cross_section_rejects_a_zero_length_axis() {
+        let w = WallSolid::new(P(1.0, 1.0), P(1.0, 1.0), 200.0);
+        assert!(cross_section(&w, Endpoint::Start).is_none());
+    }
+
+    // ---- BEHAVIOR-SPEC §3.5 normative fixtures ----
+
+    #[test]
+    fn fixture_f1_isolated_wall() {
+        // Outline: (0,-100) (4000,-100) (4000,100) (0,100).
+        let walls = [wall(0.0, 0.0, 4000.0, 0.0)];
+        let region = occupied_region(&walls, &[]);
+        assert_eq!(region.len(), 1, "got {region:#?}");
+        assert_eq!(
+            region[0].outer,
+            vec![
+                P(0.0, -100.0),
+                P(4000.0, -100.0),
+                P(4000.0, 100.0),
+                P(0.0, 100.0)
+            ]
+        );
+        assert!(rooms(&region).is_empty(), "one wall encloses nothing");
+    }
+
+    #[test]
+    fn fixture_f2_l_join_patch_and_outline() {
+        // Patch hull quad (3900,0) (4000,-100) (4100,0) (4000,100); outline
+        // (0,-100) (4000,-100) (4100,0) (4100,3000) (3900,3000) (3900,100) (0,100).
+        let walls = [
+            wall(0.0, 0.0, 4000.0, 0.0),
+            wall(4000.0, 0.0, 4000.0, 3000.0),
+        ];
+        let joins = [join((0, Endpoint::End), (1, Endpoint::Start))];
+
+        let patch = join_patch(&walls, &joins[0]);
+        let mut sorted = patch.clone();
+        sorted.sort_by(|a, b| (a.x, a.y).partial_cmp(&(b.x, b.y)).unwrap());
+        assert_eq!(
+            sorted,
+            vec![
+                P(3900.0, 0.0),
+                P(4000.0, -100.0),
+//! Shared planar-arrangement primitives: vertex welding, segment splitting,
+//! and point classification against a ring.
+//!
+//! These are the pieces every boolean or face-traversal routine needs before
+//! it can reason about a set of segments as a graph. They live here rather
+//! than inside one consumer because two of them existing in two copies is how
+//! a fix lands in one and not the other.
+
+use crate::{orientation, Orientation};
+use domowik_format::Point;
+
+/// Endpoints within this distance are treated as the same vertex.
+///
+/// One micrometre: far below any meaningful building dimension, far above
+/// floating-point noise on millimetre coordinates.
+pub const WELD_MM: f64 = 0.001;
+
+/// A vertex identity that tolerates rounding.
+///
+/// Two points that quantize to the same key are the same graph vertex. This is
+/// what lets an intersection computed along one segment and the same
+/// intersection computed along another meet in the adjacency structure instead
+/// of becoming two vertices a nanometre apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VertexKey(pub i64, pub i64);
+
+impl VertexKey {
+    /// Quantizes `p` onto the weld grid.
+    pub fn of(p: Point) -> Self {
+        Self(
+            (p.x / WELD_MM).round() as i64,
+            (p.y / WELD_MM).round() as i64,
+        )
+    }
+}
+
+/// Where a point lies relative to a closed ring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Containment {
+    /// Strictly inside.
+    Inside,
+    /// Exactly on an edge or vertex.
+    Boundary,
+    /// Strictly outside.
+    Outside,
+}
+
+/// Linear interpolation along `a → b`.
+pub fn lerp(a: Point, b: Point, t: f64) -> Point {
+    Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+}
+
+/// Parameter `t` along `a→b` at which it meets `c→d`, if they properly cross
+/// or touch. `None` when they are parallel, collinear, or do not meet.
+pub fn intersection_param(a: Point, b: Point, c: Point, d: Point) -> Option<f64> {
+    // Use the robust predicate to decide whether a crossing exists at all,
+    // before computing where. Straddling on both sides is the crossing test.
+    let (o1, o2) = (orientation(a, b, c), orientation(a, b, d));
+    let (o3, o4) = (orientation(c, d, a), orientation(c, d, b));
+
+    let proper = o1 != o2 && o3 != o4;
+    let touching = o1 == Orientation::Collinear
+        || o2 == Orientation::Collinear
+        || o3 == Orientation::Collinear
+        || o4 == Orientation::Collinear;
+
+    if !proper && !touching {
+        return None;
+    }
+
+    let (r1, r2) = (b.x - a.x, b.y - a.y);
+    let (s1, s2) = (d.x - c.x, d.y - c.y);
+    let denom = r1 * s2 - r2 * s1;
+    if denom == 0.0 {
+        // Parallel or collinear: no single crossing parameter.
+        return None;
+    }
+    let t = ((c.x - a.x) * s2 - (c.y - a.y) * s1) / denom;
+    let u = ((c.x - a.x) * r2 - (c.y - a.y) * r1) / denom;
+
+    if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+/// Parameters along `a→b` at which a COLLINEAR overlapping segment `c→d`
+/// starts or ends.
+///
+/// [`intersection_param`] returns `None` for collinear input because there is
+/// no single crossing point. That is correct as far as it goes, but on its own
+/// it leaves overlapping segments unsplit: two collinear walls sharing part of
+/// their length produce duplicate edges over the shared span, which corrupts
+/// the angular adjacency and destroys the face walk. Overlapping walls are a
+/// normal result of editing, so this is not an exotic case.
+pub fn collinear_overlap_params(a: Point, b: Point, c: Point, d: Point) -> Vec<f64> {
+    // Only meaningful when all four points are collinear.
+    if orientation(a, b, c) != Orientation::Collinear
+        || orientation(a, b, d) != Orientation::Collinear
+    {
+        return Vec::new();
+    }
+    let (rx, ry) = (b.x - a.x, b.y - a.y);
+    let len2 = rx * rx + ry * ry;
+    if len2 == 0.0 {
+        return Vec::new();
+    }
+    // Project c and d onto a→b as parameters.
+    [c, d]
+        .iter()
+        .map(|p| ((p.x - a.x) * rx + (p.y - a.y) * ry) / len2)
+        .filter(|t| *t > 0.0 && *t < 1.0)
+        .collect()
+}
+
+/// Every cut parameter along `a→b` induced by the segments in `others`.
+///
+/// The returned vector always begins at `0.0`, ends at `1.0`, is sorted, and
+/// has near-duplicates collapsed, so `windows(2)` yields the sub-edges
+/// directly.
+pub fn cut_params(a: Point, b: Point, others: &[(Point, Point)]) -> Vec<f64> {
+    let mut cuts: Vec<f64> = vec![0.0, 1.0];
+    for &(c, d) in others {
+        if VertexKey::of(c) == VertexKey::of(d) {
+            continue;
+        }
+        if let Some(t) = intersection_param(a, b, c, d) {
+            if t > 0.0 && t < 1.0 {
+                cuts.push(t);
+            }
+        }
+        cuts.extend(collinear_overlap_params(a, b, c, d));
+    }
+    cuts.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    cuts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+    cuts
+}
+
+/// Classifies `p` against the closed ring `ring`.
+///
+/// The boundary test uses the exact orientation predicate, so a point lying on
+/// an edge is reported as [`Containment::Boundary`] rather than falling to
+/// whichever side rounding prefers. The interior test is the standard
+/// crossing-number rule, evaluated only after the boundary case is excluded.
+pub fn classify_point(p: Point, ring: &[Point]) -> Containment {
+    if ring.len() < 3 {
+        return Containment::Outside;
+    }
+    let n = ring.len();
+
+    for i in 0..n {
+        let (a, b) = (ring[i], ring[(i + 1) % n]);
+        if orientation(a, b, p) == Orientation::Collinear
+            && p.x >= a.x.min(b.x)
+            && p.x <= a.x.max(b.x)
+            && p.y >= a.y.min(b.y)
+            && p.y <= a.y.max(b.y)
+        {
+            return Containment::Boundary;
+        }
+    }
+
+    // Crossing number along the ray y = p.y, x > p.x. The half-open rule on
+    // the vertical span (`a.y > p.y` differs from `b.y > p.y`) counts a vertex
+    // exactly once when the ray passes through it.
+    let mut inside = false;
+    for i in 0..n {
+        let (a, b) = (ring[i], ring[(i + 1) % n]);
+        if (a.y > p.y) != (b.y > p.y) {
+            let x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
+            if x > p.x {
+                inside = !inside;
+            }
+        }
+    }
+    if inside {
+        Containment::Inside
+    } else {
+        Containment::Outside
+    }
+}
+
+/// True when every vertex of `inner` is inside or on `outer`, and at least one
+/// is strictly inside.
+///
+/// Written for rings that are known not to cross — the arrangement has already
+/// split every crossing — so vertex containment settles ring containment.
+pub fn ring_contains_ring(outer: &[Point], inner: &[Point]) -> bool {
+    let mut any_strictly_inside = false;
+    for &p in inner {
+        match classify_point(p, outer) {
+            Containment::Outside => return false,
+            Containment::Inside => any_strictly_inside = true,
+            Containment::Boundary => {}
+        }
+    }
+    any_strictly_inside
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const P: fn(f64, f64) -> Point = Point::new;
+
+    fn square() -> Vec<Point> {
+        vec![P(0.0, 0.0), P(10.0, 0.0), P(10.0, 10.0), P(0.0, 10.0)]
+    }
+
+    #[test]
+    fn classify_point_separates_inside_boundary_and_outside() {
+        assert_eq!(classify_point(P(5.0, 5.0), &square()), Containment::Inside);
+        assert_eq!(
+            classify_point(P(0.0, 5.0), &square()),
+            Containment::Boundary
+        );
+        assert_eq!(
+            classify_point(P(0.0, 0.0), &square()),
+            Containment::Boundary
+        );
+        assert_eq!(
+            classify_point(P(-1.0, 5.0), &square()),
+            Containment::Outside
+        );
+    }
+
+    #[test]
+    fn classify_point_counts_a_vertex_crossing_once() {
+        // The ray from (-1, 10) passes exactly through two ring vertices. A
+        // rule that counted both edges at each vertex would report Inside.
+        let ring = square();
+        assert_eq!(classify_point(P(-1.0, 10.0), &ring), Containment::Outside);
+        assert_eq!(classify_point(P(-1.0, 0.0), &ring), Containment::Outside);
+    }
+
+    #[test]
+    fn classify_point_handles_a_concave_ring() {
+        // An L shape; the notch is outside even though it is inside the
+        // bounding box.
+        let l = vec![
+            P(0.0, 0.0),
+            P(10.0, 0.0),
+            P(10.0, 4.0),
+            P(4.0, 4.0),
+            P(4.0, 10.0),
+            P(0.0, 10.0),
+        ];
+        assert_eq!(classify_point(P(2.0, 2.0), &l), Containment::Inside);
+        assert_eq!(classify_point(P(8.0, 8.0), &l), Containment::Outside);
+    }
+
+    #[test]
+    fn ring_contains_ring_rejects_a_shared_boundary_with_no_interior() {
+        // The "inner" ring is the outer ring itself: every vertex is on the
+        // boundary and none strictly inside, so it is not contained.
+        assert!(!ring_contains_ring(&square(), &square()));
+    }
+
+    #[test]
+    fn ring_contains_ring_accepts_a_strictly_smaller_ring() {
+        let inner = vec![P(2.0, 2.0), P(4.0, 2.0), P(4.0, 4.0), P(2.0, 4.0)];
+        assert!(ring_contains_ring(&square(), &inner));
+        assert!(!ring_contains_ring(&inner, &square()));
+    }
+
+    #[test]
+    fn cut_params_brackets_the_whole_segment_and_finds_a_crossing() {
+        let cuts = cut_params(P(0.0, 0.0), P(10.0, 0.0), &[(P(4.0, -1.0), P(4.0, 1.0))]);
+        assert_eq!(cuts, vec![0.0, 0.4, 1.0]);
+    }
+
+    #[test]
+    fn cut_params_splits_at_a_collinear_overlap() {
+        let cuts = cut_params(P(0.0, 0.0), P(10.0, 0.0), &[(P(3.0, 0.0), P(7.0, 0.0))]);
+        assert_eq!(cuts, vec![0.0, 0.3, 0.7, 1.0]);
+    }
+
+    #[test]
+    fn vertex_key_welds_points_closer_than_the_tolerance() {
+        assert_eq!(
+            VertexKey::of(P(1000.0, 0.0)),
+            VertexKey::of(P(1000.0 + WELD_MM / 4.0, 0.0))
+        );
+        assert_ne!(
+            VertexKey::of(P(1000.0, 0.0)),
+            VertexKey::of(P(1000.0 + WELD_MM * 2.0, 0.0))
+        );
+    }
+}
+
+exec
+/opt/homebrew/bin/bash -lc "nl -ba crates/domowik-geometry/src/boolean.rs | sed -n '220,620p'; nl -ba crates/domowik-geometry/src/walls.rs | sed -n '260,760p'" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+   220	    starts.dedup();
+   221	
+   222	    let total = starts.len();
+   223	    let mut visited: HashSet<(VertexKey, VertexKey)> = HashSet::new();
+   224	    let mut rings = Vec::new();
+   225	
+   226	    for start in starts {
+   227	        if visited.contains(&start) {
+   228	            continue;
+   229	        }
+   230	        let mut ring_keys = Vec::new();
+   231	        let (mut from, mut to) = start;
+   232	
+   233	        loop {
+   234	            if !visited.insert((from, to)) {
+   235	                break;
+   236	            }
+   237	            ring_keys.push(from);
+   238	            let Some(next) = next_clockwise(&outgoing, &position, from, to) else {
+   239	                break;
+   240	            };
+   241	            from = to;
+   242	            to = next;
+   243	            if (from, to) == start {
+   244	                break;
+   245	            }
+   246	            // A ring cannot use more half-edges than exist; this bounds the
+   247	            // walk against a malformed adjacency rather than hanging.
+   248	            if ring_keys.len() > total {
+   249	                break;
+   250	            }
+   251	        }
+   252	
+   253	        if ring_keys.len() >= 3 {
+   254	            rings.push(ring_keys.iter().map(|k| position[k]).collect());
+   255	        }
+   256	    }
+   257	    rings
+   258	}
+   259	
+   260	/// The DCEL `next` rule: from the edge `from → to`, the continuation is the
+   261	/// first outgoing edge of `to` met when sweeping clockwise from the direction
+   262	/// back to `from`.
+   263	///
+   264	/// Sweeping clockwise keeps the face on the LEFT of the traversal. The
+   265	/// half-open interval `(0, 360]` is deliberate: a spike whose only
+   266	/// continuation is the way we came must be allowed to turn round, and giving
+   267	/// it an offset of 360 rather than 0 makes it the last resort rather than the
+   268	/// first choice.
+   269	fn next_clockwise(
+   270	    outgoing: &HashMap<VertexKey, Vec<VertexKey>>,
+   271	    position: &HashMap<VertexKey, Point>,
+   272	    from: VertexKey,
+   273	    to: VertexKey,
+   274	) -> Option<VertexKey> {
+   275	    let candidates = outgoing.get(&to)?;
+   276	    if candidates.is_empty() {
+   277	        return None;
+   278	    }
+   279	    let origin = position[&to];
+   280	    let back = angle_of(origin, position[&from]);
+   281	
+   282	    let mut best: Option<(f64, VertexKey)> = None;
+   283	    for &c in candidates {
+   284	        let mut delta = back - angle_of(origin, position[&c]);
+   285	        while delta <= 0.0 {
+   286	            delta += std::f64::consts::TAU;
+   287	        }
+   288	        while delta > std::f64::consts::TAU {
+   289	            delta -= std::f64::consts::TAU;
+   290	        }
+   291	        match best {
+   292	            Some((d, _)) if d <= delta => {}
+   293	            _ => best = Some((delta, c)),
+   294	        }
+   295	    }
+   296	    best.map(|(_, c)| c)
+   297	}
+   298	
+   299	fn angle_of(origin: Point, to: Point) -> f64 {
+   300	    (to.y - origin.y).atan2(to.x - origin.x)
+   301	}
+   302	
+   303	/// Sorts traced rings into outer boundaries with their holes.
+   304	fn assemble(rings: Vec<Vec<Point>>) -> Vec<Polygon> {
+   305	    let mut outers: Vec<Vec<Point>> = Vec::new();
+   306	    let mut holes: Vec<Vec<Point>> = Vec::new();
+   307	
+   308	    for ring in rings {
+   309	        let signed = signed_double_area(&ring);
+   310	        if signed > 0.0 {
+   311	            if let Some(r) = canonical_ring(&ring, Winding::CounterClockwise) {
+   312	                outers.push(r);
+   313	            }
+   314	        } else if signed < 0.0 {
+   315	            if let Some(r) = canonical_ring(&ring, Winding::Clockwise) {
+   316	                holes.push(r);
+   317	            }
+   318	        }
+   319	    }
+   320	
+   321	    let mut polygons: Vec<Polygon> = outers.into_iter().map(Polygon::new).collect();
+   322	
+   323	    // Each hole belongs to the SMALLEST outer ring that contains it. Charging
+   324	    // it to every ancestor would subtract the same void more than once.
+   325	    for hole in holes {
+   326	        let mut best: Option<(f64, usize)> = None;
+   327	        for (i, poly) in polygons.iter().enumerate() {
+   328	            if ring_contains_ring(&poly.outer, &hole) {
+   329	                let area = signed_double_area(&poly.outer).abs();
+   330	                match best {
+   331	                    Some((a, _)) if a <= area => {}
+   332	                    _ => best = Some((area, i)),
+   333	                }
+   334	            }
+   335	        }
+   336	        if let Some((_, i)) = best {
+   337	            polygons[i].holes.push(hole);
+   338	        }
+   339	    }
+   340	
+   341	    let mut out: Vec<Polygon> = polygons
+   342	        .into_iter()
+   343	        .filter_map(|p| p.canonicalize())
+   344	        .collect();
+   345	    out.sort_by(compare_polygons);
+   346	    out
+   347	}
+   348	
+   349	#[cfg(test)]
+   350	mod tests {
+   351	    use super::*;
+   352	
+   353	    const P: fn(f64, f64) -> Point = Point::new;
+   354	
+   355	    fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<Point> {
+   356	        vec![P(x0, y0), P(x1, y0), P(x1, y1), P(x0, y1)]
+   357	    }
+   358	
+   359	    #[test]
+   360	    fn union_of_one_rectangle_is_that_rectangle() {
+   361	        let out = union(&[rect(0.0, 0.0, 10.0, 5.0)]);
+   362	        assert_eq!(out.len(), 1);
+   363	        assert_eq!(
+   364	            out[0].outer,
+   365	            vec![P(0.0, 0.0), P(10.0, 0.0), P(10.0, 5.0), P(0.0, 5.0)]
+   366	        );
+   367	        assert!(out[0].holes.is_empty());
+   368	    }
+   369	
+   370	    #[test]
+   371	    fn union_of_disjoint_rectangles_keeps_two_components() {
+   372	        let out = union(&[rect(0.0, 0.0, 10.0, 10.0), rect(20.0, 0.0, 30.0, 10.0)]);
+   373	        assert_eq!(out.len(), 2, "got {out:#?}");
+   374	        assert_eq!(out[0].area_mm2(), 100.0);
+   375	        assert_eq!(out[1].area_mm2(), 100.0);
+   376	    }
+   377	
+   378	    #[test]
+   379	    fn union_of_overlapping_rectangles_is_one_component_of_the_right_area() {
+   380	        // 10x10 and 10x10 overlapping in a 5x10 band: 100 + 100 - 50 = 150.
+   381	        let out = union(&[rect(0.0, 0.0, 10.0, 10.0), rect(5.0, 0.0, 15.0, 10.0)]);
+   382	        assert_eq!(out.len(), 1, "got {out:#?}");
+   383	        assert_eq!(out[0].area_mm2(), 150.0);
+   384	        assert_eq!(
+   385	            out[0].outer,
+   386	            vec![P(0.0, 0.0), P(15.0, 0.0), P(15.0, 10.0), P(0.0, 10.0)]
+   387	        );
+   388	    }
+   389	
+   390	    #[test]
+   391	    fn union_of_edge_to_edge_rectangles_merges_and_drops_the_shared_edge() {
+   392	        // The shared edge carries interior on both sides; if it survived, the
+   393	        // result would be two rings sharing a wall instead of one rectangle.
+   394	        let out = union(&[rect(0.0, 0.0, 10.0, 10.0), rect(10.0, 0.0, 20.0, 10.0)]);
+   395	        assert_eq!(out.len(), 1, "got {out:#?}");
+   396	        assert_eq!(
+   397	            out[0].outer,
+   398	            vec![P(0.0, 0.0), P(20.0, 0.0), P(20.0, 10.0), P(0.0, 10.0)]
+   399	        );
+   400	    }
+   401	
+   402	    #[test]
+   403	    fn union_of_a_closed_frame_produces_a_hole() {
+   404	        // Four bars forming a square annulus: outer 12x12, inner void 8x8.
+   405	        let out = union(&[
+   406	            rect(0.0, 0.0, 12.0, 2.0),
+   407	            rect(0.0, 10.0, 12.0, 12.0),
+   408	            rect(0.0, 0.0, 2.0, 12.0),
+   409	            rect(10.0, 0.0, 12.0, 12.0),
+   410	        ]);
+   411	        assert_eq!(out.len(), 1, "got {out:#?}");
+   412	        assert_eq!(out[0].holes.len(), 1, "got {out:#?}");
+   413	        assert_eq!(out[0].area_mm2(), 144.0 - 64.0);
+   414	        // The hole winds clockwise and starts at its least vertex.
+   415	        assert_eq!(out[0].holes[0][0], P(2.0, 2.0));
+   416	        assert!(signed_double_area(&out[0].holes[0]) < 0.0);
+   417	    }
+   418	
+   419	    #[test]
+   420	    fn union_output_is_independent_of_input_order() {
+   421	        let a = union(&[
+   422	            rect(0.0, 0.0, 12.0, 2.0),
+   423	            rect(0.0, 10.0, 12.0, 12.0),
+   424	            rect(0.0, 0.0, 2.0, 12.0),
+   425	            rect(10.0, 0.0, 12.0, 12.0),
+   426	        ]);
+   427	        let b = union(&[
+   428	            rect(10.0, 0.0, 12.0, 12.0),
+   429	            rect(0.0, 0.0, 2.0, 12.0),
+   430	            rect(0.0, 10.0, 12.0, 12.0),
+   431	            rect(0.0, 0.0, 12.0, 2.0),
+   432	        ]);
+   433	        assert_eq!(a, b);
+   434	    }
+   435	
+   436	    #[test]
+   437	    fn union_is_invariant_under_ring_reversal() {
+   438	        // R3.2.4: derived output is invariant under wall reversal.
+   439	        let forward = rect(0.0, 0.0, 10.0, 10.0);
+   440	        let reversed: Vec<Point> = forward.iter().rev().copied().collect();
+   441	        assert_eq!(union(&[forward]), union(&[reversed]));
+   442	    }
+   443	
+   444	    #[test]
+   445	    fn union_ignores_a_degenerate_ring() {
+   446	        let segment = vec![P(0.0, -1.0), P(0.0, 1.0), P(0.0, -1.0)];
+   447	        let out = union(&[rect(0.0, 0.0, 10.0, 10.0), segment]);
+   448	        assert_eq!(out.len(), 1);
+   449	        assert_eq!(out[0].area_mm2(), 100.0);
+   450	    }
+   451	
+   452	    #[test]
+   453	    fn bounding_box_pruning_keeps_rings_that_only_touch() {
+   454	        // The margin exists for exactly this: rectangles meeting edge to edge
+   455	        // have bounding boxes that touch without overlapping. Rejecting the
+   456	        // pair would leave the shared edge uncut and the union split in two.
+   457	        let out = union(&[rect(0.0, 0.0, 10.0, 10.0), rect(10.0, 0.0, 20.0, 10.0)]);
+   458	        assert_eq!(out.len(), 1, "got {out:#?}");
+   459	        assert_eq!(out[0].area_mm2(), 200.0);
+   460	    }
+   461	
+   462	    #[test]
+   463	    fn union_of_nothing_is_nothing() {
+   464	        assert!(union(&[]).is_empty());
+   465	    }
+   466	
+   467	    #[test]
+   468	    fn a_ring_inside_a_hole_stays_a_separate_component() {
+   469	        // An island in a courtyard: the frame's hole must NOT swallow it, and
+   470	        // the island must not be reported as a hole of the frame.
+   471	        let mut rings = vec![
+   472	            rect(0.0, 0.0, 20.0, 2.0),
+   473	            rect(0.0, 18.0, 20.0, 20.0),
+   474	            rect(0.0, 0.0, 2.0, 20.0),
+   475	            rect(18.0, 0.0, 20.0, 20.0),
+   476	        ];
+   477	        rings.push(rect(8.0, 8.0, 12.0, 12.0));
+   478	        let out = union(&rings);
+   479	        assert_eq!(out.len(), 2, "got {out:#?}");
+   480	        // Sorted canonically: the frame starts at (0,0), the island at (8,8).
+   481	        assert_eq!(out[0].outer[0], P(0.0, 0.0));
+   482	        assert_eq!(out[0].holes.len(), 1);
+   483	        assert_eq!(out[1].outer[0], P(8.0, 8.0));
+   484	        assert!(out[1].holes.is_empty());
+   485	    }
+   486	
+   487	    #[test]
+   488	    fn rectangles_touching_at_a_single_point_stay_two_rings() {
+   489	        // R5.1.2's pinch: the traversal must split at the shared point rather
+   490	        // than producing one figure-eight ring.
+   491	        let out = union(&[rect(0.0, 0.0, 10.0, 10.0), rect(10.0, 10.0, 20.0, 20.0)]);
+   492	        assert_eq!(out.len(), 2, "got {out:#?}");
+   493	        assert_eq!(out[0].area_mm2(), 100.0);
+   494	        assert_eq!(out[1].area_mm2(), 100.0);
+   495	    }
+   496	
+   497	    #[test]
+   498	    fn union_of_an_l_shape_traces_the_reflex_corner() {
+   499	        let out = union(&[rect(0.0, 0.0, 10.0, 4.0), rect(0.0, 0.0, 4.0, 10.0)]);
+   500	        assert_eq!(out.len(), 1, "got {out:#?}");
+   501	        assert_eq!(out[0].area_mm2(), 40.0 + 40.0 - 16.0);
+   502	        assert_eq!(
+   503	            out[0].outer,
+   504	            vec![
+   505	                P(0.0, 0.0),
+   506	                P(10.0, 0.0),
+   507	                P(10.0, 4.0),
+   508	                P(4.0, 4.0),
+   509	                P(4.0, 10.0),
+   510	                P(0.0, 10.0),
+   511	            ]
+   512	        );
+   513	    }
+   514	}
+   260	        assert!(cross_section(&w, Endpoint::Start).is_none());
+   261	    }
+   262	
+   263	    // ---- BEHAVIOR-SPEC §3.5 normative fixtures ----
+   264	
+   265	    #[test]
+   266	    fn fixture_f1_isolated_wall() {
+   267	        // Outline: (0,-100) (4000,-100) (4000,100) (0,100).
+   268	        let walls = [wall(0.0, 0.0, 4000.0, 0.0)];
+   269	        let region = occupied_region(&walls, &[]);
+   270	        assert_eq!(region.len(), 1, "got {region:#?}");
+   271	        assert_eq!(
+   272	            region[0].outer,
+   273	            vec![
+   274	                P(0.0, -100.0),
+   275	                P(4000.0, -100.0),
+   276	                P(4000.0, 100.0),
+   277	                P(0.0, 100.0)
+   278	            ]
+   279	        );
+   280	        assert!(rooms(&region).is_empty(), "one wall encloses nothing");
+   281	    }
+   282	
+   283	    #[test]
+   284	    fn fixture_f2_l_join_patch_and_outline() {
+   285	        // Patch hull quad (3900,0) (4000,-100) (4100,0) (4000,100); outline
+   286	        // (0,-100) (4000,-100) (4100,0) (4100,3000) (3900,3000) (3900,100) (0,100).
+   287	        let walls = [
+   288	            wall(0.0, 0.0, 4000.0, 0.0),
+   289	            wall(4000.0, 0.0, 4000.0, 3000.0),
+   290	        ];
+   291	        let joins = [join((0, Endpoint::End), (1, Endpoint::Start))];
+   292	
+   293	        let patch = join_patch(&walls, &joins[0]);
+   294	        let mut sorted = patch.clone();
+   295	        sorted.sort_by(|a, b| (a.x, a.y).partial_cmp(&(b.x, b.y)).unwrap());
+   296	        assert_eq!(
+   297	            sorted,
+   298	            vec![
+   299	                P(3900.0, 0.0),
+   300	                P(4000.0, -100.0),
+   301	                P(4000.0, 100.0),
+   302	                P(4100.0, 0.0)
+   303	            ],
+   304	            "patch hull must be the convex hull of both cross-sections"
+   305	        );
+   306	
+   307	        let region = occupied_region(&walls, &joins);
+   308	        assert_eq!(region.len(), 1, "got {region:#?}");
+   309	        assert_eq!(
+   310	            region[0].outer,
+   311	            vec![
+   312	                P(0.0, -100.0),
+   313	                P(4000.0, -100.0),
+   314	                P(4100.0, 0.0),
+   315	                P(4100.0, 3000.0),
+   316	                P(3900.0, 3000.0),
+   317	                P(3900.0, 100.0),
+   318	                P(0.0, 100.0),
+   319	            ]
+   320	        );
+   321	    }
+   322	
+   323	    #[test]
+   324	    fn fixture_f3_collinear_continuation_degenerates_the_patch() {
+   325	        // Outline (0,-100) (8000,-100) (8000,100) (0,100), collinear vertices
+   326	        // eliminated; the patch is a closed segment and adds nothing.
+   327	        let walls = [wall(0.0, 0.0, 4000.0, 0.0), wall(4000.0, 0.0, 8000.0, 0.0)];
+   328	        let joins = [join((0, Endpoint::End), (1, Endpoint::Start))];
+   329	
+   330	        let patch = join_patch(&walls, &joins[0]);
+   331	        assert_eq!(patch.len(), 2, "degenerate hull is a segment: {patch:?}");
+   332	
+   333	        let region = occupied_region(&walls, &joins);
+   334	        assert_eq!(region.len(), 1, "got {region:#?}");
+   335	        assert_eq!(
+   336	            region[0].outer,
+   337	            vec![
+   338	                P(0.0, -100.0),
+   339	                P(8000.0, -100.0),
+   340	                P(8000.0, 100.0),
+   341	                P(0.0, 100.0)
+   342	            ]
+   343	        );
+   344	    }
+   345	
+   346	    #[test]
+   347	    fn fixture_f6_acute_join_patch() {
+   348	        // W2 axis direction (-4/5, 3/5); cross-section {(2940,-80),(3060,80)}.
+   349	        // Patch = quad (3000,-100) (3060,80) (3000,100) (2940,-80).
+   350	        let walls = [
+   351	            wall(0.0, 0.0, 3000.0, 0.0),
+   352	            wall(3000.0, 0.0, 1400.0, 1200.0),
+   353	        ];
+   354	        let joins = [join((0, Endpoint::End), (1, Endpoint::Start))];
+   355	        let patch = join_patch(&walls, &joins[0]);
+   356	        let mut sorted = patch.clone();
+   357	        sorted.sort_by(|a, b| (a.x, a.y).partial_cmp(&(b.x, b.y)).unwrap());
+   358	        let expected = [
+   359	            P(2940.0, -80.0),
+   360	            P(3000.0, -100.0),
+   361	            P(3000.0, 100.0),
+   362	            P(3060.0, 80.0),
+   363	        ];
+   364	        assert_eq!(sorted.len(), 4, "got {patch:?}");
+   365	        for (got, want) in sorted.iter().zip(expected.iter()) {
+   366	            assert!(
+   367	                (got.x - want.x).abs() < 1e-9 && (got.y - want.y).abs() < 1e-9,
+   368	                "got {sorted:?}, want {expected:?}"
+   369	            );
+   370	        }
+   371	    }
+   372	
+   373	    #[test]
+   374	    fn fixture_f7_obtuse_join_patch() {
+   375	        // W2 axis direction (7/25, 24/25); cross-section {(2904,28),(3096,-28)}.
+   376	        let walls = [
+   377	            wall(0.0, 0.0, 3000.0, 0.0),
+   378	            wall(3000.0, 0.0, 3700.0, 2400.0),
+   379	        ];
+   380	        let joins = [join((0, Endpoint::End), (1, Endpoint::Start))];
+   381	        let patch = join_patch(&walls, &joins[0]);
+   382	        let mut sorted = patch.clone();
+   383	        sorted.sort_by(|a, b| (a.x, a.y).partial_cmp(&(b.x, b.y)).unwrap());
+   384	        let expected = [
+   385	            P(2904.0, 28.0),
+   386	            P(3000.0, -100.0),
+   387	            P(3000.0, 100.0),
+   388	            P(3096.0, -28.0),
+   389	        ];
+   390	        assert_eq!(sorted.len(), 4, "got {patch:?}");
+   391	        for (got, want) in sorted.iter().zip(expected.iter()) {
+   392	            assert!(
+   393	                (got.x - want.x).abs() < 1e-9 && (got.y - want.y).abs() < 1e-9,
+   394	                "got {sorted:?}, want {expected:?}"
+   395	            );
+   396	        }
+   397	    }
+   398	
+   399	    #[test]
+   400	    fn fixture_f4_unequal_thickness_tee_outline() {
+   401	        // Wa split into (0,0)-(3000,0) and (3000,0)-(6000,0), both t=200;
+   402	        // Wb (3000,0)-(3000,2500) t=100. Outline per the fixture.
+   403	        let walls = [
+   404	            WallSolid::new(P(0.0, 0.0), P(3000.0, 0.0), 200.0),
+   405	            WallSolid::new(P(3000.0, 0.0), P(6000.0, 0.0), 200.0),
+   406	            WallSolid::new(P(3000.0, 0.0), P(3000.0, 2500.0), 100.0),
+   407	        ];
+   408	        let joins = [JoinSpec {
+   409	            members: vec![
+   410	                JoinMember {
+   411	                    wall: 0,
+   412	                    endpoint: Endpoint::End,
+   413	                },
+   414	                JoinMember {
+   415	                    wall: 1,
+   416	                    endpoint: Endpoint::Start,
+   417	                },
+   418	                JoinMember {
+   419	                    wall: 2,
+   420	                    endpoint: Endpoint::Start,
+   421	                },
+   422	            ],
+   423	        }];
+   424	        let region = occupied_region(&walls, &joins);
+   425	        assert_eq!(region.len(), 1, "got {region:#?}");
+   426	        assert_eq!(
+   427	            region[0].outer,
+   428	            vec![
+   429	                P(0.0, -100.0),
+   430	                P(6000.0, -100.0),
+   431	                P(6000.0, 100.0),
+   432	                P(3050.0, 100.0),
+   433	                P(3050.0, 2500.0),
+   434	                P(2950.0, 2500.0),
+   435	                P(2950.0, 100.0),
+   436	                P(0.0, 100.0),
+   437	            ]
+   438	        );
+   439	    }
+   440	
+   441	    // ---- rooms ----
+   442	
+   443	    #[test]
+   444	    fn four_joined_walls_enclose_one_room_measured_to_the_inner_faces() {
+   445	        // 4000 x 3000 centre lines, 200 thick: the free space is 3800 x 2800.
+   446	        let walls = [
+   447	            wall(0.0, 0.0, 4000.0, 0.0),
+   448	            wall(4000.0, 0.0, 4000.0, 3000.0),
+   449	            wall(4000.0, 3000.0, 0.0, 3000.0),
+   450	            wall(0.0, 3000.0, 0.0, 0.0),
+   451	        ];
+   452	        let joins = [
+   453	            join((0, Endpoint::End), (1, Endpoint::Start)),
+   454	            join((1, Endpoint::End), (2, Endpoint::Start)),
+   455	            join((2, Endpoint::End), (3, Endpoint::Start)),
+   456	            join((3, Endpoint::End), (0, Endpoint::Start)),
+   457	        ];
+   458	        let found = rooms_of(&walls, &joins);
+   459	        assert_eq!(found.len(), 1, "got {found:#?}");
+   460	        assert_eq!(found[0].area_mm2(), 3800.0 * 2800.0);
+   461	        assert_eq!(found[0].perimeter_mm(), 2.0 * (3800.0 + 2800.0));
+   462	        assert_eq!(
+   463	            found[0].outer,
+   464	            vec![
+   465	                P(100.0, 100.0),
+   466	                P(3900.0, 100.0),
+   467	                P(3900.0, 2900.0),
+   468	                P(100.0, 2900.0),
+   469	            ]
+   470	        );
+   471	    }
+   472	
+   473	    #[test]
+   474	    fn centre_line_area_would_have_overstated_this_room() {
+   475	        // The defect this module exists to close: 12.00 m² to centre lines,
+   476	        // 10.64 m² of actual floor.
+   477	        let walls = [
+   478	            wall(0.0, 0.0, 4000.0, 0.0),
+   479	            wall(4000.0, 0.0, 4000.0, 3000.0),
+   480	            wall(4000.0, 3000.0, 0.0, 3000.0),
+   481	            wall(0.0, 3000.0, 0.0, 0.0),
+   482	        ];
+   483	        let joins = [
+   484	            join((0, Endpoint::End), (1, Endpoint::Start)),
+   485	            join((1, Endpoint::End), (2, Endpoint::Start)),
+   486	            join((2, Endpoint::End), (3, Endpoint::Start)),
+   487	            join((3, Endpoint::End), (0, Endpoint::Start)),
+   488	        ];
+   489	        let area = rooms_of(&walls, &joins)[0].area_mm2();
+   490	        assert!(
+   491	            area < 12_000_000.0,
+   492	            "must be less than the centre-line area"
+   493	        );
+   494	        assert_eq!(area, 10_640_000.0);
+   495	    }
+   496	
+   497	    #[test]
+   498	    fn an_open_shape_encloses_nothing() {
+   499	        let walls = [
+   500	            wall(0.0, 0.0, 4000.0, 0.0),
+   501	            wall(4000.0, 0.0, 4000.0, 3000.0),
+   502	            wall(4000.0, 3000.0, 0.0, 3000.0),
+   503	        ];
+   504	        let joins = [
+   505	            join((0, Endpoint::End), (1, Endpoint::Start)),
+   506	            join((1, Endpoint::End), (2, Endpoint::Start)),
+   507	        ];
+   508	        assert!(rooms_of(&walls, &joins).is_empty());
+   509	    }
+   510	
+   511	    #[test]
+   512	    fn a_dividing_wall_makes_two_rooms() {
+   513	        // A 6000 x 3000 shell split down the middle at x = 3000. The divider
+   514	        // meets the shell endpoint-on-interior, so R3.1.2 splits the top and
+   515	        // bottom runs; the walls below are already in that post-split state.
+   516	        let walls = [
+   517	            wall(0.0, 0.0, 3000.0, 0.0),
+   518	            wall(3000.0, 0.0, 6000.0, 0.0),
+   519	            wall(6000.0, 0.0, 6000.0, 3000.0),
+   520	            wall(6000.0, 3000.0, 3000.0, 3000.0),
+   521	            wall(3000.0, 3000.0, 0.0, 3000.0),
+   522	            wall(0.0, 3000.0, 0.0, 0.0),
+   523	            wall(3000.0, 0.0, 3000.0, 3000.0),
+   524	        ];
+   525	        let joins = [
+   526	            JoinSpec {
+   527	                members: vec![
+   528	                    JoinMember {
+   529	                        wall: 0,
+   530	                        endpoint: Endpoint::End,
+   531	                    },
+   532	                    JoinMember {
+   533	                        wall: 1,
+   534	                        endpoint: Endpoint::Start,
+   535	                    },
+   536	                    JoinMember {
+   537	                        wall: 6,
+   538	                        endpoint: Endpoint::Start,
+   539	                    },
+   540	                ],
+   541	            },
+   542	            join((1, Endpoint::End), (2, Endpoint::Start)),
+   543	            join((2, Endpoint::End), (3, Endpoint::Start)),
+   544	            JoinSpec {
+   545	                members: vec![
+   546	                    JoinMember {
+   547	                        wall: 3,
+   548	                        endpoint: Endpoint::End,
+   549	                    },
+   550	                    JoinMember {
+   551	                        wall: 4,
+   552	                        endpoint: Endpoint::Start,
+   553	                    },
+   554	                    JoinMember {
+   555	                        wall: 6,
+   556	                        endpoint: Endpoint::End,
+   557	                    },
+   558	                ],
+   559	            },
+   560	            join((4, Endpoint::End), (5, Endpoint::Start)),
+   561	            join((5, Endpoint::End), (0, Endpoint::Start)),
+   562	        ];
+   563	        let found = rooms_of(&walls, &joins);
+   564	        assert_eq!(found.len(), 2, "got {found:#?}");
+   565	        // Each half: 2800 wide (100..2900 and 3100..5900) by 2800 tall.
+   566	        assert_eq!(found[0].area_mm2(), 2800.0 * 2800.0);
+   567	        assert_eq!(found[1].area_mm2(), 2800.0 * 2800.0);
+   568	        assert_eq!(found[0].outer[0], P(100.0, 100.0));
+   569	        assert_eq!(found[1].outer[0], P(3100.0, 100.0));
+   570	    }
+   571	
+   572	    #[test]
+   573	    fn an_island_inside_a_room_is_subtracted_from_its_floor_area() {
+   574	        // A closed outer shell with a free-standing closed box inside it.
+   575	        let outer = [
+   576	            wall(0.0, 0.0, 10000.0, 0.0),
+   577	            wall(10000.0, 0.0, 10000.0, 10000.0),
+   578	            wall(10000.0, 10000.0, 0.0, 10000.0),
+   579	            wall(0.0, 10000.0, 0.0, 0.0),
+   580	        ];
+   581	        let island = [
+   582	            wall(4000.0, 4000.0, 6000.0, 4000.0),
+   583	            wall(6000.0, 4000.0, 6000.0, 6000.0),
+   584	            wall(6000.0, 6000.0, 4000.0, 6000.0),
+   585	            wall(4000.0, 6000.0, 4000.0, 4000.0),
+   586	        ];
+   587	        let walls: Vec<WallSolid> = outer.iter().chain(island.iter()).copied().collect();
+   588	        let joins = [
+   589	            join((0, Endpoint::End), (1, Endpoint::Start)),
+   590	            join((1, Endpoint::End), (2, Endpoint::Start)),
+   591	            join((2, Endpoint::End), (3, Endpoint::Start)),
+   592	            join((3, Endpoint::End), (0, Endpoint::Start)),
+   593	            join((4, Endpoint::End), (5, Endpoint::Start)),
+   594	            join((5, Endpoint::End), (6, Endpoint::Start)),
+   595	            join((6, Endpoint::End), (7, Endpoint::Start)),
+   596	            join((7, Endpoint::End), (4, Endpoint::Start)),
+   597	        ];
+   598	        let found = rooms_of(&walls, &joins);
+   599	        // The ring-shaped room around the island, and the island's own inside.
+   600	        assert_eq!(found.len(), 2, "got {found:#?}");
+   601	
+   602	        let big = found
+   603	            .iter()
+   604	            .max_by(|a, b| a.area_mm2().partial_cmp(&b.area_mm2()).unwrap())
+   605	            .expect("two rooms");
+   606	        assert_eq!(big.holes.len(), 1, "the island must be a hole");
+   607	        // 9800² of free space inside the shell, less the island's footprint.
+   608	        // That footprint is NOT the full 2200² bounding square: R3.2.3 fills
+   609	        // each outer corner with the convex hull of the two cross-sections,
+   610	        // which is a bevel, so a 100x100 corner square loses half its area.
+   611	        // Four corners, 5000 mm² each.
+   612	        let island_footprint = 2200.0 * 2200.0 - 4.0 * 5000.0;
+   613	        assert_eq!(big.area_mm2(), 9800.0 * 9800.0 - island_footprint);
+   614	
+   615	        // The island's own inside gains the mirror-image bevel at each of its
+   616	        // four inner corners.
+   617	        let small = found
+   618	            .iter()
+   619	            .min_by(|a, b| a.area_mm2().partial_cmp(&b.area_mm2()).unwrap())
+   620	            .expect("two rooms");
+   621	        assert_eq!(small.area_mm2(), 1800.0 * 1800.0);
+   622	    }
+   623	
+   624	    #[test]
+   625	    fn rooms_are_the_same_whichever_way_the_walls_run() {
+   626	        // R3.2.4 / R5.1.3: derived output is invariant under wall reversal.
+   627	        let forward = [
+   628	            wall(0.0, 0.0, 4000.0, 0.0),
+   629	            wall(4000.0, 0.0, 4000.0, 3000.0),
+   630	            wall(4000.0, 3000.0, 0.0, 3000.0),
+   631	            wall(0.0, 3000.0, 0.0, 0.0),
+   632	        ];
+   633	        let fj = [
+   634	            join((0, Endpoint::End), (1, Endpoint::Start)),
+   635	            join((1, Endpoint::End), (2, Endpoint::Start)),
+   636	            join((2, Endpoint::End), (3, Endpoint::Start)),
+   637	            join((3, Endpoint::End), (0, Endpoint::Start)),
+   638	        ];
+   639	        // Same loop, every wall reversed; roles swap with the endpoints.
+   640	        let backward = [
+   641	            wall(4000.0, 0.0, 0.0, 0.0),
+   642	            wall(4000.0, 3000.0, 4000.0, 0.0),
+   643	            wall(0.0, 3000.0, 4000.0, 3000.0),
+   644	            wall(0.0, 0.0, 0.0, 3000.0),
+   645	        ];
+   646	        let bj = [
+   647	            join((0, Endpoint::Start), (1, Endpoint::End)),
+   648	            join((1, Endpoint::Start), (2, Endpoint::End)),
+   649	            join((2, Endpoint::Start), (3, Endpoint::End)),
+   650	            join((3, Endpoint::Start), (0, Endpoint::End)),
+   651	        ];
+   652	        assert_eq!(rooms_of(&forward, &fj), rooms_of(&backward, &bj));
+   653	        assert_eq!(
+   654	            occupied_region(&forward, &fj),
+   655	            occupied_region(&backward, &bj)
+   656	        );
+   657	    }
+   658	
+   659	    #[test]
+   660	    fn unjoined_walls_still_enclose_a_room_where_they_overlap() {
+   661	        // Walls that cross at the corners without any join entity: the union
+   662	        // still closes, so the room exists. Joins refine corners; they are not
+   663	        // what makes a loop enclose.
+   664	        let walls = [
+   665	            wall(0.0, 0.0, 4000.0, 0.0),
+   666	            wall(4000.0, 0.0, 4000.0, 3000.0),
+   667	            wall(4000.0, 3000.0, 0.0, 3000.0),
+   668	            wall(0.0, 3000.0, 0.0, 0.0),
+   669	        ];
+   670	        let found = rooms_of(&walls, &[]);
+   671	        assert_eq!(found.len(), 1, "got {found:#?}");
+   672	        assert_eq!(found[0].area_mm2(), 3800.0 * 2800.0);
+   673	    }
+   674	
+   675	    #[test]
+   676	    fn walls_of_unequal_height_are_irrelevant_to_plan_geometry() {
+   677	        // R3.0.6: height never influences derived occupied geometry. The type
+   678	        // carries no height at all, which is the enforcement — this test
+   679	        // pins the consequence: identical plan input gives identical output.
+   680	        let a = [wall(0.0, 0.0, 4000.0, 0.0)];
+   681	        let b = [WallSolid::new(P(0.0, 0.0), P(4000.0, 0.0), 200.0)];
+   682	        assert_eq!(occupied_region(&a, &[]), occupied_region(&b, &[]));
+   683	    }
+   684	}
+
+codex
+The first concrete risk is the 0.001 mm vertex welding: identity is quantized, while stored coordinates come from whichever edge is encountered first. I’m now checking whether this yields reproducible wrong topology/output, and separately stress-testing the three-way coincident-edge and high-degree traversal rules so I can distinguish real failures from plausible-but-sound cases.
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+try:
+ import shapely
+ print('shapely', shapely.__version__)
+except Exception as e:
+ print(type(e).__name__, e)
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+ModuleNotFoundError No module named 'shapely'
+
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+from fractions import Fraction as F
+from itertools import combinations
+from math import atan2, tau
+
+def rect(x0,y0,x1,y1): return [(F(x0),F(y0)),(F(x1),F(y0)),(F(x1),F(y1)),(F(x0),F(y1))]
+def orient(a,b,c):
+ v=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]); return (v>0)-(v<0)
+def cuts(a,b,others):
+ out={F(0),F(1)}; rx,ry=b[0]-a[0],b[1]-a[1]
+ for c,d in others:
+  sx,sy=d[0]-c[0],d[1]-c[1]; den=rx*sy-ry*sx
+  if den:
+   t=((c[0]-a[0])*sy-(c[1]-a[1])*sx)/den; u=((c[0]-a[0])*ry-(c[1]-a[1])*rx)/den
+   if 0<t<1 and 0<=u<=1: out.add(t)
+  elif orient(a,b,c)==0 and orient(a,b,d)==0:
+   l=rx*rx+ry*ry
+   for p in (c,d):
+    t=((p[0]-a[0])*rx+(p[1]-a[1])*ry)/l
+    if 0<t<1: out.add(t)
+ return sorted(out)
+def classify(p,r):
+ for a,b in zip(r,r[1:]+r[:1]):
+  if orient(a,b,p)==0 and min(a[0],b[0])<=p[0]<=max(a[0],b[0]) and min(a[1],b[1])<=p[1]<=max(a[1],b[1]): return 0
+ inside=False
+ for a,b in zip(r,r[1:]+r[:1]):
+  if (a[1]>p[1]) "'!= (b[1]>p[1]):
+   x=a[0]+(p[1]-a[1])/(b[1]-a[1])*(b[0]-a[0])
+   if x>p[0]: inside=not inside
+ return 1 if inside else -1
+def alg(rs):
+ es=[list(zip(r,r[1:]+r[:1])) for r in rs]; fr=[]
+ for i,ee in enumerate(es):
+  oth=[e for j,x in enumerate(es) if i!=j for e in x]
+  for a,b in ee:
+   cs=cuts(a,b,oth)
+   for u,v in zip(cs,cs[1:]):
+    p=(a[0]+(b[0]-a[0])*u,a[1]+(b[1]-a[1])*u); q=(a[0]+(b[0]-a[0])*v,a[1]+(b[1]-a[1])*v)
+    if p!=q:fr.append((i,p,q))
+ directed={(p,q) for i,p,q in fr}; emit=set(); kept=[]
+ for i,p,q in fr:
+  if (q,p) in directed or (p,q) in emit:continue
+  m=((p[0]+q[0])/2,(p[1]+q[1])/2)
+  if any(j!=i and classify(m,r)==1 for j,r in enumerate(rs)):continue
+  emit.add((p,q));kept.append((p,q))
+ outgoing={};
+ for a,b in kept:outgoing.setdefault(a,[]).append(b);outgoing.setdefault(b,[])
+ starts=sorted(set(kept));visited=set(); rings=[]; bad=False
+ for st in starts:
+  if st in visited:continue
+  a,b=st; ring=[]
+  while True:
+   if (a,b) in visited:break
+   visited.add((a,b));ring.append(a)
+   cs=outgoing.get(b,[])
+   if not cs: bad=True;break
+   back=atan2(float(a[1]-b[1]),float(a[0]-b[0]))
+   vals=[]
+   for c in cs:
+    d=back-atan2(float(c[1]-b[1]),float(c[0]-b[0]))
+    while d<=0:d+=tau
+    while d>tau:d-=tau
+    vals.append((d,c))
+   c=min(vals)[1];a,b=b,c
+   if (a,b)==st:break
+   if len(ring)>len(starts):bad=True;break
+  if len(ring)>=3:rings.append(ring)
+ def area(r):return sum(a[0]*b[1]-a[1]*b[0] for a,b in zip(r,r[1:]+r[:1]))/2
+ return sum(map(area,rings)), rings,bad,len(visited),len(starts)
+def truearea(rs):
+ xs=sorted(set(p[0] for r in rs for p in r));ys=sorted(set(p[1] for r in rs for p in r));z=F(0)
+ for x0,x1 in zip(xs,xs[1:]):
+  for y0,y1 in zip(ys,ys[1:]):
+   m=((x0+x1)/2,(y0+y1)/2)
+   if any(classify(m,r)>=0 for r in rs):z+=(x1-x0)*(y1-y0)
+ return z
+rects=[rect(x0,y0,x1,y1) for x0 in range(3) for x1 in range(x0+1,4) for y0 in range(3) for y1 in range(y0+1,4)]
+for n in (3,4):
+ count=0
+ for ids in combinations(range(len(rects)),n):
+  rs=[rects[i] for i in ids];a,r,b,v,t=alg(rs);want=truearea(rs);count+=1
+  if a!=want or b or v!=t:
+   print('"'FAIL',n,ids,'gotarea',a,'want',want,'bad',b,'vis',v,t,'rings',r);print('inputs',rs);raise SystemExit
+ print('checked',n,count)
+print('no exact-grid rectangle mismatch')
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+# Exact axis-aligned implementation of the five stated rules; random stress against cell-union area.
+from fractions import Fraction as F
+from random import Random
+from math import atan2,tau
+R=Random(7)
+def rect(a,b,c,d):return [(F(a),F(b)),(F(c),F(b)),(F(c),F(d)),(F(a),F(d))]
+def ori(a,b,c):v=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);return (v>0)-(v<0)
+def cls(p,r):
+ for a,b in zip(r,r[1:]+r[:1]):
+  if ori(a,b,p)==0 and min(a[0],b[0])<=p[0]<=max(a[0],b[0]) and min(a[1],b[1])<=p[1]<=max(a[1],b[1]):return 0
+ z=0
+ for a,b in zip(r,r[1:]+r[:1]):
+  if (a[1]>p[1])"'!=(b[1]>p[1]) and a[0]+(p[1]-a[1])*(b[0]-a[0])/(b[1]-a[1])>p[0]:z''^=1
+ return 1 if z else -1
+def cut(a,b,os):
+ C={F(0),F(1)};rx,ry=b[0]-a[0],b[1]-a[1]
+ for c,d in os:
+  sx,sy=d[0]-c[0],d[1]-c[1];de=rx*sy-ry*sx
+  if de:
+   t=((c[0]-a[0])*sy-(c[1]-a[1])*sx)/de;u=((c[0]-a[0])*ry-(c[1]-a[1])*rx)/de
+   if 0<t<1 and 0<=u<=1:C.add(t)
+  elif ori(a,b,c)==ori(a,b,d)==0:
+   l=rx*rx+ry*ry
+   for p in(c,d):
+    t=((p[0]-a[0])*rx+(p[1]-a[1])*ry)/l
+    if 0<t<1:C.add(t)
+ return sorted(C)
+def alg(rs):
+ E=[list(zip(r,r[1:]+r[:1]))for r in rs];FRA=[]
+ for i,ee in enumerate(E):
+  os=[e for j,x in enumerate(E)if i!=j for e in x]
+  for a,b in ee:
+   C=cut(a,b,os)
+   for s,t in zip(C,C[1:]):FRA.append((i,(a[0]+(b[0]-a[0])*s,a[1]+(b[1]-a[1])*s),(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t)))
+ D={(a,b)for _,a,b in FRA};Q=[];em=set()
+ for i,a,b in FRA:
+  if (b,a)in D or(a,b)in em:continue
+  m=((a[0]+b[0])/2,(a[1]+b[1])/2)
+  if any(j!=i and cls(m,r)==1 for j,r in enumerate(rs)):continue
+  em.add((a,b));Q.append((a,b))
+ O={}
+ for a,b in Q:O.setdefault(a,[]).append(b);O.setdefault(b,[])
+ V=set();rings=[]
+ for st in sorted(set(Q)):
+  if st in V:continue
+  a,b=st;q=[]
+  while (a,b)not in V:
+   V.add((a,b));q.append(a);back=atan2(float(a[1]-b[1]),float(a[0]-b[0]));cand=[]
+   for c in O[b]:
+    d=(back-atan2(float(c[1]-b[1]),float(c[0]-b[0])))%tau
+    if d==0:d=tau
+    cand.append((d,c))
+   if not cand:return None
+   a,b=b,min(cand)[1]
+   if(a,b)==st:break
+  rings.append(q)
+ def ar(q):return sum(a[0]*b[1]-a[1]*b[0]for a,b in zip(q,q[1:]+q[:1]))/2
+ return sum(map(ar,rings))
+def truth(rs):
+ X=sorted({p[0]for r in rs for p in r});Y=sorted({p[1]for r in rs for p in r});z=0
+ for a,b in zip(X,X[1:]):
+  for c,d in zip(Y,Y[1:]):
+   if any(cls(((a+b)/2,(c+d)/2),r)==1 for r in rs):z+=(b-a)*(d-c)
+ return z
+for k in range(10000):
+ rs=[]
+ for _ in range(R.randrange(3,8)):
+  a,c=sorted(R.sample(range(7),2));b,d=sorted(R.sample(range(7),2));rs.append(rect(a,b,c,d))
+ if alg(rs)!=truth(rs):print('"'FAIL',rs,alg(rs),truth(rs));break
+else:print('10,000 exact-grid rectangle sets: no area mismatch')
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 95965ms:
+checked 3 7140
+checked 4 58905
+no exact-grid rectangle mismatch
+
+ succeeded in 35645ms:
+10,000 exact-grid rectangle sets: no area mismatch
+
+exec
+/opt/homebrew/bin/bash -lc "nl -ba crates/domowik-geometry/src/boolean.rs | sed -n '1,220p'; nl -ba crates/domowik-geometry/src/walls.rs | sed -n '110,225p'; nl -ba crates/domowik-geometry/src/arrangement.rs | sed -n '1,245p'" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+     1	//! Union of simple polygons by boundary classification.
+     2	//!
+     3	//! # Why a union at all
+     4	//!
+     5	//! BEHAVIOR-SPEC R3.2.1 defines a wall cluster's occupied region as the UNION
+     6	//! of each wall's butt-capped rectangle and each join's patch, and R5.1.1
+     7	//! defines the rooms of a level as the bounded components of the complement of
+     8	//! that region. Both the drawing and the floor area therefore depend on one
+     9	//! operation: unioning overlapping rectangles into a single boundary.
+    10	//!
+    11	//! # How it works
+    12	//!
+    13	//! Every input ring is oriented counter-clockwise, so each directed edge
+    14	//! carries its polygon's interior on its LEFT. Edges are split at every mutual
+    15	//! intersection, after which an edge fragment is either wholly inside another
+    16	//! polygon, wholly outside every other polygon, or exactly coincident with a
+    17	//! fragment of another polygon. Each case has one rule:
+    18	//!
+    19	//! - A fragment with a REVERSED twin has union interior on both sides — the
+    20	//!   two polygons meet back to back — so it is not on the union boundary.
+    21	//! - A fragment strictly inside another polygon is not on the union boundary.
+    22	//! - Anything else is on the boundary; same-direction duplicates keep one copy.
+    23	//!
+    24	//! The surviving directed edges are then traced into rings by always taking
+    25	//! the first outgoing edge encountered when sweeping CLOCKWISE from the edge
+    26	//! we arrived on. That is the `next` rule of a doubly connected edge list for
+    27	//! a face lying to the left of its boundary, and it splits a vertex where two
+    28	//! components touch at a single point into two simple rings rather than one
+    29	//! figure-eight — which is what R5.1.2 requires of pinch points.
+    30	
+    31	use crate::arrangement::classify_point;
+    32	use crate::arrangement::{cut_params, lerp, ring_contains_ring, Containment, VertexKey, WELD_MM};
+    33	use crate::polygon::{canonical_ring, compare_polygons, signed_double_area, Polygon, Winding};
+    34	use domowik_format::Point;
+    35	use std::collections::{HashMap, HashSet};
+    36	
+    37	/// The union of `rings`, as canonical polygons with holes.
+    38	///
+    39	/// Each input is treated as a simple closed ring; winding is normalized, so
+    40	/// callers need not supply a particular direction. Rings that enclose no area
+    41	/// contribute nothing: a degenerate join patch (R3.2.3) is a closed segment
+    42	/// through the join node and is always covered by the cross-section it came
+    43	/// from, so dropping it changes neither the region nor its boundary.
+    44	///
+    45	/// Output is deterministic: components are sorted by the R3.2.4 canonical
+    46	/// ordering, so the same document always renders the same sequence.
+    47	pub fn union(rings: &[Vec<Point>]) -> Vec<Polygon> {
+    48	    let inputs: Vec<Vec<Point>> = rings
+    49	        .iter()
+    50	        .filter_map(|r| canonical_ring(r, Winding::CounterClockwise))
+    51	        .collect();
+    52	    if inputs.is_empty() {
+    53	        return Vec::new();
+    54	    }
+    55	
+    56	    let fragments = split_all(&inputs);
+    57	    let kept = classify_fragments(&inputs, &fragments);
+    58	    let rings = trace_rings(&kept);
+    59	    assemble(rings)
+    60	}
+    61	
+    62	/// A directed edge fragment and the index of the polygon it came from.
+    63	struct Fragment {
+    64	    owner: usize,
+    65	    from: Point,
+    66	    to: Point,
+    67	}
+    68	
+    69	/// Splits every ring edge at every intersection with every other ring's edges.
+    70	///
+    71	/// Edges of the SAME ring are not cut against each other: inputs are simple
+    72	/// rings, so their own edges meet only at shared endpoints, and passing them
+    73	/// through the collinear-overlap test would cut every edge at its own
+    74	/// neighbours for nothing.
+    75	fn split_all(inputs: &[Vec<Point>]) -> Vec<Fragment> {
+    76	    let edges_of: Vec<Vec<(Point, Point)>> = inputs
+    77	        .iter()
+    78	        .map(|ring| {
+    79	            (0..ring.len())
+    80	                .map(|i| (ring[i], ring[(i + 1) % ring.len()]))
+    81	                .collect()
+    82	        })
+    83	        .collect();
+    84	
+    85	    // Rings that cannot touch cannot cut each other. Without this every ring
+    86	    // is tested against every other, which is the whole cost on a plan where
+    87	    // most walls are nowhere near each other.
+    88	    let boxes: Vec<Bounds> = inputs.iter().map(|r| Bounds::of(r)).collect();
+    89	
+    90	    let mut out = Vec::new();
+    91	    for (i, edges) in edges_of.iter().enumerate() {
+    92	        let others: Vec<(Point, Point)> = edges_of
+    93	            .iter()
+    94	            .enumerate()
+    95	            .filter(|(j, _)| *j != i && boxes[i].overlaps(&boxes[*j]))
+    96	            .flat_map(|(_, e)| e.iter().copied())
+    97	            .collect();
+    98	
+    99	        for &(a, b) in edges {
+   100	            if VertexKey::of(a) == VertexKey::of(b) {
+   101	                continue;
+   102	            }
+   103	            for w in cut_params(a, b, &others).windows(2) {
+   104	                let (p, q) = (lerp(a, b, w[0]), lerp(a, b, w[1]));
+   105	                if VertexKey::of(p) != VertexKey::of(q) {
+   106	                    out.push(Fragment {
+   107	                        owner: i,
+   108	                        from: p,
+   109	                        to: q,
+   110	                    });
+   111	                }
+   112	            }
+   113	        }
+   114	    }
+   115	    out
+   116	}
+   117	
+   118	/// An axis-aligned bounding box, used only to reject pairs that cannot
+   119	/// interact before any exact predicate runs.
+   120	#[derive(Debug, Clone, Copy)]
+   121	struct Bounds {
+   122	    min_x: f64,
+   123	    min_y: f64,
+   124	    max_x: f64,
+   125	    max_y: f64,
+   126	}
+   127	
+   128	impl Bounds {
+   129	    fn of(ring: &[Point]) -> Self {
+   130	        let mut b = Self {
+   131	            min_x: f64::INFINITY,
+   132	            min_y: f64::INFINITY,
+   133	            max_x: f64::NEG_INFINITY,
+   134	            max_y: f64::NEG_INFINITY,
+   135	        };
+   136	        for p in ring {
+   137	            b.min_x = b.min_x.min(p.x);
+   138	            b.min_y = b.min_y.min(p.y);
+   139	            b.max_x = b.max_x.max(p.x);
+   140	            b.max_y = b.max_y.max(p.y);
+   141	        }
+   142	        b
+   143	    }
+   144	
+   145	    /// Overlap is tested with a weld-width margin, so two rings that only
+   146	    /// TOUCH — the normal case for a wall meeting a join patch — are never
+   147	    /// rejected by a boundary comparison that rounding could tip either way.
+   148	    fn overlaps(&self, other: &Self) -> bool {
+   149	        self.min_x <= other.max_x + WELD_MM
+   150	            && other.min_x <= self.max_x + WELD_MM
+   151	            && self.min_y <= other.max_y + WELD_MM
+   152	            && other.min_y <= self.max_y + WELD_MM
+   153	    }
+   154	
+   155	    fn contains(&self, p: Point) -> bool {
+   156	        p.x >= self.min_x - WELD_MM
+   157	            && p.x <= self.max_x + WELD_MM
+   158	            && p.y >= self.min_y - WELD_MM
+   159	            && p.y <= self.max_y + WELD_MM
+   160	    }
+   161	}
+   162	
+   163	/// Applies the three boundary rules and returns the surviving directed edges.
+   164	fn classify_fragments(inputs: &[Vec<Point>], fragments: &[Fragment]) -> Vec<(Point, Point)> {
+   165	    let mut directed: HashSet<(VertexKey, VertexKey)> = HashSet::new();
+   166	    for f in fragments {
+   167	        directed.insert((VertexKey::of(f.from), VertexKey::of(f.to)));
+   168	    }
+   169	
+   170	    let boxes: Vec<Bounds> = inputs.iter().map(|r| Bounds::of(r)).collect();
+   171	    let mut emitted: HashSet<(VertexKey, VertexKey)> = HashSet::new();
+   172	    let mut kept = Vec::new();
+   173	
+   174	    for f in fragments {
+   175	        let key = (VertexKey::of(f.from), VertexKey::of(f.to));
+   176	        // Rule 1: a reversed twin means interior on both sides.
+   177	        if directed.contains(&(key.1, key.0)) {
+   178	            continue;
+   179	        }
+   180	        // Rule 3 (dedupe): identical direction from two polygons is one edge.
+   181	        if emitted.contains(&key) {
+   182	            continue;
+   183	        }
+   184	        // Rule 2: strictly inside any other polygon.
+   185	        let mid = Point::new((f.from.x + f.to.x) / 2.0, (f.from.y + f.to.y) / 2.0);
+   186	        let swallowed = inputs.iter().enumerate().any(|(j, ring)| {
+   187	            j != f.owner
+   188	                && boxes[j].contains(mid)
+   189	                && classify_point(mid, ring) == Containment::Inside
+   190	        });
+   191	        if swallowed {
+   192	            continue;
+   193	        }
+   194	        emitted.insert(key);
+   195	        kept.push((f.from, f.to));
+   196	    }
+   197	    kept
+   198	}
+   199	
+   200	/// Walks the surviving directed edges into closed rings.
+   201	fn trace_rings(edges: &[(Point, Point)]) -> Vec<Vec<Point>> {
+   202	    let mut position: HashMap<VertexKey, Point> = HashMap::new();
+   203	    let mut outgoing: HashMap<VertexKey, Vec<VertexKey>> = HashMap::new();
+   204	    for &(a, b) in edges {
+   205	        let (ka, kb) = (VertexKey::of(a), VertexKey::of(b));
+   206	        position.entry(ka).or_insert(a);
+   207	        position.entry(kb).or_insert(b);
+   208	        outgoing.entry(ka).or_default().push(kb);
+   209	        outgoing.entry(kb).or_default();
+   210	    }
+   211	
+   212	    // Deterministic start order: HashMap iteration order must never reach the
+   213	    // output, or the same document renders a different component sequence
+   214	    // between runs.
+   215	    let mut starts: Vec<(VertexKey, VertexKey)> = edges
+   216	        .iter()
+   217	        .map(|&(a, b)| (VertexKey::of(a), VertexKey::of(b)))
+   218	        .collect();
+   219	    starts.sort();
+   220	    starts.dedup();
+   110	    let half = wall.thickness_mm / 2.0;
+   111	    let (nx, ny) = (-dy / len * half, dx / len * half);
+   112	    Some([
+   113	        Point::new(at.x + nx, at.y + ny),
+   114	        Point::new(at.x - nx, at.y - ny),
+   115	    ])
+   116	}
+   117	
+   118	/// The patch filling a join: the convex hull of its members' cross-sections
+   119	/// (R3.2.3).
+   120	///
+   121	/// Returns the hull vertices counter-clockwise. When every contributed point
+   122	/// is collinear — a straight continuation, fixture F3 — the hull degenerates
+   123	/// to the two extremes of a closed segment; the caller unions it as a closed
+   124	/// set, and since every cross-section is centred on the shared node, that
+   125	/// segment always lies within the thickest member's own rectangle.
+   126	pub fn join_patch(walls: &[WallSolid], join: &JoinSpec) -> Vec<Point> {
+   127	    let mut points = Vec::with_capacity(join.members.len() * 2);
+   128	    for m in &join.members {
+   129	        let Some(wall) = walls.get(m.wall) else {
+   130	            continue;
+   131	        };
+   132	        if let Some(cs) = cross_section(wall, m.endpoint) {
+   133	            points.extend_from_slice(&cs);
+   134	        }
+   135	    }
+   136	    convex_hull(&points)
+   137	}
+   138	
+   139	/// The occupied region of a set of walls and their joins (R3.2.1).
+   140	///
+   141	/// The result is a canonical, deterministically ordered multipolygon; it may
+   142	/// be disconnected, and components may carry holes. Walls of unequal height
+   143	/// join in plan (R3.0.6) because height is not an input here.
+   144	///
+   145	/// All walls passed in must belong to the SAME level: R3.0.6 and R5.1.1 make
+   146	/// levels non-interacting, and mixing them would fuse geometry that never
+   147	/// touches.
+   148	pub fn occupied_region(walls: &[WallSolid], joins: &[JoinSpec]) -> Vec<Polygon> {
+   149	    let mut rings: Vec<Vec<Point>> = Vec::with_capacity(walls.len() + joins.len());
+   150	    for wall in walls {
+   151	        if let Some(rect) = wall.rectangle() {
+   152	            rings.push(rect.to_vec());
+   153	        }
+   154	    }
+   155	    for join in joins {
+   156	        let patch = join_patch(walls, join);
+   157	        if patch.len() >= 3 {
+   158	            rings.push(patch);
+   159	        }
+   160	    }
+   161	    crate::boolean::union(&rings)
+   162	}
+   163	
+   164	/// The rooms of a level: the bounded components of the complement of `region`
+   165	/// (R5.1.1, R5.1.2).
+   166	///
+   167	/// Every hole of the occupied region is one room, bounded by the inner faces
+   168	/// of the surrounding walls. A separate wall cluster standing inside such a
+   169	/// hole — an island in a courtyard — becomes a hole of that room (R5.1.4), so
+   170	/// its footprint is not counted as floor area.
+   171	///
+   172	/// Output is totally ordered by the R5.1.3 canonical comparison.
+   173	pub fn rooms(region: &[Polygon]) -> Vec<Polygon> {
+   174	    let mut out = Vec::new();
+   175	
+   176	    for component in region {
+   177	        for hole in &component.holes {
+   178	            // The hole ring winds clockwise as a void; as a room boundary it
+   179	            // is an exterior ring and must wind counter-clockwise.
+   180	            let outer: Vec<Point> = hole.iter().rev().copied().collect();
+   181	
+   182	            // Islands standing in this room. Only the IMMEDIATE ones: an
+   183	            // island inside another island's own courtyard belongs to that
+   184	            // courtyard, and charging it here would subtract it twice.
+   185	            let inside: Vec<&Polygon> = region
+   186	                .iter()
+   187	                .filter(|c| ring_contains_ring(&outer, &c.outer))
+   188	                .collect();
+   189	            let holes: Vec<Vec<Point>> = inside
+   190	                .iter()
+   191	                .filter(|c| {
+   192	                    !inside.iter().any(|other| {
+   193	                        !std::ptr::eq(*other, **c) && ring_contains_ring(&other.outer, &c.outer)
+   194	                    })
+   195	                })
+   196	                .map(|c| c.outer.clone())
+   197	                .collect();
+   198	
+   199	            if let Some(room) = (Polygon { outer, holes }).canonicalize() {
+   200	                out.push(room);
+   201	            }
+   202	        }
+   203	    }
+   204	
+   205	    out.sort_by(compare_polygons);
+   206	    out
+   207	}
+   208	
+   209	/// Convenience: the rooms enclosed by `walls` and `joins` on one level.
+   210	pub fn rooms_of(walls: &[WallSolid], joins: &[JoinSpec]) -> Vec<Polygon> {
+   211	    rooms(&occupied_region(walls, joins))
+   212	}
+   213	
+   214	#[cfg(test)]
+   215	mod tests {
+   216	    use super::*;
+   217	
+   218	    const P: fn(f64, f64) -> Point = Point::new;
+   219	
+   220	    fn wall(x0: f64, y0: f64, x1: f64, y1: f64) -> WallSolid {
+   221	        WallSolid::new(P(x0, y0), P(x1, y1), 200.0)
+   222	    }
+   223	
+   224	    /// Four walls running corner to corner around a closed rectangle.
+   225	    fn closed_loop(corners: &[(f64, f64)]) -> Vec<WallSolid> {
+     1	//! Shared planar-arrangement primitives: vertex welding, segment splitting,
+     2	//! and point classification against a ring.
+     3	//!
+     4	//! These are the pieces every boolean or face-traversal routine needs before
+     5	//! it can reason about a set of segments as a graph. They live here rather
+     6	//! than inside one consumer because two of them existing in two copies is how
+     7	//! a fix lands in one and not the other.
+     8	
+     9	use crate::{orientation, Orientation};
+    10	use domowik_format::Point;
+    11	
+    12	/// Endpoints within this distance are treated as the same vertex.
+    13	///
+    14	/// One micrometre: far below any meaningful building dimension, far above
+    15	/// floating-point noise on millimetre coordinates.
+    16	pub const WELD_MM: f64 = 0.001;
+    17	
+    18	/// A vertex identity that tolerates rounding.
+    19	///
+    20	/// Two points that quantize to the same key are the same graph vertex. This is
+    21	/// what lets an intersection computed along one segment and the same
+    22	/// intersection computed along another meet in the adjacency structure instead
+    23	/// of becoming two vertices a nanometre apart.
+    24	#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    25	pub struct VertexKey(pub i64, pub i64);
+    26	
+    27	impl VertexKey {
+    28	    /// Quantizes `p` onto the weld grid.
+    29	    pub fn of(p: Point) -> Self {
+    30	        Self(
+    31	            (p.x / WELD_MM).round() as i64,
+    32	            (p.y / WELD_MM).round() as i64,
+    33	        )
+    34	    }
+    35	}
+    36	
+    37	/// Where a point lies relative to a closed ring.
+    38	#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    39	pub enum Containment {
+    40	    /// Strictly inside.
+    41	    Inside,
+    42	    /// Exactly on an edge or vertex.
+    43	    Boundary,
+    44	    /// Strictly outside.
+    45	    Outside,
+    46	}
+    47	
+    48	/// Linear interpolation along `a → b`.
+    49	pub fn lerp(a: Point, b: Point, t: f64) -> Point {
+    50	    Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+    51	}
+    52	
+    53	/// Parameter `t` along `a→b` at which it meets `c→d`, if they properly cross
+    54	/// or touch. `None` when they are parallel, collinear, or do not meet.
+    55	pub fn intersection_param(a: Point, b: Point, c: Point, d: Point) -> Option<f64> {
+    56	    // Use the robust predicate to decide whether a crossing exists at all,
+    57	    // before computing where. Straddling on both sides is the crossing test.
+    58	    let (o1, o2) = (orientation(a, b, c), orientation(a, b, d));
+    59	    let (o3, o4) = (orientation(c, d, a), orientation(c, d, b));
+    60	
+    61	    let proper = o1 != o2 && o3 != o4;
+    62	    let touching = o1 == Orientation::Collinear
+    63	        || o2 == Orientation::Collinear
+    64	        || o3 == Orientation::Collinear
+    65	        || o4 == Orientation::Collinear;
+    66	
+    67	    if !proper && !touching {
+    68	        return None;
+    69	    }
+    70	
+    71	    let (r1, r2) = (b.x - a.x, b.y - a.y);
+    72	    let (s1, s2) = (d.x - c.x, d.y - c.y);
+    73	    let denom = r1 * s2 - r2 * s1;
+    74	    if denom == 0.0 {
+    75	        // Parallel or collinear: no single crossing parameter.
+    76	        return None;
+    77	    }
+    78	    let t = ((c.x - a.x) * s2 - (c.y - a.y) * s1) / denom;
+    79	    let u = ((c.x - a.x) * r2 - (c.y - a.y) * r1) / denom;
+    80	
+    81	    if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+    82	        Some(t)
+    83	    } else {
+    84	        None
+    85	    }
+    86	}
+    87	
+    88	/// Parameters along `a→b` at which a COLLINEAR overlapping segment `c→d`
+    89	/// starts or ends.
+    90	///
+    91	/// [`intersection_param`] returns `None` for collinear input because there is
+    92	/// no single crossing point. That is correct as far as it goes, but on its own
+    93	/// it leaves overlapping segments unsplit: two collinear walls sharing part of
+    94	/// their length produce duplicate edges over the shared span, which corrupts
+    95	/// the angular adjacency and destroys the face walk. Overlapping walls are a
+    96	/// normal result of editing, so this is not an exotic case.
+    97	pub fn collinear_overlap_params(a: Point, b: Point, c: Point, d: Point) -> Vec<f64> {
+    98	    // Only meaningful when all four points are collinear.
+    99	    if orientation(a, b, c) != Orientation::Collinear
+   100	        || orientation(a, b, d) != Orientation::Collinear
+   101	    {
+   102	        return Vec::new();
+   103	    }
+   104	    let (rx, ry) = (b.x - a.x, b.y - a.y);
+   105	    let len2 = rx * rx + ry * ry;
+   106	    if len2 == 0.0 {
+   107	        return Vec::new();
+   108	    }
+   109	    // Project c and d onto a→b as parameters.
+   110	    [c, d]
+   111	        .iter()
+   112	        .map(|p| ((p.x - a.x) * rx + (p.y - a.y) * ry) / len2)
+   113	        .filter(|t| *t > 0.0 && *t < 1.0)
+   114	        .collect()
+   115	}
+   116	
+   117	/// Every cut parameter along `a→b` induced by the segments in `others`.
+   118	///
+   119	/// The returned vector always begins at `0.0`, ends at `1.0`, is sorted, and
+   120	/// has near-duplicates collapsed, so `windows(2)` yields the sub-edges
+   121	/// directly.
+   122	pub fn cut_params(a: Point, b: Point, others: &[(Point, Point)]) -> Vec<f64> {
+   123	    let mut cuts: Vec<f64> = vec![0.0, 1.0];
+   124	    for &(c, d) in others {
+   125	        if VertexKey::of(c) == VertexKey::of(d) {
+   126	            continue;
+   127	        }
+   128	        if let Some(t) = intersection_param(a, b, c, d) {
+   129	            if t > 0.0 && t < 1.0 {
+   130	                cuts.push(t);
+   131	            }
+   132	        }
+   133	        cuts.extend(collinear_overlap_params(a, b, c, d));
+   134	    }
+   135	    cuts.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+   136	    cuts.dedup_by(|x, y| (*x - *y).abs() < 1e-12);
+   137	    cuts
+   138	}
+   139	
+   140	/// Classifies `p` against the closed ring `ring`.
+   141	///
+   142	/// The boundary test uses the exact orientation predicate, so a point lying on
+   143	/// an edge is reported as [`Containment::Boundary`] rather than falling to
+   144	/// whichever side rounding prefers. The interior test is the standard
+   145	/// crossing-number rule, evaluated only after the boundary case is excluded.
+   146	pub fn classify_point(p: Point, ring: &[Point]) -> Containment {
+   147	    if ring.len() < 3 {
+   148	        return Containment::Outside;
+   149	    }
+   150	    let n = ring.len();
+   151	
+   152	    for i in 0..n {
+   153	        let (a, b) = (ring[i], ring[(i + 1) % n]);
+   154	        if orientation(a, b, p) == Orientation::Collinear
+   155	            && p.x >= a.x.min(b.x)
+   156	            && p.x <= a.x.max(b.x)
+   157	            && p.y >= a.y.min(b.y)
+   158	            && p.y <= a.y.max(b.y)
+   159	        {
+   160	            return Containment::Boundary;
+   161	        }
+   162	    }
+   163	
+   164	    // Crossing number along the ray y = p.y, x > p.x. The half-open rule on
+   165	    // the vertical span (`a.y > p.y` differs from `b.y > p.y`) counts a vertex
+   166	    // exactly once when the ray passes through it.
+   167	    let mut inside = false;
+   168	    for i in 0..n {
+   169	        let (a, b) = (ring[i], ring[(i + 1) % n]);
+   170	        if (a.y > p.y) != (b.y > p.y) {
+   171	            let x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
+   172	            if x > p.x {
+   173	                inside = !inside;
+   174	            }
+   175	        }
+   176	    }
+   177	    if inside {
+   178	        Containment::Inside
+   179	    } else {
+   180	        Containment::Outside
+   181	    }
+   182	}
+   183	
+   184	/// True when every vertex of `inner` is inside or on `outer`, and at least one
+   185	/// is strictly inside.
+   186	///
+   187	/// Written for rings that are known not to cross — the arrangement has already
+   188	/// split every crossing — so vertex containment settles ring containment.
+   189	pub fn ring_contains_ring(outer: &[Point], inner: &[Point]) -> bool {
+   190	    let mut any_strictly_inside = false;
+   191	    for &p in inner {
+   192	        match classify_point(p, outer) {
+   193	            Containment::Outside => return false,
+   194	            Containment::Inside => any_strictly_inside = true,
+   195	            Containment::Boundary => {}
+   196	        }
+   197	    }
+   198	    any_strictly_inside
+   199	}
+   200	
+   201	#[cfg(test)]
+   202	mod tests {
+   203	    use super::*;
+   204	
+   205	    const P: fn(f64, f64) -> Point = Point::new;
+   206	
+   207	    fn square() -> Vec<Point> {
+   208	        vec![P(0.0, 0.0), P(10.0, 0.0), P(10.0, 10.0), P(0.0, 10.0)]
+   209	    }
+   210	
+   211	    #[test]
+   212	    fn classify_point_separates_inside_boundary_and_outside() {
+   213	        assert_eq!(classify_point(P(5.0, 5.0), &square()), Containment::Inside);
+   214	        assert_eq!(
+   215	            classify_point(P(0.0, 5.0), &square()),
+   216	            Containment::Boundary
+   217	        );
+   218	        assert_eq!(
+   219	            classify_point(P(0.0, 0.0), &square()),
+   220	            Containment::Boundary
+   221	        );
+   222	        assert_eq!(
+   223	            classify_point(P(-1.0, 5.0), &square()),
+   224	            Containment::Outside
+   225	        );
+   226	    }
+   227	
+   228	    #[test]
+   229	    fn classify_point_counts_a_vertex_crossing_once() {
+   230	        // The ray from (-1, 10) passes exactly through two ring vertices. A
+   231	        // rule that counted both edges at each vertex would report Inside.
+   232	        let ring = square();
+   233	        assert_eq!(classify_point(P(-1.0, 10.0), &ring), Containment::Outside);
+   234	        assert_eq!(classify_point(P(-1.0, 0.0), &ring), Containment::Outside);
+   235	    }
+   236	
+   237	    #[test]
+   238	    fn classify_point_handles_a_concave_ring() {
+   239	        // An L shape; the notch is outside even though it is inside the
+   240	        // bounding box.
+   241	        let l = vec![
+   242	            P(0.0, 0.0),
+   243	            P(10.0, 0.0),
+   244	            P(10.0, 4.0),
+   245	            P(4.0, 4.0),
+
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+from math import atan2,tau
+W=.001
+key=lambda p:(round(p[0]/W),round(p[1]/W))
+rings=[[(0,0),(1,0),(1,1),(0,1)],[(1.0004,0),(2,0),(2,1),(1.0004,1)]]
+fr=[(i,a,r[(j+1)%len(r)]) for i,r in enumerate(rings) for j,a in enumerate(r)]
+D={(key(a),key(b)) for _,a,b in fr}
+kept=[];em=set()
+for i,a,b in fr:
+ k=(key(a),key(b))
+ if (k[1],k[0]) in D or k in em:continue
+ # For these two rectangles no surviving edge midpoint is strictly inside the other.
+ em.add(k);kept.append((a,b))
+pos={};out={}
+for a,b in kept:
+ ka,kb=key(a),key(b);pos.setdefault(ka,a);pos.setdefault(kb,b);out.setdefault(ka,[]).append(kb);out.setdefault(kb,[])
+starts=sorted(set((key(a),key(b)) for a,b in kept));vis=set();tr=[]
+for st in starts:
+ if st in vis:continue
+ a,b=st;q=[]
+ while (a,b) not in vis:
+  vis.add((a,b));q.append(pos[a]);back=atan2(pos[a][1]-pos[b][1],pos[a][0]-pos[b][0]);z=[]
+  for c in out[b]:
+   d=(back-atan2(pos[c][1]-pos[b][1],pos[c][0]-pos[b][0]))%tau
+   if d==0:d=tau
+   z.append((d,c))
+  a,b=b,min(z)[1]
+  if (a,b)==st:break
+ tr.append(q)
+print('keys at false seam:',key((1,0)),key((1.0004,0)),key((1,1)),key((1.0004,1)))
+print('kept:',kept)
+print('raw traced rings:',tr)
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+keys at false seam: (1000, 0) (1000, 0) (1000, 1000) (1000, 1000)
+kept: [((0, 0), (1, 0)), ((1, 1), (0, 1)), ((0, 1), (0, 0)), ((1.0004, 0), (2, 0)), ((2, 0), (2, 1)), ((2, 1), (1.0004, 1))]
+raw traced rings: [[(0, 0), (1, 0), (2, 0), (2, 1), (1, 1), (0, 1)]]
+
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+from math import atan2,tau
+W=.001;K=lambda p:(round(p[0]/W),round(p[1]/W))
+A=[(0,0),(1,0),(1,1),(0,1)];B=[(1.0004,1.0004),(2,1.0004),(2,2),(1.0004,2)]
+def trace(rs):
+ E=[(a,r[(i+1)%4])for r in rs for i,a in enumerate(r)];P={};O={}
+ for a,b in E:
+  x,y=K(a),K(b);P.setdefault(x,a);P.setdefault(y,b);O.setdefault(x,[]).append(y);O.setdefault(y,[])
+ S=sorted((K(a),K(b))for a,b in E);V=set();R=[]
+ for st in S:
+  if st in V:continue
+  a,b=st;q=[]
+  while(a,b)not in V:
+   V.add((a,b));q.append(P[a]);back=atan2(P[a][1]-P[b][1],P[a][0]-P[b][0]);C=[]
+   for c in O[b]:
+    d=(back-atan2(P[c][1]-P[b][1],P[c][0]-P[b][0]))%tau
+    if d==0:d=tau
+    C.append((d,c))
+   a,b=b,min(C)[1]
+   if(a,b)==st:break
+  R.append(q)
+ return R
+print('A,B',trace([A,B]));print('B,A',trace([B,A]))
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+A,B [[(0, 0), (1, 0), (1, 1), (0, 1)], [(1, 1), (2, 1.0004), (2, 2), (1.0004, 2)]]
+B,A [[(0, 0), (1, 0), (1.0004, 1.0004), (0, 1)], [(1.0004, 1.0004), (2, 1.0004), (2, 2), (1.0004, 2)]]
+
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+def area(r):return abs(sum(a[0]*b[1]-a[1]*b[0] for a,b in zip(r,r[1:]+r[:1])))/2
+cases=[[(1,1),(2,1.0004),(2,2),(1.0004,2)],[(0,0),(1,0),(1.0004,1.0004),(0,1)]]
+print([area(x) for x in cases], 'correct B',.9996**2)
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+[0.9996, 1.0004] correct B 0.9992001600000001
+
+codex
+Two failures are now concrete: quantized “twins” merge genuinely disjoint polygons across a 0.0004 mm gap, and a cycle of point-touching occupied components encloses a room that `rooms` cannot see because no individual `Polygon` carries the global hole. I’m verifying the exact traced rings and checking whether the weld also violates input-order determinism.
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+# Faithful specialized trace for the five axis-aligned frame rectangles below.
+from math import atan2,tau
+W=.001; K=lambda p:(round(p[0]/W),round(p[1]/W))
+def rect(x0,y0,x1,y1):return [(x0,y0),(x1,y0),(x1,y1),(x0,y1)]
+R=[rect(0,0,9,1),rect(9,0,10,1),rect(9,1.0004,10,10),rect(0,9,9,10),rect(0,1,1,9)]
+def orient(a,b,c):
+ v=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);return (v>0)-(v<0)
+def cuts(a,b,others):
+ C=[0.,1.];rx,ry=b[0]-a[0],b[1]-a[1]
+ for c,d in others:
+  sx,sy=d[0]-c[0],d[1]-c[1];den=rx*sy-ry*sx
+  if den:
+   t=((c[0]-a[0])*sy-(c[1]-a[1])*sx)/den;u=((c[0]-a[0])*ry-(c[1]-a[1])*rx)/den
+   if 0<t<1 and 0<=u<=1:C.append(t)
+  elif orient(a,b,c)==0 and orient(a,b,d)==0:
+   z=rx*rx+ry*ry
+   for p in(c,d):
+    t=((p[0]-a[0])*rx+(p[1]-a[1])*ry)/z
+    if 0<t<1:C.append(t)
+ return sorted(set(C))
+def inside(p,r):return r[0][0]<p[0]<r[2][0] and r[0][1]<p[1]<r[2][1]
+E=[list(zip(r,r[1:]+r[:1]))for r in R];F=[]
+for i,es in enumerate(E):
+ os=[e for j,x in enumerate(E)if i"'!=j for e in x]
+ for a,b in es:
+  C=cuts(a,b,os)
+  for s,t in zip(C,C[1:]):
+   p=(a[0]+(b[0]-a[0])*s,a[1]+(b[1]-a[1])*s);q=(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t)
+   if K(p)!=K(q):F.append((i,p,q))
+D={(K(a),K(b))for _,a,b in F};Q=[];seen=set()
+for i,a,b in F:
+ k=(K(a),K(b));m=((a[0]+b[0])/2,(a[1]+b[1])/2)
+ if (k[1],k[0])in D or k in seen or any(j!=i and inside(m,r)for j,r in enumerate(R)):continue
+ seen.add(k);Q.append((a,b))
+P={};O={}
+for a,b in Q:
+ x,y=K(a),K(b);P.setdefault(x,a);P.setdefault(y,b);O.setdefault(x,[]).append(y);O.setdefault(y,[])
+S=sorted(set((K(a),K(b))for a,b in Q));V=set();rings=[]
+for st in S:
+ if st in V:continue
+ a,b=st;q=[]
+ while(a,b)not in V:
+  V.add((a,b));q.append(P[a]);back=atan2(P[a][1]-P[b][1],P[a][0]-P[b][0]);C=[]
+  for c in O[b]:
+   d=(back-atan2(P[c][1]-P[b][1],P[c][0]-P[b][0]))%tau
+   if d==0:d=tau
+   C.append((d,c))
+  a,b=b,min(C)[1]
+  if(a,b)==st:break
+ rings.append(q)
+def area(q):return sum(a[0]*b[1]-a[1]*b[0]for a,b in zip(q,q[1:]+q[:1]))/2
+print([(q,area(q))for q in rings])
+PY' in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+from math import atan2,tau
+R=[[(0,0),(5,0),(0,5)],[(5,0),(10,0),(10,5)],[(10,5),(10,10),(5,10)],[(5,10),(0,10),(0,5)]]
+E=[(a,r[(i+1)%len(r)])for r in R for i,a in enumerate(r)];P={};O={}
+for a,b in E:P.setdefault(a,a);P.setdefault(b,b);O.setdefault(a,[]).append(b);O.setdefault(b,[])
+V=set();out=[]
+for st in sorted(E):
+ if st in V:continue
+ a,b=st;q=[]
+ while(a,b)not in V:
+  V.add((a,b));q.append(a);back=atan2(a[1]-b[1],a[0]-b[0]);C=[]
+  for c in O[b]:
+   d=(back-atan2(c[1]-b[1],c[0]-b[0]))%tau
+   if d==0:d=tau
+   C.append((d,c))
+  a,b=b,min(C)[1]
+  if(a,b)==st:break
+ out.append(q)
+print(out)
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+[[(0, 0), (5, 0), (0, 5)], [(0, 5), (5, 10), (0, 10)], [(5, 0), (10, 0), (10, 5)], [(5, 10), (10, 5), (10, 10)]]
+
+exec
+/opt/homebrew/bin/bash -lc "python3 - <<'PY'
+# Specialized faithful simulation for close cut parameters on a very long edge.
+from math import atan2,tau
+W=.001;K=lambda p:(round(p[0]/W),round(p[1]/W))
+R=[[(0.,0.),(1e13,0.),(1e13,10.),(0.,10.)],[(5e12,-5.),(5e12+.5,-5.),(5e12+.5,5.),(5e12,5.)]]
+def ori(a,b,c):v=(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);return (v>0)-(v<0)
+def cuts(a,b,os):
+ C=[0.,1.];rx,ry=b[0]-a[0],b[1]-a[1]
+ for c,d in os:
+  sx,sy=d[0]-c[0],d[1]-c[1];de=rx*sy-ry*sx
+  if de:
+   t=((c[0]-a[0])*sy-(c[1]-a[1])*sx)/de;u=((c[0]-a[0])*ry-(c[1]-a[1])*rx)/de
+   if 0<=t<=1 and 0<=u<=1 and 0<t<1:C.append(t)
+  elif ori(a,b,c)==ori(a,b,d)==0:
+   z=rx*rx+ry*ry
+   for p in(c,d):
+    t=((p[0]-a[0])*rx+(p[1]-a[1])*ry)/z
+    if 0<t<1:C.append(t)
+ C.sort();D=[]
+ for x in C:
+  if not D or abs(x-D[-1])>=1e-12:D.append(x)
+ return D
+def cls(p,r):
+ for a,b in zip(r,r[1:]+r[:1]):
+  if ori(a,b,p)==0 and min(a[0],b[0])<=p[0]<=max(a[0],b[0]) and min(a[1],b[1])<=p[1]<=max(a[1],b[1]):return 0
+ z=False
+ for a,b in zip(r,r[1:]+r[:1]):
+  if(a[1]>p[1])"'!=(b[1]>p[1]):
+   x=a[0]+(p[1]-a[1])/(b[1]-a[1])*(b[0]-a[0])
+   if x>p[0]:z=not z
+ return 1 if z else -1
+E=[list(zip(r,r[1:]+r[:1]))for r in R];F=[]
+for i,es in enumerate(E):
+ os=[e for j,x in enumerate(E)if i!=j for e in x]
+ for a,b in es:
+  C=cuts(a,b,os)
+  for s,t in zip(C,C[1:]):
+   p=(a[0]+(b[0]-a[0])*s,a[1]+(b[1]-a[1])*s);q=(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t)
+   if K(p)!=K(q):F.append((i,p,q))
+D={(K(a),K(b))for _,a,b in F};Q=[];em=set()
+for i,a,b in F:
+ k=(K(a),K(b));m=((a[0]+b[0])/2,(a[1]+b[1])/2)
+ if (k[1],k[0])in D or k in em or any(j!=i and cls(m,r)==1 for j,r in enumerate(R)):continue
+ em.add(k);Q.append((a,b))
+P={};O={}
+for a,b in Q:
+ x,y=K(a),K(b);P.setdefault(x,a);P.setdefault(y,b);O.setdefault(x,[]).append(y);O.setdefault(y,[])
+S=sorted(set((K(a),K(b))for a,b in Q));V=set();rings=[]
+for st in S:
+ if st in V:continue
+ a,b=st;q=[];closed=False
+ while(a,b)not in V:
+  V.add((a,b));q.append(P[a]);C=[]
+  if not O[b]:break
+  back=atan2(P[a][1]-P[b][1],P[a][0]-P[b][0])
+  for c in O[b]:
+   d=(back-atan2(P[c][1]-P[b][1],P[c][0]-P[b][0]))%tau
+   if d==0:d=tau
+   C.append((d,c))
+  a,b=b,min(C)[1]
+  if(a,b)==st:closed=True;break
+ if len(q)>=3:rings.append((closed,q))
+print('"'A bottom cuts',cuts(R[0][0],R[0][1],E[1]))
+print('kept',Q)
+print('rings',rings)
+PY" in /Users/dawidlaszuk/projects/personal/domowik
+ succeeded in 0ms:
+A bottom cuts [0.0, 0.5, 1.0]
+kept [((0.0, 0.0), (5000000000000.0, 0.0)), ((5000000000000.0, 0.0), (10000000000000.0, 0.0)), ((10000000000000.0, 0.0), (10000000000000.0, 10.0)), ((10000000000000.0, 10.0), (0.0, 10.0)), ((0.0, 10.0), (0.0, 0.0)), ((5000000000000.0, -5.0), (5000000000000.5, -5.0)), ((5000000000000.5, -5.0), (5000000000000.5, 0.0)), ((5000000000000.0, 0.0), (5000000000000.0, -5.0))]
+rings [(True, [(0.0, 0.0), (5000000000000.0, 0.0), (10000000000000.0, 0.0), (10000000000000.0, 10.0), (0.0, 10.0)])]
+
+codex
+## Findings
+
+### 1. `union` loses a real protrusion when nearby cuts are deduplicated
+
+Input rings, both simple and counter-clockwise:
+
+```text
+A = [
+  (0, 0),
+  (10000000000000, 0),
+  (10000000000000, 10),
+  (0, 10)
+]
+
+B = [
+  (5000000000000, -5),
+  (5000000000000.5, -5),
+  (5000000000000.5, 5),
+  (5000000000000, 5)
+]
+```
+
+Correct union: one polygon consisting of `A` plus B’s 0.5 × 5 downward protrusion:
+
+```text
+outer = [
+  (0, 0),
+  (5000000000000, 0),
+  (5000000000000, -5),
+  (5000000000000.5, -5),
+  (5000000000000.5, 0),
+  (10000000000000, 0),
+  (10000000000000, 10),
+  (0, 10)
+]
+```
+
+The code produces only:
+
+```text
+outer = [
+  (0, 0),
+  (10000000000000, 0),
+  (10000000000000, 10),
+  (0, 10)
+]
+```
+
+B’s exposed lower half disappears.
+
+Why: B’s two crossings along A’s length-`10^13` bottom edge have parameters `0.5` and `0.50000000000005`. [arrangement.rs:136](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/arrangement.rs:136) collapses them because their difference is below `1e-12`. The resulting A fragment is not uniform with respect to B, invalidating the premise behind the midpoint test at [boolean.rs:184](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:184). Its midpoint is outside B, so the fragment survives across B.
+
+B’s exposed bottom and lower vertical fragments consequently form open chains rather than a ring. `trace_rings` breaks at the missing continuation and discards chains shorter than three vertices at [boolean.rs:238](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:238) and [boolean.rs:253](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:253).
+
+### 2. `union` merges polygons separated by a genuine gap
+
+Input:
+
+```text
+A = [
+  (0, 0),
+  (1, 0),
+  (1, 1),
+  (0, 1)
+]
+
+B = [
+  (1.0004, 0),
+  (2, 0),
+  (2, 1),
+  (1.0004, 1)
+]
+```
+
+Correct result: two components, separated by the open strip `1 < x < 1.0004`. Their total area is `1.9996`.
+
+The code produces one component:
+
+```text
+outer = [
+  (0, 0),
+  (2, 0),
+  (2, 1),
+  (0, 1)
+]
+```
+
+Its area is `2`, including the unoccupied gap.
+
+Why: with `WELD_MM = 0.001`, both `(1,0)` and `(1.0004,0)` map to key `(1000,0)`, and likewise at `y=1`, under [arrangement.rs:29](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/arrangement.rs:29). The two distinct parallel edges are consequently treated as reversed twins and dropped at [boolean.rs:175](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:175). The remaining boundaries are then joined across the gap.
+
+This is not merely coordinate snapping: it changes the component count and fills an open part of the complement.
+
+### 3. `rooms` misses a room enclosed collectively by point-touching components
+
+Input rings:
+
+```text
+T1 = [
+  (0, 0),
+  (5, 0),
+  (0, 5)
+]
+
+T2 = [
+  (5, 0),
+  (10, 0),
+  (10, 5)
+]
+
+T3 = [
+  (10, 5),
+  (10, 10),
+  (5, 10)
+]
+
+T4 = [
+  (5, 10),
+  (0, 10),
+  (0, 5)
+]
+```
+
+Let:
+
+```text
+region = union([T1, T2, T3, T4])
+rooms(region)
+```
+
+The four occupied triangles meet cyclically at `(5,0)`, `(10,5)`, `(5,10)`, and `(0,5)`. Their union contains the entire outer square boundary, so the complement has one bounded component:
+
+```text
+room.outer = [
+  (5, 0),
+  (10, 5),
+  (5, 10),
+  (0, 5)
+]
+room.holes = []
+room area = 50
+```
+
+The code produces four triangle polygons with no holes, followed by:
+
+```text
+rooms(region) = []
+```
+
+Why: at every degree-four pinch, the clockwise continuation at [boolean.rs:269](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:269) stays on the boundary of the same triangle. That is locally consistent with the stated pinch rule, but it never traces the clockwise diamond boundary assembled from edges belonging to four different components.
+
+Then [walls.rs:176](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/walls.rs:176) examines only holes already attached to individual `Polygon` components. The bounded diamond complement is not a hole of any one triangle, so it is invisible. The assertion at [walls.rs:167](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/walls.rs:167) that every room is a hole of an occupied-region component is false when components form a point-contact cycle.
+
+The union’s represented set is correct in this example; the failure is specifically in deriving complement components from per-polygon holes.
+
+### 4. Welded vertex coordinates depend on input order
+
+Input squares:
+
+```text
+A = [
+  (0, 0),
+  (1, 0),
+  (1, 1),
+  (0, 1)
+]
+
+B = [
+  (1.0004, 1.0004),
+  (2, 1.0004),
+  (2, 2),
+  (1.0004, 2)
+]
+```
+
+They are disjoint, including at their nearest corners. Correct output is the two unchanged squares regardless of input order.
+
+For `union([A, B])`, the code produces:
+
+```text
+[
+  [(0,0), (1,0), (1,1), (0,1)],
+  [(1,1), (2,1.0004), (2,2), (1.0004,2)]
+]
+```
+
+For `union([B, A])`, it produces:
+
+```text
+[
+  [(0,0), (1,0), (1.0004,1.0004), (0,1)],
+  [(1.0004,1.0004), (2,1.0004), (2,2), (1.0004,2)]
+]
+```
+
+Thus one polygon acquires the other polygon’s corner. The total areas also differ: approximately `1.9996` versus `1.99960016`, while the correct total is `1.99920016`.
+
+Why: the two distinct corners receive the same `VertexKey`. At [boolean.rs:206](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:206), `position.entry(key).or_insert(point)` keeps whichever physical coordinate occurs first. The result therefore depends on ring order.
+
+This is not HashMap iteration nondeterminism; it is deterministic first-writer-wins behavior with an order-dependent writer.
+
+## Verification and assessment of the suggested areas
+
+- **Three-or-more nested overlap:** I could not break the midpoint rule solely through nesting. Once splitting is complete, membership in any other ring is sufficient to make that fragment internal to the union. Whether that other ring is itself inside a third ring is irrelevant. Finding 1 breaks the prerequisite—complete splitting—not the membership logic.
+
+- **Three rings sharing one exact edge:** sound. If all three directions agree, retaining one copy is correct. If either direction is represented, there is occupied interior on both sides, so dropping every copy is correct. Finding 2 shows that the implementation can falsely identify nearby, noncoincident edges as twins.
+
+- **Degree-four vertices:** the clockwise rule correctly separates an isolated point-touch into distinct occupied rings. It is not sufficient for room discovery when several such contacts form a cycle; Finding 3 is the concrete failure.
+
+- **A hole touching its outer at one point:** I did not find an independent failure. If any other hole vertex is strictly inside, `ring_contains_ring` accepts it, and the clockwise traversal can separate the outer and hole cycles.
+
+- **Every vertex shared:** `ring_contains_ring` deliberately returns false when every inner vertex is on the boundary at [arrangement.rs:189](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/arrangement.rs:189). That is not a generally valid ring-containment predicate, but I could not ground an additional valid `union` output where this alone causes the wrong result. Coincident opposite boundaries are normally eliminated earlier.
+
+- **Zero-area/sliver rings:** signed-zero traced rings are dropped at [boolean.rs:309](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:309). I could not assess `canonical_ring` itself without violating the three-file restriction. Finding 1 does demonstrate a nonzero exposed strip being lost through parameter-space sliver deduplication.
+
+- **Hash iteration:** no direct run-to-run HashMap/HashSet iteration leak was found. Starts are explicitly sorted, and maps are otherwise queried by key. Input-order determinism is nevertheless false because of Finding 4.
+
+No repository files were modified.
+tokens used
+82,711
+## Findings
+
+### 1. `union` loses a real protrusion when nearby cuts are deduplicated
+
+Input rings, both simple and counter-clockwise:
+
+```text
+A = [
+  (0, 0),
+  (10000000000000, 0),
+  (10000000000000, 10),
+  (0, 10)
+]
+
+B = [
+  (5000000000000, -5),
+  (5000000000000.5, -5),
+  (5000000000000.5, 5),
+  (5000000000000, 5)
+]
+```
+
+Correct union: one polygon consisting of `A` plus B’s 0.5 × 5 downward protrusion:
+
+```text
+outer = [
+  (0, 0),
+  (5000000000000, 0),
+  (5000000000000, -5),
+  (5000000000000.5, -5),
+  (5000000000000.5, 0),
+  (10000000000000, 0),
+  (10000000000000, 10),
+  (0, 10)
+]
+```
+
+The code produces only:
+
+```text
+outer = [
+  (0, 0),
+  (10000000000000, 0),
+  (10000000000000, 10),
+  (0, 10)
+]
+```
+
+B’s exposed lower half disappears.
+
+Why: B’s two crossings along A’s length-`10^13` bottom edge have parameters `0.5` and `0.50000000000005`. [arrangement.rs:136](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/arrangement.rs:136) collapses them because their difference is below `1e-12`. The resulting A fragment is not uniform with respect to B, invalidating the premise behind the midpoint test at [boolean.rs:184](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:184). Its midpoint is outside B, so the fragment survives across B.
+
+B’s exposed bottom and lower vertical fragments consequently form open chains rather than a ring. `trace_rings` breaks at the missing continuation and discards chains shorter than three vertices at [boolean.rs:238](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:238) and [boolean.rs:253](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:253).
+
+### 2. `union` merges polygons separated by a genuine gap
+
+Input:
+
+```text
+A = [
+  (0, 0),
+  (1, 0),
+  (1, 1),
+  (0, 1)
+]
+
+B = [
+  (1.0004, 0),
+  (2, 0),
+  (2, 1),
+  (1.0004, 1)
+]
+```
+
+Correct result: two components, separated by the open strip `1 < x < 1.0004`. Their total area is `1.9996`.
+
+The code produces one component:
+
+```text
+outer = [
+  (0, 0),
+  (2, 0),
+  (2, 1),
+  (0, 1)
+]
+```
+
+Its area is `2`, including the unoccupied gap.
+
+Why: with `WELD_MM = 0.001`, both `(1,0)` and `(1.0004,0)` map to key `(1000,0)`, and likewise at `y=1`, under [arrangement.rs:29](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/arrangement.rs:29). The two distinct parallel edges are consequently treated as reversed twins and dropped at [boolean.rs:175](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:175). The remaining boundaries are then joined across the gap.
+
+This is not merely coordinate snapping: it changes the component count and fills an open part of the complement.
+
+### 3. `rooms` misses a room enclosed collectively by point-touching components
+
+Input rings:
+
+```text
+T1 = [
+  (0, 0),
+  (5, 0),
+  (0, 5)
+]
+
+T2 = [
+  (5, 0),
+  (10, 0),
+  (10, 5)
+]
+
+T3 = [
+  (10, 5),
+  (10, 10),
+  (5, 10)
+]
+
+T4 = [
+  (5, 10),
+  (0, 10),
+  (0, 5)
+]
+```
+
+Let:
+
+```text
+region = union([T1, T2, T3, T4])
+rooms(region)
+```
+
+The four occupied triangles meet cyclically at `(5,0)`, `(10,5)`, `(5,10)`, and `(0,5)`. Their union contains the entire outer square boundary, so the complement has one bounded component:
+
+```text
+room.outer = [
+  (5, 0),
+  (10, 5),
+  (5, 10),
+  (0, 5)
+]
+room.holes = []
+room area = 50
+```
+
+The code produces four triangle polygons with no holes, followed by:
+
+```text
+rooms(region) = []
+```
+
+Why: at every degree-four pinch, the clockwise continuation at [boolean.rs:269](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:269) stays on the boundary of the same triangle. That is locally consistent with the stated pinch rule, but it never traces the clockwise diamond boundary assembled from edges belonging to four different components.
+
+Then [walls.rs:176](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/walls.rs:176) examines only holes already attached to individual `Polygon` components. The bounded diamond complement is not a hole of any one triangle, so it is invisible. The assertion at [walls.rs:167](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/walls.rs:167) that every room is a hole of an occupied-region component is false when components form a point-contact cycle.
+
+The union’s represented set is correct in this example; the failure is specifically in deriving complement components from per-polygon holes.
+
+### 4. Welded vertex coordinates depend on input order
+
+Input squares:
+
+```text
+A = [
+  (0, 0),
+  (1, 0),
+  (1, 1),
+  (0, 1)
+]
+
+B = [
+  (1.0004, 1.0004),
+  (2, 1.0004),
+  (2, 2),
+  (1.0004, 2)
+]
+```
+
+They are disjoint, including at their nearest corners. Correct output is the two unchanged squares regardless of input order.
+
+For `union([A, B])`, the code produces:
+
+```text
+[
+  [(0,0), (1,0), (1,1), (0,1)],
+  [(1,1), (2,1.0004), (2,2), (1.0004,2)]
+]
+```
+
+For `union([B, A])`, it produces:
+
+```text
+[
+  [(0,0), (1,0), (1.0004,1.0004), (0,1)],
+  [(1.0004,1.0004), (2,1.0004), (2,2), (1.0004,2)]
+]
+```
+
+Thus one polygon acquires the other polygon’s corner. The total areas also differ: approximately `1.9996` versus `1.99960016`, while the correct total is `1.99920016`.
+
+Why: the two distinct corners receive the same `VertexKey`. At [boolean.rs:206](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:206), `position.entry(key).or_insert(point)` keeps whichever physical coordinate occurs first. The result therefore depends on ring order.
+
+This is not HashMap iteration nondeterminism; it is deterministic first-writer-wins behavior with an order-dependent writer.
+
+## Verification and assessment of the suggested areas
+
+- **Three-or-more nested overlap:** I could not break the midpoint rule solely through nesting. Once splitting is complete, membership in any other ring is sufficient to make that fragment internal to the union. Whether that other ring is itself inside a third ring is irrelevant. Finding 1 breaks the prerequisite—complete splitting—not the membership logic.
+
+- **Three rings sharing one exact edge:** sound. If all three directions agree, retaining one copy is correct. If either direction is represented, there is occupied interior on both sides, so dropping every copy is correct. Finding 2 shows that the implementation can falsely identify nearby, noncoincident edges as twins.
+
+- **Degree-four vertices:** the clockwise rule correctly separates an isolated point-touch into distinct occupied rings. It is not sufficient for room discovery when several such contacts form a cycle; Finding 3 is the concrete failure.
+
+- **A hole touching its outer at one point:** I did not find an independent failure. If any other hole vertex is strictly inside, `ring_contains_ring` accepts it, and the clockwise traversal can separate the outer and hole cycles.
+
+- **Every vertex shared:** `ring_contains_ring` deliberately returns false when every inner vertex is on the boundary at [arrangement.rs:189](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/arrangement.rs:189). That is not a generally valid ring-containment predicate, but I could not ground an additional valid `union` output where this alone causes the wrong result. Coincident opposite boundaries are normally eliminated earlier.
+
+- **Zero-area/sliver rings:** signed-zero traced rings are dropped at [boolean.rs:309](/Users/dawidlaszuk/projects/personal/domowik/crates/domowik-geometry/src/boolean.rs:309). I could not assess `canonical_ring` itself without violating the three-file restriction. Finding 1 does demonstrate a nonzero exposed strip being lost through parameter-space sliver deduplication.
+
+- **Hash iteration:** no direct run-to-run HashMap/HashSet iteration leak was found. Starts are explicitly sorted, and maps are otherwise queried by key. Input-order determinism is nevertheless false because of Finding 4.
+
+No repository files were modified.

@@ -1,0 +1,15 @@
+{
+ "id": "019534c7-0000-7000-8000-000000000009",
+ "type": "assetInstance",
+ "levelId": "019534c7-0000-7000-8000-000000000001",
+ "digest": "sha256:9a1f2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9",
+ "transform": {
+  "translationMm": [
+   5200,
+   3100
+  ],
+  "scaleUniform": 1,
+  "rotationDeg": 0
+ },
+ "displayName": "Armchair"
+}

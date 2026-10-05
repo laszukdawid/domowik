@@ -1,0 +1,57 @@
+{
+  "registrySchema": 1,
+  "allowedLicenses": [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "Zlib"
+  ],
+  "entries": [
+    {
+      "key": "domowik.dev/domowik",
+      "kind": "module",
+      "spdxLicense": "Apache-2.0",
+      "status": "reviewed",
+      "noticeRequired": false,
+      "sourceUrl": "https://domowik.dev/domowik",
+      "added": "2026-08-23",
+      "notes": "First-party main module; the project's own Apache-2.0 license applies.",
+      "reviewedAt": "2026-08-23",
+      "versionPin": "(devel)",
+      "revisitTriggers": [
+        "license text changes at sourceUrl",
+        "distribution model changes"
+      ]
+    },
+    {
+      "key": "golang.org/toolchain",
+      "kind": "toolchain",
+      "spdxLicense": "BSD-3-Clause",
+      "status": "reviewed",
+      "versionPin": "go1.27.0",
+      "reviewedAt": "2026-08-23",
+      "revisitTriggers": [
+        "Go version change",
+        "Go license terms change",
+        "new target platforms"
+      ],
+      "noticeRequired": true,
+      "noticeFiles": [
+        {
+          "path": "docs/third-party/notices/go-1.27.0/LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "docs/third-party/notices/go-1.27.0/PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ],
+      "sourceUrl": "https://go.dev/LICENSE",
+      "added": "2026-08-23",
+      "notes": "The Go compiler, runtime, and standard library linked into every distributed binary. Exact artifact data lives in docs/third-party/toolchain-go.json; the bundled notice files are the verbatim LICENSE and PATENTS texts for the pinned go1.27.0 release."
+    }
+  ]
+}

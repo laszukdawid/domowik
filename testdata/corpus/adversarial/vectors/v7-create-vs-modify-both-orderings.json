@@ -1,0 +1,85 @@
+{
+ "vector": "V7",
+ "orderings": {
+  "modify-canonically-precedes": {
+   "note": "Y's modify batch canonically precedes X's create: modifyBatch's frontier {Y:54} gives causalPastSize 54, the create's {X:109} gives 109, and 54 < 109",
+   "expected": "Y batch discarded STALE in its entirety (target absent at its canonical position)",
+   "batch": "modifyBatch"
+  },
+  "modify-canonically-follows": {
+   "note": "X's create canonically precedes Y's modify. Y still does NOT observe X (X is absent from its frontier, per the V7 setup); the two are concurrent and the leading position component decides: modifyBatchFollowing's frontier {Y:119} gives causalPastSize 119 against the create's 109, so the create sorts first",
+   "expected": "Y modify applies",
+   "batch": "modifyBatchFollowing"
+  }
+ },
+ "createBatch": {
+  "batchId": "01949010-0000-7000-8000-000000013001",
+  "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+  "counterBase": 110,
+  "frontier": {
+   "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 109
+  },
+  "operations": [
+   {
+    "operationId": "01949011-0000-7000-8000-000000013002",
+    "kind": "createEntity",
+    "entityId": "019534c7-0000-7000-8000-000000000002",
+    "fields": {
+     "id": "019534c7-0000-7000-8000-000000000002",
+     "type": "wall",
+     "levelId": "019534c7-0000-7000-8000-000000000001",
+     "startMm": [
+      0,
+      2500
+     ],
+     "endMm": [
+      4000,
+      2500
+     ],
+     "thicknessMm": 120,
+     "heightMm": 2500
+    }
+   }
+  ]
+ },
+ "modifyBatch": {
+  "batchId": "01949012-0000-7000-8000-000000013003",
+  "actorId": "01948f80-0000-7000-8000-00000000bb00",
+  "counterBase": 55,
+  "frontier": {
+   "01948f80-0000-7000-8000-00000000bb00": 54
+  },
+  "operations": [
+   {
+    "operationId": "01949013-0000-7000-8000-000000013004",
+    "kind": "setFields",
+    "entityId": "019534c7-0000-7000-8000-000000000002",
+    "fields": {
+     "thicknessMm": 150
+    }
+   }
+  ]
+ },
+ "expectedProjection": {
+  "invariant": "outcome is a function of the delivered SET only, never arrival order",
+  "materialization": "the two orderings are two separate delivered SETS: one actor stream cannot hold both modify batches, because Y ranges [55,55] and [120,120] would leave a gapped reserved range (B3) and reject as malformed-framing before replay"
+ },
+ "modifyBatchFollowing": {
+  "batchId": "01949014-0000-7000-8000-000000013005",
+  "actorId": "01948f80-0000-7000-8000-00000000bb00",
+  "counterBase": 120,
+  "frontier": {
+   "01948f80-0000-7000-8000-00000000bb00": 119
+  },
+  "operations": [
+   {
+    "operationId": "01949015-0000-7000-8000-000000013006",
+    "kind": "setFields",
+    "entityId": "019534c7-0000-7000-8000-000000000002",
+    "fields": {
+     "thicknessMm": 150
+    }
+   }
+  ]
+ }
+}

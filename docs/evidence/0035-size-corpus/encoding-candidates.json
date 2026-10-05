@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "0035.encoding-candidates.v1",
+  "session": "2026-08-25 Part A session (branch issue/0035-size-benchmarks)",
+  "candidates": [
+    {
+      "candidate": "WebP",
+      "status": "not-measured",
+      "reason": "reference encoder tool (cwebp/libwebp CLI) absent from the measurement environment; no policy-reviewed substitute tool identity selected",
+      "patentRiskReview": "not-performed",
+      "futureRecordRequirements": "complete record requires: tool name/version/source URL, license identifier + notice obligations, adapted-vs-independent provenance, patent-risk flag, named reference environment (CPU/RAM/OS/build mode), encoded+decoded sizes per fixed quality tier, decode p50/p95 + peak memory, corpus input digests, committed raw outputs, pre-registered failure thresholds"
+    },
+    {
+      "candidate": "KTX2/Basis Universal",
+      "status": "not-measured",
+      "reason": "basisu absent AND its mandatory patent-risk review unperformed",
+      "patentRiskReview": "not-performed (mandatory for Basis Universal; blocks any future promotion until performed)",
+      "futureRecordRequirements": "complete record requires: tool name/version/source URL, license identifier + notice obligations, adapted-vs-independent provenance, patent-risk flag, named reference environment (CPU/RAM/OS/build mode), encoded+decoded sizes per fixed quality tier, decode p50/p95 + peak memory, corpus input digests, committed raw outputs, pre-registered failure thresholds"
+    },
+    {
+      "candidate": "glTF/GLB + meshoptimizer",
+      "status": "not-measured",
+      "reason": "gltfpack absent AND no representative model input exists while furnished-cached-v1 stays dormant (no furniture semantics invented)",
+      "patentRiskReview": "not-performed",
+      "futureRecordRequirements": "complete record requires: tool name/version/source URL, license identifier + notice obligations, adapted-vs-independent provenance, patent-risk flag, named reference environment (CPU/RAM/OS/build mode), encoded+decoded sizes per fixed quality tier, decode p50/p95 + peak memory, corpus input digests, committed raw outputs, pre-registered failure thresholds"
+    },
+    {
+      "candidate": "font subsetting",
+      "status": "not-measured",
+      "reason": "fonttools/pyftsubset absent and no font assets exist in v0.1 scope",
+      "patentRiskReview": "not-performed",
+      "futureRecordRequirements": "complete record requires: tool name/version/source URL, license identifier + notice obligations, adapted-vs-independent provenance, patent-risk flag, named reference environment (CPU/RAM/OS/build mode), encoded+decoded sizes per fixed quality tier, decode p50/p95 + peak memory, corpus input digests, committed raw outputs, pre-registered failure thresholds"
+    },
+    {
+      "candidate": "AVIF",
+      "status": "not-measured",
+      "reason": "encoder binaries present in the environment (avifenc 1.4.2) but the pair agreed to record all five candidates not-measured this session to keep Part A scope closed; thresholds must be pre-registered before any future measurement",
+      "patentRiskReview": "not-performed (AV1 patent landscape requires review before any promotion decision regardless)",
+      "futureRecordRequirements": "complete record requires: tool name/version/source URL, license identifier + notice obligations, adapted-vs-independent provenance, patent-risk flag, named reference environment (CPU/RAM/OS/build mode), encoded+decoded sizes per fixed quality tier, decode p50/p95 + peak memory, corpus input digests, committed raw outputs, pre-registered failure thresholds"
+    }
+  ]
+}

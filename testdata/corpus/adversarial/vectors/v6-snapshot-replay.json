@@ -1,0 +1,103 @@
+{
+ "vector": "V6",
+ "setup": "rebuild projection from golden/snapshots/snapshot-full-s1-s5.json plus subsequent log of one batch; fullHistory additionally supplies a complete history whose compaction is serialized through the real snapshot encoder so the equality claim crosses BuildPackage/Load",
+ "subsequentBatch": {
+  "batchId": "01949000-0000-7000-8000-000000012001",
+  "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+  "counterBase": 46,
+  "frontier": {
+   "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 45,
+   "01948f80-0000-7000-8000-00000000bb00": 7
+  },
+  "operations": [
+   {
+    "operationId": "01949001-0000-7000-8000-000000012002",
+    "kind": "setFields",
+    "entityId": "019534c7-0000-7000-8000-000000000001",
+    "fields": {
+     "name": "Ground floor"
+    }
+   }
+  ]
+ },
+ "expectedProjection": {
+  "guarantee": "authoritative state equals full-history replay; derived data rebuilds identically; no byte-identity claim (\u00a73.3)",
+  "equality": "replay(fullHistory + subsequentBatch) from an empty root equals Load(BuildPackage(snapshot=replay(fullHistory), retained=[subsequentBatch])), compared on the full projected State including winner positions, creation positions and the shared batchPositions table"
+ },
+ "fullHistory": [
+  {
+   "batchId": "01949002-0000-7000-8000-000000012003",
+   "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+   "counterBase": 43,
+   "frontier": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 42
+   },
+   "operations": [
+    {
+     "operationId": "01949003-0000-7000-8000-000000012004",
+     "kind": "createEntity",
+     "entityId": "019534c7-0000-7000-8000-000000000001",
+     "fields": {
+      "id": "019534c7-0000-7000-8000-000000000001",
+      "type": "level",
+      "name": "Level 1",
+      "elevationMm": 0,
+      "floorThicknessMm": 200,
+      "defaultWallHeightMm": 2500,
+      "defaultCeilingHeightMm": 2500
+     }
+    },
+    {
+     "operationId": "01949004-0000-7000-8000-000000012005",
+     "kind": "createEntity",
+     "entityId": "019534c7-0000-7000-8000-000000000002",
+     "fields": {
+      "id": "019534c7-0000-7000-8000-000000000002",
+      "type": "wall",
+      "levelId": "019534c7-0000-7000-8000-000000000001",
+      "startMm": [
+       0,
+       2500
+      ],
+      "endMm": [
+       4000,
+       2500
+      ],
+      "thicknessMm": 120,
+      "heightMm": 2500
+     }
+    },
+    {
+     "operationId": "01949005-0000-7000-8000-000000012006",
+     "kind": "createEntity",
+     "entityId": "01948f55-6b18-7d3a-a153-1ee2f33cc402",
+     "fields": {
+      "id": "01948f55-6b18-7d3a-a153-1ee2f33cc402",
+      "type": "level",
+      "name": "Scratch level",
+      "elevationMm": 0,
+      "floorThicknessMm": 200,
+      "defaultWallHeightMm": 2500,
+      "defaultCeilingHeightMm": 2500
+     }
+    }
+   ]
+  },
+  {
+   "batchId": "01949006-0000-7000-8000-000000012007",
+   "actorId": "01948f80-0000-7000-8000-00000000bb00",
+   "counterBase": 7,
+   "frontier": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 45,
+    "01948f80-0000-7000-8000-00000000bb00": 6
+   },
+   "operations": [
+    {
+     "operationId": "01949007-0000-7000-8000-000000012008",
+     "kind": "deleteEntity",
+     "entityId": "01948f55-6b18-7d3a-a153-1ee2f33cc402"
+    }
+   ]
+  }
+ ]
+}

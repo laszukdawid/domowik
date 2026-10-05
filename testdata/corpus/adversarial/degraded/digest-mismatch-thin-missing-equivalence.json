@@ -1,0 +1,10 @@
+{
+ "note": "Blob bytes present but not matching the manifest-listed sha256 in a thin package: digest mismatch is treated exactly like a missing blob, never as corruption of authoritative state.",
+ "expectedOutcome": {
+  "outcome": "missing-asset-equivalence",
+  "category": null,
+  "clauses": [
+   "FORMAT-SPEC \u00a79.4"
+  ]
+ }
+}

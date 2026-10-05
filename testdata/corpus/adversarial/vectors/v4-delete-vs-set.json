@@ -1,0 +1,41 @@
+{
+ "vector": "V4",
+ "batches": {
+  "X-delete": {
+   "batchId": "01948fd0-0000-7000-8000-00000000ff01",
+   "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+   "counterBase": 80,
+   "frontier": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 79
+   },
+   "operations": [
+    {
+     "operationId": "01948fd1-0000-7000-8000-00000000ff02",
+     "kind": "deleteEntity",
+     "entityId": "019534c7-0000-7000-8000-000000000002"
+    }
+   ]
+  },
+  "Y-set": {
+   "batchId": "01948fd2-0000-7000-8000-00000000ff03",
+   "actorId": "01948f80-0000-7000-8000-00000000bb00",
+   "counterBase": 30,
+   "frontier": {
+    "01948f80-0000-7000-8000-00000000bb00": 29
+   },
+   "operations": [
+    {
+     "operationId": "01948fd3-0000-7000-8000-00000000ff04",
+     "kind": "setFields",
+     "entityId": "019534c7-0000-7000-8000-000000000002",
+     "fields": {
+      "thicknessMm": 200
+     }
+    }
+   ]
+  }
+ },
+ "expectedProjection": {
+  "state": "deleted (LWW3); tombstone {entityId, deletingPosition: batch 0000000000000000080-X operation 0} retained with the creation position that closes its live interval; Y write discarded. Y's causalPastSize 29 places its set BEFORE the delete's 79, so the set applies and the delete then dominates - the same outcome the counter comparison 30 < 80 gave"
+ }
+}

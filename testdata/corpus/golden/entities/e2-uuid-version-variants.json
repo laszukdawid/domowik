@@ -1,0 +1,50 @@
+{
+ "note": "E2 version opacity: each entity id is an RFC-valid UUID of a DIFFERENT version (v7, v4, v8-shaped); all are equally valid. Readers validate syntax only.",
+ "entities": {
+  "019534c7-0000-7000-8000-000000000002": {
+   "id": "019534c7-0000-7000-8000-000000000002",
+   "type": "wall",
+   "levelId": "019534c7-0000-7000-8000-000000000001",
+   "startMm": [
+    0,
+    2500
+   ],
+   "endMm": [
+    4000,
+    2500
+   ],
+   "thicknessMm": 120,
+   "heightMm": 2500
+  },
+  "9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f": {
+   "id": "9f8e7d6c-5b4a-4c3d-8e2f-1a0b9c8d7e6f",
+   "type": "wall",
+   "levelId": "019534c7-0000-7000-8000-000000000001",
+   "startMm": [
+    4000,
+    2500
+   ],
+   "endMm": [
+    8000,
+    2500
+   ],
+   "thicknessMm": 120,
+   "heightMm": 2500
+  },
+  "01020304-0506-8708-900a-0b0c0d0e0f10": {
+   "id": "01020304-0506-8708-900a-0b0c0d0e0f10",
+   "type": "wall",
+   "levelId": "019534c7-0000-7000-8000-000000000001",
+   "startMm": [
+    8000,
+    2500
+   ],
+   "endMm": [
+    8000,
+    11500
+   ],
+   "thicknessMm": 120,
+   "heightMm": 2500
+  }
+ }
+}

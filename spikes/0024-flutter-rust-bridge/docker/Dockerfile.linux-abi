@@ -1,0 +1,74 @@
+# The Linux ABI slice of issue 0024, on a NATIVE linux/arm64 kernel.
+#
+# WHY THIS EXISTS. ADR 0003's gate names Linux and Android as the Phase 2
+# platforms, and until now the spike's Linux claim was exactly that: a claim.
+# `verify.sh` selects `.so` when `.dylib` is absent and the Rust source has no
+# macOS-specific code, but neither statement had ever been executed. This image
+# executes them.
+#
+# WHY THE OFFICIAL RUST IMAGE AND NOT A CURL-PIPED INSTALLER. The tag carries
+# rustc 1.98.0, which is exactly what `rust-toolchain.toml` pins, and the digest
+# below makes the base reproducible rather than "whatever that tag meant today".
+# A `curl | sh` rustup bootstrap would be an unpinned network dependency inside
+# a build whose whole purpose is to be evidence.
+FROM rust:1.98.0-slim-bookworm@sha256:3ddf079542eb8513a989f55bc68de3f3dff469bf8916400d955ce3a80a9ff8f0
+
+# clang, not gcc: the C harness is built with `-fsanitize=address,undefined`
+# and `scripts/verify.sh` invokes `clang` by name, so the Linux run must use
+# the same compiler the macOS run does or it is testing a different thing.
+# `llvm` supplies llvm-symbolizer, without which an ASan report is a list of
+# hex addresses and a failure is unreadable.
+#
+# `libclang-rt-14-dev` is NOT optional and is easy to miss: Debian ships the
+# sanitizer runtimes in their own package, so `-fsanitize=address,undefined`
+# compiles and then fails at LINK time with "cannot find
+# libclang_rt.asan-aarch64.a". Observed here before it was added.
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      clang=1:14.0-55.7~deb12u1 \
+      llvm=1:14.0-55.7~deb12u1 \
+      libclang-rt-14-dev=1:14.0.6-12 \
+      file=1:5.44-3 \
+      binutils=2.40-2 \
+ && rm -rf /var/lib/apt/lists/*
+
+# The official image ships the compiler with the `minimal` profile, so neither
+# component is present and `cargo fmt --check` / `cargo clippy` -- two stages
+# `verify.sh` runs -- would fail as "not installed" rather than as a finding.
+RUN rustup component add rustfmt clippy
+
+# Fail loudly and early if the image ever drifts off the pinned toolchain.
+# Observed on the pinned digest, not assumed.
+RUN test "$(rustc --version)" = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+
+WORKDIR /work
+
+# ---- The Dart FFI harness -------------------------------------------------
+#
+# The C harness proves the ABI; it does not prove that dart:ffi resolves these
+# symbols the way Flutter will. That is a separate question and it has its own
+# harness, so the Linux run needs a Dart SDK.
+#
+# Version 3.11.4 is not a free choice: it is exactly the Dart that Flutter
+# 3.41.6 carries, so the harness runs against the same VM the application does
+# rather than a newer one that happens to be current.
+#
+# Pinned by SHA-256 from the publisher's own `.sha256sum`, and VERIFIED before
+# the archive is unpacked. An unverified download inside an image whose purpose
+# is to be evidence would undermine the evidence.
+ARG DART_VERSION=3.11.4
+ARG DART_ARCH=arm64
+ARG DART_SHA256=c35ba6f0de1f5ebbf23506612bffc347c7ba94c3a4c75110cab1157892166d3c
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      ca-certificates=20250419~deb12u1 \
+      curl=7.88.1-10+deb12u15 \
+      unzip=6.0-28+deb12u1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL -o /tmp/dartsdk.zip \
+      "https://storage.googleapis.com/dart-archive/channels/stable/release/${DART_VERSION}/sdk/dartsdk-linux-${DART_ARCH}-release.zip" \
+ && echo "${DART_SHA256}  /tmp/dartsdk.zip" | sha256sum -c - \
+ && unzip -q /tmp/dartsdk.zip -d /usr/local \
+ && rm /tmp/dartsdk.zip
+ENV PATH="/usr/local/dart-sdk/bin:${PATH}"
+RUN test "$(dart --version 2>&1 | cut -d' ' -f4)" = "3.11.4"
