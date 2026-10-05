@@ -32,3 +32,15 @@ but deliberately excluded from the history-only push. Existing test-only
 ryu 1.0.23 fixture remains unbuilt/undistributed and is now exactly pinned.
 
 Run: https://github.com/laszukdawid/domowik/actions/runs/37253702973
+
+Follow-up run 37257759499 passed both cross-build jobs and macOS preflight.
+Linux preflight exposed automatic Git maintenance racing with deletion of
+scratch fixtures (`.git: Directory not empty`); disable maintenance and auto-GC
+in those disposable repositories only. Canonical Linux snapshot verification
+reached `failure banner regression`, exposing the same non-portable `mktemp`
+usage in that harness; use an explicit Linux/macOS-compatible template there.
+
+The isolated follow-up snapshot passed all 27 inventory checks and canonical
+verification (`=== VERIFICATION PASSED === all stages`) on Linux. Dart,
+Flutter, macOS application, and Bash 3.2 coverage were explicitly skipped on
+that host; hosted macOS verification remains required.

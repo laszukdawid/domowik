@@ -26,7 +26,7 @@ HERE=$(cd -P "$(dirname "$0")/../.." && pwd -P)
 VERIFY="$HERE/scripts/verify.sh"
 [ -f "$VERIFY" ] || { echo "no verify.sh at $VERIFY" >&2; exit 2; }
 
-WORK=$(mktemp -d -t domowik-banner-regression)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/domowik-banner-regression.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
 PREAMBLE="$WORK/preamble.sh"

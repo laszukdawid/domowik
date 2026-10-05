@@ -49,6 +49,10 @@ fixture() {
   (
     cd "$dest"
     git init -q .
+    # Disposable fixtures must not spawn maintenance that outlives a case
+    # and races with the next fixture's removal (hosted Git enables it).
+    git config maintenance.auto false
+    git config gc.auto 0
     git config user.email "test@invalid"
     git config user.name "release inventory test"
     # Explicit paths from the same list, never a wildcard sweep. `-f` is
