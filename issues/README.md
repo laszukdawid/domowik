@@ -91,7 +91,7 @@ The clean-room rules apply fully to specification and spike issues.
 | [0021](0021-format-assets-size-budgets.md) | Format: assets, package profiles, size budgets | In Progress (partial scope) |
 | [0022](done/0022-geometry-numerical-model.md) | Decide numerical geometry model | Done |
 | [0023](done/0023-container-security-recovery.md) | Container threat model and recovery contract | Done |
-| [0030](0030-ratify-numerical-model.md) | Complete numerical-model implementation conformance | In Progress (partial scope) |
+| [0030](not-needed/0030-ratify-numerical-model.md) | Complete numerical-model implementation conformance | Not needed |
 | [0034](0034-identity-prerelease-finalization.md) | Pre-publication identity finalization | Blocked |
 | [0072](0072-curved-walls-decision.md) | Decide and specify curved walls | Open |
 
@@ -119,6 +119,7 @@ The clean-room rules apply fully to specification and spike issues.
 | [0036](0036-release-sbom-license-notices.md) | Release SBOM, license scanning, and notices | In Progress (partial scope) |
 | [0037](done/0037-rust-core-foundation.md) | Rust core foundation: supersede ADR 0002, scaffold, verification | Done |
 | [0038](done/0038-session-commit-cost.md) | Session commit cost is cubic in history length | Done |
+| [0096](0096-snap-rounded-arrangement.md) | Replace the union with a snap-rounded labelled arrangement | In Progress |
 
 ## Later feasibility gates
 

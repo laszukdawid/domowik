@@ -2,8 +2,28 @@
 
 - **Phase:** 0
 - **Priority:** High
-- **Status:** In Progress (partial scope)
+- **Status:** Not needed
 - **Depends on:** 0006, 0007, 0022
+
+## Closure — 2026-10-08
+
+- **Superseded by:** issue [0096](../0096-snap-rounded-arrangement.md). An
+  independent review (Codex GPT-6-Astra, 2026-10-08), with every
+  counterexample reproduced on `issue-0030`, showed the union pipeline this
+  issue was making conformant is unsound: three plain wall rectangles lose
+  60% of their union (799.994 mm² instead of ~2,000), ring tracing emits
+  unclosed walks, `classify_point` misclassifies interior points, and
+  `faces_in_scope` misses edge contact. Welding moves vertices after the
+  crossings are found and never re-nodes, so no amount of exact arithmetic
+  on top of it can make R5.1.9 exact. The owner directed replacing it
+  (development mode, no continuity constraint).
+- **Where the obligation lives now:** 0096 owns the replacement
+  arrangement (snap rounding on a binary grid), exact R5.1.9 overlap and
+  containment on it, the corrected face scope, and scale benchmarks. The
+  ratified numeric policy this issue produced (bounds, N-1, N-4) stands;
+  N-2/N-3 are amended by 0096's decision record.
+- **Implementation commits under this issue:** `4ead4cd` (cut dedupe on the
+  topology grid — superseded by 0096 but correct for the code it fixed).
 
 ## Current disposition — 2026-10-05
 
