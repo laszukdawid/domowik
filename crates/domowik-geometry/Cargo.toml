@@ -40,3 +40,7 @@ harness = false
 [[bench]]
 name = "snap"
 harness = false
+
+[[bench]]
+name = "scale"
+harness = false

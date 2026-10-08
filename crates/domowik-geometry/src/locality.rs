@@ -38,23 +38,25 @@
 //!
 //! # Numerical behaviour
 //!
-//! Coordinates are millimetres. The positive-area test compares
-//! `area(A) + area(B)` against `area(A ∪ B)` and is decided EXACTLY, by
-//! [`crate::exact_area::positive_area`]. There is no tolerance floor: ED-0103
-//! N-5 retired the `1e-12 × separate` relative term, whose stated reason —
-//! shoelace error near the coordinate bound — ED-0100's translation fix had
-//! already removed, and which by then only under-included, discarding a real
-//! 0.5 mm² overlap between kilometre-scale regions.
+//! Coordinates are millimetres. Both relations are decided EXACTLY on ONE
+//! welded embedding of the level — the snap-rounded arrangement of every
+//! wall rectangle and join patch, labelled by component
+//! ([`crate::overlay`], issue 0096) — so the topology that decides links is
+//! the same topology rooms are read from (ED-0103 clarification (c)).
 //!
-//! Regions that merely touch cancel to exactly zero and are not linked. What
-//! exact arithmetic cannot settle is whether the RINGS are the true union:
-//! see [`Link::Overlap`]'s note on an uncertain overlap.
+//! - **Overlap** is a bounded face covered by two components. Every bounded
+//!   face has positive area by construction, so this is a positive-area test
+//!   with no tolerance and no area subtraction. A 0.4 µm interpenetration
+//!   that rounds into contact covers no face twice and does not link.
+//! - **Containment** is ring enclosure of one component's outer ring by
+//!   another's, decided by exact point location of every vertex and every
+//!   edge midpoint. Both rings belong to one arrangement, so they cross only
+//!   at shared vertices and an edge's interior lies wholly on one side.
 
-use crate::arrangement::{classify_point, ring_contains_ring, Containment, WELD_MM};
-use crate::boolean::union;
-use crate::exact_area::{positive_area, PositiveArea};
+use crate::overlay::{assemble, cell_bounds, ring_within, Arrangement, CellPolygon, InputRing};
 use crate::polygon::Polygon;
 use crate::walls::{join_patch, JoinSpec, WallSolid};
+use crate::{orientation, Orientation};
 use domowik_format::Point;
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
@@ -62,31 +64,9 @@ use uuid::Uuid;
 /// Why two components are linked (R5.1.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Link {
-    /// One region lies within the other's rings.
+    /// One region lies within the other's outer rings.
     Containment,
-    /// The regions intersect with positive area, unjoined.
-    ///
-    /// # An uncertain overlap is reported here, deliberately
-    ///
-    /// Exact arithmetic settles whether the RINGS SUPPLIED overlap; it cannot
-    /// settle whether those rings are the true union. Two components that
-    /// genuinely overlap construct their crossing points, and a crossing cut
-    /// is `lerp(a, b, t)` with `t = num/denom` where `denom` carries a factor
-    /// `sin θ`, so its displacement grows without limit as the segments
-    /// approach parallel. [`crate::exact_area::positive_area`] therefore
-    /// returns `Uncertain` for them rather than certifying from a constant.
-    ///
-    /// Uncertain is resolved as a link. This is OVER-INCLUSION and R5.1.9 says
-    /// EXACTLY which faces recompute, so it is a deviation and is recorded as
-    /// one rather than described as conformance. It is chosen because the two
-    /// errors are not symmetric: recomputing a component that did not need it
-    /// costs work and produces identical geometry, while skipping one that did
-    /// leaves stale geometry in the document.
-    ///
-    /// The verdict is right either way — an overlapping pair should be linked.
-    /// What `Uncertain` gives up is the ability to say WHY, not the answer.
-    /// Components that merely TOUCH construct nothing, return an exact `No`,
-    /// and are correctly not linked.
+    /// The regions share a face of positive area, unjoined.
     Overlap,
 }
 
@@ -101,10 +81,10 @@ pub struct Components {
     of_wall: Vec<usize>,
     walls: Vec<Vec<usize>>,
     joins: Vec<Vec<usize>>,
-    rings: Vec<Vec<Vec<Point>>>,
     regions: Vec<Vec<Polygon>>,
     areas: Vec<f64>,
-    bounds: Vec<Option<Bounds>>,
+    /// Links of each component, sorted by the other component.
+    links: Vec<Vec<(usize, Link)>>,
 }
 
 impl Components {
@@ -133,7 +113,8 @@ impl Components {
         &self.joins[component]
     }
 
-    /// The component's occupied region (R3.2.1), canonically ordered.
+    /// The component's occupied region (R3.2.1), canonically ordered, as it
+    /// appears in the level's welded arrangement.
     pub fn region(&self, component: usize) -> &[Polygon] {
         &self.regions[component]
     }
@@ -142,16 +123,22 @@ impl Components {
     pub fn area_mm2(&self, component: usize) -> f64 {
         self.areas[component]
     }
+
+    /// Every component linked to `component`, ascending.
+    pub fn links(&self, component: usize) -> &[(usize, Link)] {
+        &self.links[component]
+    }
 }
 
-/// Partitions `walls` into join-connected components and computes each one's
-/// occupied region.
+/// Partitions `walls` into join-connected components, computes each one's
+/// occupied region, and decides every R5.1.9 link between them.
 ///
 /// All walls must belong to the same level: R3.0.6 and R5.1.1 make levels
 /// non-interacting, and mixing them would link geometry that never touches.
 ///
-/// Cost is one region union per component, not one for the level, which is the
-/// whole point — a component's region is what an edit inside it invalidates.
+/// Cost is one labelled arrangement of the level. Overlap links fall out of
+/// its faces; containment is tested only between components whose bounds
+/// nest.
 pub fn components_of(walls: &[WallSolid], joins: &[JoinSpec]) -> Components {
     let mut uf = UnionFind::new(walls.len());
     for join in joins {
@@ -184,90 +171,151 @@ pub fn components_of(walls: &[WallSolid], joins: &[JoinSpec]) -> Components {
     }
 
     let mut join_sets = vec![Vec::new(); n];
+    let mut rings: Vec<InputRing> = Vec::new();
+    for (w, wall) in walls.iter().enumerate() {
+        if let Some(rect) = wall.rectangle() {
+            rings.push(InputRing {
+                points: rect.to_vec(),
+                label: of_wall[w] as u32,
+                tag: w,
+            });
+        }
+    }
     for (j, join) in joins.iter().enumerate() {
         if let Some(m) = join.members.iter().find(|m| m.wall < walls.len()) {
-            join_sets[of_wall[m.wall]].push(j);
+            let c = of_wall[m.wall];
+            join_sets[c].push(j);
+            let patch = join_patch(walls, join);
+            if patch.len() >= 3 {
+                rings.push(InputRing {
+                    points: patch,
+                    label: c as u32,
+                    tag: j,
+                });
+            }
         }
     }
 
-    let mut rings = Vec::with_capacity(n);
-    let mut regions = Vec::with_capacity(n);
-    let mut areas = Vec::with_capacity(n);
-    let mut bounds = Vec::with_capacity(n);
-    for c in 0..n {
-        let mut component_rings: Vec<Vec<Point>> = Vec::new();
-        for &w in &wall_sets[c] {
-            if let Some(rect) = walls[w].rectangle() {
-                component_rings.push(rect.to_vec());
+    let arr = Arrangement::build(&rings, false);
+    let by_label = arr.half_edges_by_label(n);
+    let mut cell_regions: Vec<Vec<CellPolygon>> = Vec::with_capacity(n);
+    for (c, edges) in by_label.iter().enumerate() {
+        let label = c as u32;
+        cell_regions.push(assemble(
+            arr.boundary(edges.iter().copied(), |f| arr.winding(f, label) > 0),
+        ));
+    }
+    let regions: Vec<Vec<Polygon>> = cell_regions
+        .iter()
+        .map(|ps| ps.iter().map(CellPolygon::to_polygon).collect())
+        .collect();
+    let areas = regions
+        .iter()
+        .map(|ps| ps.iter().map(Polygon::area_mm2).sum())
+        .collect();
+
+    let mut relation: HashMap<(usize, usize), Link> = HashMap::new();
+    for f in 0..arr.face_count() {
+        if !arr.is_bounded(f) {
+            continue;
+        }
+        let covering: Vec<u32> = arr.covering(f).collect();
+        for (i, &a) in covering.iter().enumerate() {
+            for &b in &covering[i + 1..] {
+                relation
+                    .entry((a as usize, b as usize))
+                    .or_insert(Link::Overlap);
             }
         }
-        for &j in &join_sets[c] {
-            let patch = join_patch(walls, &joins[j]);
-            if patch.len() >= 3 {
-                component_rings.push(patch);
-            }
+    }
+    for (a, b) in nesting_candidates(&cell_regions) {
+        let enclosed = cell_regions[b].iter().any(|pb| {
+            cell_regions[a]
+                .iter()
+                .any(|pa| ring_within(&pb.outer.cells, &pa.outer.cells))
+        });
+        if enclosed {
+            relation.insert((a.min(b), a.max(b)), Link::Containment);
         }
-        let region = union(&component_rings);
-        areas.push(region.iter().map(|p| p.area_mm2()).sum());
-        bounds.push(Bounds::of_polygons(&region));
-        rings.push(component_rings);
-        regions.push(region);
+    }
+
+    let mut links = vec![Vec::new(); n];
+    for (&(a, b), &link) in &relation {
+        links[a].push((b, link));
+        links[b].push((a, link));
+    }
+    for l in &mut links {
+        l.sort_by_key(|e| e.0);
     }
 
     Components {
         of_wall,
         walls: wall_sets,
         joins: join_sets,
-        rings,
         regions,
         areas,
-        bounds,
+        links,
     }
+}
+
+/// Ordered pairs `(outer, inner)` whose bounds nest, found by a sweep over
+/// ascending minimum x rather than by testing every pair.
+fn nesting_candidates(regions: &[Vec<CellPolygon>]) -> Vec<(usize, usize)> {
+    let bounds: Vec<Option<[i64; 4]>> = regions
+        .iter()
+        .map(|ps| {
+            ps.iter()
+                .map(|p| cell_bounds(&p.outer.cells))
+                .reduce(|a, b| {
+                    [
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        a[2].max(b[2]),
+                        a[3].max(b[3]),
+                    ]
+                })
+        })
+        .collect();
+    let mut order: Vec<usize> = (0..regions.len())
+        .filter(|&c| bounds[c].is_some())
+        .collect();
+    order.sort_by_key(|&c| bounds[c].map(|b| b[0]));
+    let mut out = Vec::new();
+    for (i, &a) in order.iter().enumerate() {
+        let ba = bounds[a].unwrap_or_default();
+        // Anything that can nest inside `a`, or that `a` can nest inside with
+        // an equal minimum x, starts no later than `a` ends.
+        for &b in &order[i + 1..] {
+            let bb = bounds[b].unwrap_or_default();
+            if bb[0] > ba[2] {
+                break;
+            }
+            let inside = |o: [i64; 4], i: [i64; 4]| {
+                o[0] <= i[0] && o[1] <= i[1] && o[2] >= i[2] && o[3] >= i[3]
+            };
+            if inside(ba, bb) {
+                out.push((a, b));
+            }
+            if inside(bb, ba) {
+                out.push((b, a));
+            }
+        }
+    }
+    out
 }
 
 /// The R5.1.9 relation between two components of the SAME state, or `None`
 /// when they are unlinked.
 ///
 /// Returns [`Link::Containment`] in preference to [`Link::Overlap`] when both
-/// hold, which happens only for degenerate input; the distinction is reported
-/// because the two relations exist for different reasons and a caller
-/// diagnosing an unexpected closure wants to know which one fired.
+/// hold; the distinction is reported because the two relations exist for
+/// different reasons and a caller diagnosing an unexpected closure wants to
+/// know which one fired.
 pub fn link(components: &Components, a: usize, b: usize) -> Option<Link> {
-    let (Some(ba), Some(bb)) = (components.bounds[a], components.bounds[b]) else {
-        return None;
-    };
-    if !ba.overlaps(&bb) {
-        return None;
-    }
-
-    let (ra, rb) = (&components.regions[a], &components.regions[b]);
-    for pa in ra {
-        for pb in rb {
-            if ring_contains_ring(&pa.outer, &pb.outer) || ring_contains_ring(&pb.outer, &pa.outer)
-            {
-                return Some(Link::Containment);
-            }
-        }
-    }
-
-    let mut both: Vec<Vec<Point>> = components.rings[a].clone();
-    both.extend(components.rings[b].iter().cloned());
-    let separate: Vec<Polygon> = components.regions[a]
-        .iter()
-        .chain(components.regions[b].iter())
-        .cloned()
-        .collect();
-    match positive_area(&separate, &union(&both)) {
-        Some(PositiveArea::Yes) => Some(Link::Overlap),
-        Some(PositiveArea::No) => None,
-        // Deliberate over-inclusion, in the one direction that cannot produce
-        // wrong geometry. See `Link::Overlap`.
-        Some(PositiveArea::Uncertain) => Some(Link::Overlap),
-        // A non-finite coordinate reached the region builder. Linking is the
-        // conservative answer here too; the document is already invalid and
-        // validation, not the closure, is where that gets reported.
-        None => Some(Link::Overlap),
-    }
+    components.links[a]
+        .binary_search_by_key(&b, |e| e.0)
+        .ok()
+        .map(|i| components.links[a][i].1)
 }
 
 /// One state of a level, as the closure computation needs to see it.
@@ -321,8 +369,9 @@ pub fn recomputation_closure(pre: &State, post: &State, touched: &[Uuid]) -> Clo
 
 /// [`recomputation_closure`] against partitions the caller already built.
 ///
-/// Building a partition costs one region union per component, so a caller
-/// measuring many gestures against the same pre-state should build it once.
+/// Building a partition costs one labelled arrangement of the level, so a
+/// caller measuring many gestures against the same pre-state should build it
+/// once.
 pub fn closure_from(
     pre: &State,
     cpre: &Components,
@@ -340,15 +389,15 @@ pub fn closure_from(
     };
 
     for a in 0..cpre.len() {
-        for b in (a + 1)..cpre.len() {
-            if link(cpre, a, b).is_some() {
+        for &(b, _) in cpre.links(a) {
+            if a < b {
                 connect(a, b, &mut adjacency);
             }
         }
     }
     for a in 0..cpost.len() {
-        for b in (a + 1)..cpost.len() {
-            if link(cpost, a, b).is_some() {
+        for &(b, _) in cpost.links(a) {
+            if a < b {
                 connect(offset + a, offset + b, &mut adjacency);
             }
         }
@@ -431,41 +480,80 @@ pub fn closure_from(
 
 /// Indices of `faces` whose closure meets an occupied region of `closed`.
 ///
-/// These are exactly the faces R5.1.9 permits to recompute. A face's closure
-/// meets a region when a vertex of the face lies ON that region's boundary,
-/// which is the only way the two closed sets can meet: a face is an open
-/// component of the complement, so no face vertex is interior to the region,
-/// and every face vertex that is not on the region's boundary is at positive
-/// distance from it.
+/// These are exactly the faces R5.1.9 permits to recompute. Two closed
+/// polygonal sets meet exactly when some boundary segment of one meets some
+/// boundary segment of the other, or one lies inside the other; a face is open
+/// and disjoint from the occupied set, so only the first can happen. Testing
+/// segments rather than vertices matters: canonicalization deletes collinear
+/// vertices, so a wall touching a room along part of its edge shares no vertex
+/// with it (issue 0096).
 pub fn faces_in_scope(faces: &[Polygon], closed: &[Polygon]) -> Vec<usize> {
     let mut out = Vec::new();
     for (i, face) in faces.iter().enumerate() {
-        if face_meets(face, closed) {
+        if closed.iter().any(|region| polygons_touch(face, region)) {
             out.push(i);
         }
     }
     out
 }
 
-fn face_meets(face: &Polygon, closed: &[Polygon]) -> bool {
-    let rings = std::iter::once(&face.outer).chain(face.holes.iter());
-    for ring in rings {
-        for &v in ring {
-            for polygon in closed {
-                if classify_point(v, &polygon.outer) == Containment::Boundary {
-                    return true;
-                }
-                if polygon
-                    .holes
-                    .iter()
-                    .any(|h| classify_point(v, h) == Containment::Boundary)
-                {
-                    return true;
+fn rings(p: &Polygon) -> impl Iterator<Item = &Vec<Point>> {
+    std::iter::once(&p.outer).chain(p.holes.iter())
+}
+
+fn polygons_touch(a: &Polygon, b: &Polygon) -> bool {
+    let bounds = |p: &Polygon| {
+        p.outer.iter().fold(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            |acc, v| {
+                [
+                    acc[0].min(v.x),
+                    acc[1].min(v.y),
+                    acc[2].max(v.x),
+                    acc[3].max(v.y),
+                ]
+            },
+        )
+    };
+    let (ba, bb) = (bounds(a), bounds(b));
+    if ba[0] > bb[2] || bb[0] > ba[2] || ba[1] > bb[3] || bb[1] > ba[3] {
+        return false;
+    }
+    for ra in rings(a) {
+        for rb in rings(b) {
+            for i in 0..ra.len() {
+                let (p, q) = (ra[i], ra[(i + 1) % ra.len()]);
+                for j in 0..rb.len() {
+                    if segments_meet(p, q, rb[j], rb[(j + 1) % rb.len()]) {
+                        return true;
+                    }
                 }
             }
         }
     }
     false
+}
+
+/// Whether closed segments `pq` and `rs` share a point, exactly.
+fn segments_meet(p: Point, q: Point, r: Point, s: Point) -> bool {
+    let within = |a: Point, b: Point, c: Point| {
+        c.x >= a.x.min(b.x) && c.x <= a.x.max(b.x) && c.y >= a.y.min(b.y) && c.y <= a.y.max(b.y)
+    };
+    let (o1, o2) = (orientation(p, q, r), orientation(p, q, s));
+    let (o3, o4) = (orientation(r, s, p), orientation(r, s, q));
+    use Orientation::Collinear as C;
+    if o1 != o2 && o3 != o4 && o1 != C && o2 != C && o3 != C && o4 != C {
+        return true;
+    }
+    (o1 == C && within(p, q, r))
+        || (o2 == C && within(p, q, s))
+        || (o3 == C && within(r, s, p))
+        || (o4 == C && within(r, s, q))
 }
 
 /// Disjoint-set forest over wall indices.
@@ -506,53 +594,12 @@ impl UnionFind {
     }
 }
 
-/// Axis-aligned bounds with the weld tolerance folded into the overlap test.
-#[derive(Debug, Clone, Copy)]
-struct Bounds {
-    min_x: f64,
-    min_y: f64,
-    max_x: f64,
-    max_y: f64,
-}
-
-impl Bounds {
-    fn of_polygons(polygons: &[Polygon]) -> Option<Self> {
-        let mut b: Option<Bounds> = None;
-        for p in polygons {
-            for &v in &p.outer {
-                b = Some(match b {
-                    None => Bounds {
-                        min_x: v.x,
-                        min_y: v.y,
-                        max_x: v.x,
-                        max_y: v.y,
-                    },
-                    Some(cur) => Bounds {
-                        min_x: cur.min_x.min(v.x),
-                        min_y: cur.min_y.min(v.y),
-                        max_x: cur.max_x.max(v.x),
-                        max_y: cur.max_y.max(v.y),
-                    },
-                });
-            }
-        }
-        b
-    }
-
-    fn overlaps(&self, other: &Self) -> bool {
-        self.min_x <= other.max_x + WELD_MM
-            && other.min_x <= self.max_x + WELD_MM
-            && self.min_y <= other.max_y + WELD_MM
-            && other.min_y <= self.max_y + WELD_MM
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::walls::{Endpoint, JoinMember};
 
-    /// The arrangement welds on [`WELD_MM`] and `domowik-format` decides join
+    /// The arrangement welds on `WELD_MM` and `domowik-format` decides join
     /// agreement on `JOIN_COINCIDENCE_MM`. ED-0103 N-2 makes those ONE rule,
     /// and the two crates cannot share a constant because geometry depends on
     /// format and not the reverse. This is the guard that makes the coupling
@@ -560,7 +607,14 @@ mod tests {
     /// the other, a document's joins and its topology stop agreeing.
     #[test]
     fn the_weld_quantum_and_the_join_quantum_are_the_same_number() {
-        assert_eq!(WELD_MM, domowik_format::JOIN_COINCIDENCE_MM);
+        assert_eq!(
+            crate::arrangement::WELD_MM,
+            domowik_format::JOIN_COINCIDENCE_MM
+        );
+        assert_eq!(
+            crate::overlay::QUANTUM_MM,
+            domowik_format::JOIN_COINCIDENCE_MM
+        );
     }
 
     const P: fn(f64, f64) -> Point = Point::new;
@@ -812,5 +866,53 @@ mod tests {
         };
         let closure = recomputation_closure(&state, &state, &[Uuid::now_v7()]);
         assert!(closure.is_empty());
+    }
+
+    /// ED-0103 (c)'s pin, issue 0096: an interpenetration that rounds into
+    /// contact on the welded arrangement covers no face twice and must not
+    /// link; one a cell deep must. The previous union linked all three.
+    #[test]
+    fn sub_quantum_contact_does_not_link_and_one_cell_of_overlap_does() {
+        // Wall A occupies y in [0, 100]; B's bottom face dips `dy` below
+        // A's top. Thickness 200 centres B 100 mm above its bottom face.
+        let cases = [
+            (0.0004, None),
+            (0.0006, Some(Link::Overlap)),
+            (0.0014, Some(Link::Overlap)),
+        ];
+        for (dy, expected) in cases {
+            let walls = vec![
+                WallSolid::new(P(0.0, 50.0), P(4000.0, 50.0), 100.0),
+                WallSolid::new(P(1000.0, 200.0 - dy), P(3000.0, 200.0 - dy), 200.0),
+            ];
+            let c = components_of(&walls, &[]);
+            assert_eq!(c.len(), 2);
+            assert_eq!(link(&c, 0, 1), expected, "dy = {dy}");
+        }
+    }
+
+    /// A proper crossing is an exact `Overlap`, not an uncertain one.
+    #[test]
+    fn crossing_walls_at_a_shallow_angle_link_exactly() {
+        let walls = vec![
+            wall(0.0, 0.0, 10000.0, 0.0),
+            wall(0.0, -150.0, 10000.0, 150.0),
+        ];
+        let c = components_of(&walls, &[]);
+        assert_eq!(link(&c, 0, 1), Some(Link::Overlap));
+    }
+
+    /// A face touched along part of one edge, with no shared vertex, is in
+    /// scope. Vertex-only testing returned nothing here.
+    #[test]
+    fn a_face_touched_along_an_edge_span_is_in_scope() {
+        let face = Polygon::new(vec![P(0.0, 0.0), P(10.0, 0.0), P(10.0, 10.0), P(0.0, 10.0)]);
+        let wall = Polygon::new(vec![P(4.0, -1.0), P(6.0, -1.0), P(6.0, 0.0), P(4.0, 0.0)]);
+        assert_eq!(
+            faces_in_scope(std::slice::from_ref(&face), &[wall]),
+            vec![0]
+        );
+        let apart = Polygon::new(vec![P(4.0, -2.0), P(6.0, -2.0), P(6.0, -1.0), P(4.0, -1.0)]);
+        assert!(faces_in_scope(&[face], &[apart]).is_empty());
     }
 }

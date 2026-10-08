@@ -6676,3 +6676,47 @@ Proposed; the other three decisions in this record are unaffected.
 - **Reversal gate.** If the direct dependency proves unworkable — a backend
   that only the C wrapper exposes, or a licence in the tree that cannot be
   admitted — this decision is revisited here rather than quietly worked around.
+
+### ED-0110: Derived topology is snap-rounded on a 2⁻¹⁰ mm grid
+
+- **Date.** 2026-10-08
+- **Status.** Owner direction ("development mode, don't worry about
+  continuity; apply improvements"), issue 0096.
+- **Context.** The union behind every occupied region and room found
+  crossings on the original segments, then moved vertices onto weld
+  representatives without re-noding, classified fragments against the
+  original rings and traced walks that need not close. An independent review
+  (Codex GPT-6-Astra) produced, and the owner's agent reproduced, three plain
+  wall rectangles losing 60% of their union. ED-0103 N-2 fixed WHICH points
+  are one vertex but not how edges route through identified vertices, which
+  is the part that failed.
+- **Decision.**
+  1. The topology quantum is **2⁻¹⁰ mm** (≈ 0.977 µm), replacing 10⁻³ mm.
+     Cells are half-open `[k − ½, k + ½)`; a point's cell is
+     `floor(v · 1024 + ½)`. Scaling by a power of two is exact and every
+     boundary is representable, so membership is decided without rounding.
+     `JOIN_COINCIDENCE_MM` and `WELD_MM` both equal it, and R3.3.4 join
+     agreement is cell equality on this grid.
+  2. Derived topology is built by **snap rounding** (Hobby, Comput. Geom. 13
+     (1999) 199–214): a cell is hot when it holds an endpoint or a crossing,
+     and every segment is routed through the centres of all hot cells it
+     meets. A crossing whose correctly rounded construction lands exactly on
+     a cell boundary marks both neighbours.
+  3. Faces carry winding numbers; occupied means positive winding. R5.1.9
+     overlap is a bounded face covered by two components, containment is
+     exact ring enclosure, both on the level's one labelled arrangement.
+- **What changes for users.** Derived coordinates — occupied boundaries,
+  room outlines, areas — are cell centres. Stored coordinates are untouched
+  (N-1 stands). Input on the grid (every whole or binary-fraction millimetre)
+  is reproduced exactly; other input moves at most half a cell per axis.
+- **Supersedes.** ED-0103 N-2's decimal grid and N-3's statement that split
+  points enter topology as the nearest binary64: they still persist that way,
+  but topology now sees their cell. ED-0103 clarification (c)'s overlap route
+  over existing vertices is replaced by the face-coverage test, which is what
+  (c) required of it.
+- **Known cost.** Routing work is the number of (segment, hot cell)
+  incidences, which Hobby §2.3 warns can approach `N·(N + K)` for nearly
+  collinear input. `benches/scale.rs` measures it (`fan-N`).
+- **Reversal gate.** A measured plan where incidence count, not crossing
+  count, dominates editor latency; or a fixture whose rounded topology is
+  wrong rather than merely displaced.

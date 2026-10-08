@@ -12,11 +12,8 @@ use crate::{orientation, Orientation};
 use domowik_format::Point;
 use std::cmp::Ordering;
 
-/// Endpoints within this distance are treated as the same vertex.
-///
-/// One micrometre: far below any meaningful building dimension, far above
-/// floating-point noise on millimetre coordinates.
-pub const WELD_MM: f64 = 0.001;
+/// The topology quantum: one grid cell, 2⁻¹⁰ mm (ED-0110, issue 0096).
+pub const WELD_MM: f64 = crate::overlay::QUANTUM_MM;
 
 /// A vertex identity that tolerates rounding.
 ///
@@ -28,12 +25,10 @@ pub const WELD_MM: f64 = 0.001;
 pub struct VertexKey(pub i64, pub i64);
 
 impl VertexKey {
-    /// Quantizes `p` onto the weld grid.
+    /// The grid cell of `p`, exactly: see [`crate::overlay::Cell::of`].
     pub fn of(p: Point) -> Self {
-        Self(
-            (p.x / WELD_MM).round() as i64,
-            (p.y / WELD_MM).round() as i64,
-        )
+        let c = crate::overlay::Cell::of(p);
+        Self(c.x, c.y)
     }
 }
 
@@ -360,93 +355,6 @@ pub fn collinear_overlap_params(a: Point, b: Point, c: Point, d: Point) -> Vec<f
         .collect()
 }
 
-/// Every cut POINT along `a→b` induced by the segments in `others`, in order
-/// from `a` to `b` inclusive, so `windows(2)` yields the sub-edges directly.
-///
-/// # There is no rounded sort key
-///
-/// An earlier version sorted by the floating-point parameter and then
-/// interpolated it back into a coordinate. That made the ordering and the
-/// coordinates two separate approximations of the same thing, free to
-/// disagree: two distinct cuts whose parameters rounded together would collapse
-/// or swap. Carrying the POINTS and ordering them exactly removes the
-/// disagreement rather than reconciling it, because there is no longer a second
-/// quantity to reconcile.
-///
-/// Ordering compares the exact projection `(p - a)·r`, which is a total order
-/// along the segment and needs no division. Ties fall back to the exact
-/// coordinate pair, so the order is total even for coincident points.
-///
-/// # Two cuts are one cut when they share a [`VertexKey`]
-///
-/// That is ED-0103 N-2's identity relation, and it is the one every other
-/// stage of the arrangement uses. A distance test here would be a second
-/// identity rule, and the two disagree at the margins: points 0.6 µm apart
-/// either side of a cell boundary are within [`WELD_MM`] of each other but are
-/// distinct vertices. Collapsing such a cut on one edge while the edge it
-/// crosses keeps it leaves the two edges without a shared vertex, and the
-/// union traced from them loses most of its area.
-///
-/// A line meets a grid cell in one contiguous span, so cuts sharing a key are
-/// adjacent after the exact sort and `dedup_by` sees every pair. Which member
-/// survives does not matter: the caller replaces each cut by its weld class's
-/// representative.
-///
-/// Endpoints are reused exactly: the run begins at `a` and ends at `b`. Collinear overlap bounds are the OTHER segment's own vertices,
-/// reused exactly rather than reprojected.
-pub fn cuts_along(a: Point, b: Point, others: &[(Point, Point)]) -> Vec<Point> {
-    let mut cuts: Vec<Point> = vec![a, b];
-    for &(c, d) in others {
-        if VertexKey::of(c) == VertexKey::of(d) {
-            continue;
-        }
-        if let Some(p) = intersection_point(a, b, c, d) {
-            cuts.push(p);
-        }
-        cuts.extend(collinear_overlap_points(a, b, c, d));
-    }
-    cuts.sort_by(|p, q| compare_along(a, b, *p, *q));
-    cuts.dedup_by(|p, q| VertexKey::of(*p) == VertexKey::of(*q));
-    cuts
-}
-
-/// Exact order of two points by their projection along `a→b`.
-fn compare_along(a: Point, b: Point, p: Point, q: Point) -> Ordering {
-    let ex = |x: f64, y: f64| Dyadic::from_f64(x).sub(&Dyadic::from_f64(y));
-    let (rx, ry) = (ex(b.x, a.x), ex(b.y, a.y));
-    let along = |z: Point| ex(z.x, a.x).mul(&rx).add(&ex(z.y, a.y).mul(&ry));
-    along(p).cmp(&along(q)).then_with(|| {
-        (p.x, p.y)
-            .partial_cmp(&(q.x, q.y))
-            .unwrap_or(Ordering::Equal)
-    })
-}
-
-/// The other segment's own vertices where a COLLINEAR overlap begins or ends.
-///
-/// Nothing is constructed. All four points are collinear by the exact
-/// orientation predicate, so a vertex of `c→d` that projects strictly inside
-/// `a→b` lies on `a→b`, and the cut is that stored vertex itself.
-fn collinear_overlap_points(a: Point, b: Point, c: Point, d: Point) -> Vec<Point> {
-    if orientation(a, b, c) != Orientation::Collinear
-        || orientation(a, b, d) != Orientation::Collinear
-    {
-        return Vec::new();
-    }
-    let (rx, ry) = (b.x - a.x, b.y - a.y);
-    let len2 = rx * rx + ry * ry;
-    if len2 == 0.0 {
-        return Vec::new();
-    }
-    [c, d]
-        .into_iter()
-        .filter(|p| {
-            let t = ((p.x - a.x) * rx + (p.y - a.y) * ry) / len2;
-            t > 0.0 && t < 1.0
-        })
-        .collect()
-}
-
 /// Classifies `p` against the closed ring `ring`.
 ///
 /// The boundary test uses the exact orientation predicate, so a point lying on
@@ -473,13 +381,16 @@ pub fn classify_point(p: Point, ring: &[Point]) -> Containment {
 
     // Crossing number along the ray y = p.y, x > p.x. The half-open rule on
     // the vertical span (`a.y > p.y` differs from `b.y > p.y`) counts a vertex
-    // exactly once when the ray passes through it.
+    // exactly once when the ray passes through it. Whether the crossing lies
+    // right of `p` is the side of `p` relative to the edge directed upward —
+    // an exact orientation, where a rounded crossing abscissa misclassified
+    // `(1/3, 1)` against `(0,0),(1,3),(0,3)` (issue 0096).
     let mut inside = false;
     for i in 0..n {
         let (a, b) = (ring[i], ring[(i + 1) % n]);
         if (a.y > p.y) != (b.y > p.y) {
-            let x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
-            if x > p.x {
+            let (lo, hi) = if b.y > a.y { (a, b) } else { (b, a) };
+            if orientation(lo, hi, p) == Orientation::CounterClockwise {
                 inside = !inside;
             }
         }
@@ -757,72 +668,6 @@ mod tests {
     }
 
     #[test]
-    fn cuts_along_brackets_the_whole_segment_and_finds_a_crossing() {
-        let cuts = cuts_along(P(0.0, 0.0), P(10.0, 0.0), &[(P(4.0, -1.0), P(4.0, 1.0))]);
-        // The cut POINT is asserted, not a parameter that would still have to
-        // be interpolated back into one.
-        assert_eq!(cuts, vec![P(0.0, 0.0), P(4.0, 0.0), P(10.0, 0.0)]);
-    }
-
-    #[test]
-    fn cuts_along_splits_at_a_collinear_overlap() {
-        let cuts = cuts_along(P(0.0, 0.0), P(10.0, 0.0), &[(P(3.0, 0.0), P(7.0, 0.0))]);
-        // Collinear overlap bounds are the other segment's own vertices,
-        // reused rather than reprojected.
-        assert_eq!(
-            cuts,
-            vec![P(0.0, 0.0), P(3.0, 0.0), P(7.0, 0.0), P(10.0, 0.0)]
-        );
-    }
-
-    #[test]
-    fn cuts_along_resolves_a_weld_sized_feature_on_a_full_length_edge() {
-        // An edge spanning the whole coordinate domain (COORD_BOUND_MM is
-        // 1_000_000 mm), cut twice 1 mm apart at its far end. A parameter-space
-        // tolerance that ignored the edge's length would fuse the two cuts and
-        // the 1 mm feature would vanish from the arrangement.
-        let cuts = cuts_along(
-            P(-1_000_000.0, 0.0),
-            P(1_000_000.0, 0.0),
-            &[
-                (P(999_000.0, -1.0), P(999_000.0, 1.0)),
-                (P(999_001.0, -1.0), P(999_001.0, 1.0)),
-            ],
-        );
-        assert_eq!(cuts.len(), 4, "both cuts must survive: {cuts:?}");
-    }
-
-    #[test]
-    fn cuts_along_collapses_cuts_in_one_topology_cell() {
-        // 0.4 µm apart in one cell: the same vertex under N-2, and keeping
-        // both would emit a fragment VertexKey collapses to zero length.
-        let cuts = cuts_along(
-            P(0.0, 0.0),
-            P(1000.0, 0.0),
-            &[
-                (P(500.0, -1.0), P(500.0, 1.0)),
-                (P(500.0004, -1.0), P(500.0004, 1.0)),
-            ],
-        );
-        assert_eq!(cuts.len(), 3, "one cut, not two: {cuts:?}");
-    }
-
-    #[test]
-    fn cuts_along_keeps_close_cuts_in_different_topology_cells() {
-        // 0.6 µm apart across the cell boundary at 500.0005: within WELD_MM of
-        // each other, but two vertices under N-2. A distance test would
-        // collapse them; the edge each one crosses keeps its own.
-        let (p, q) = (P(500.0002, 0.0), P(500.0008, 0.0));
-        assert_ne!(VertexKey::of(p), VertexKey::of(q));
-        let cuts = cuts_along(
-            P(0.0, 0.0),
-            P(1000.0, 0.0),
-            &[(P(p.x, -1.0), P(p.x, 1.0)), (P(q.x, -1.0), P(q.x, 1.0))],
-        );
-        assert_eq!(cuts, vec![P(0.0, 0.0), p, q, P(1000.0, 0.0)]);
-    }
-
-    #[test]
     fn vertex_key_welds_points_closer_than_the_tolerance() {
         assert_eq!(
             VertexKey::of(P(1000.0, 0.0)),
@@ -832,5 +677,13 @@ mod tests {
             VertexKey::of(P(1000.0, 0.0)),
             VertexKey::of(P(1000.0 + WELD_MM * 2.0, 0.0))
         );
+    }
+
+    #[test]
+    fn classify_point_decides_an_interior_point_exactly() {
+        // The rounded crossing abscissa equalled the query x here and lost
+        // the crossing; 1/3 rounds below the exact third, so p is inside.
+        let tri = vec![P(0.0, 0.0), P(1.0, 3.0), P(0.0, 3.0)];
+        assert_eq!(classify_point(P(1.0 / 3.0, 1.0), &tri), Containment::Inside);
     }
 }

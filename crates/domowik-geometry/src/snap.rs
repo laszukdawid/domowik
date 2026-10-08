@@ -491,7 +491,7 @@ fn clip_line_to_box(start: Point, end: Point, box_: Aabb) -> Option<(Point, Poin
 ///
 /// At the coordinate bound, with `|t|·|D| <= 2C` and `|q| <= C` for
 /// `C = 1.1e7 mm`, that is under `8e-9 mm` — about five orders of magnitude
-/// BELOW the ratified topology quantum `WELD_MM = 1e-3 mm` (ED-0100,
+/// BELOW the ratified topology quantum `WELD_MM = 2^-10 mm` (ED-0100, ED-0110,
 /// ED-0103 N-2). The construction therefore cannot move a point across a
 /// topology-grid cell, which is what the arrangement's identity relation
 /// depends on. It is NOT exact, and R6.0.3's exact-real comparison still
@@ -1715,7 +1715,9 @@ mod tests {
     fn equidistant_retained_spans_ignore_the_faces_traversal_direction() {
         let mut doc = Document::with_ground_floor();
         let level = doc.levels[0].id;
-        for (x0, x1) in [(-1000.0, 1.1), (1.1, 1.9), (1.9, 1000.0)] {
+        // Grid-representable (multiples of 2^-10 mm), so derived boundary
+        // coordinates are the stored ones and the tie is exact.
+        for (x0, x1) in [(-1000.0, 1.125), (1.125, 1.875), (1.875, 1000.0)] {
             doc.walls
                 .push(Wall::new(level, P(x0, 0.0), P(x1, 0.0), 2.0, 2500.0));
         }
@@ -1736,8 +1738,12 @@ mod tests {
                 .at
                 .x
         };
-        assert_eq!(winner_x(-1.0), 1.1, "bottom face, traversed left to right");
-        assert_eq!(winner_x(1.0), 1.1, "top face, traversed right to left");
+        assert_eq!(
+            winner_x(-1.0),
+            1.125,
+            "bottom face, traversed left to right"
+        );
+        assert_eq!(winner_x(1.0), 1.125, "top face, traversed right to left");
     }
 
     /// The same defect seen from the admission side: a retained span's own
@@ -1748,15 +1754,15 @@ mod tests {
         let mut doc = Document::with_ground_floor();
         let level = doc.levels[0].id;
         doc.walls
-            .push(Wall::new(level, P(-1000.0, 0.0), P(0.3, 0.0), 2.0, 2500.0));
+            .push(Wall::new(level, P(-1000.0, 0.0), P(0.25, 0.0), 2.0, 2500.0));
         doc.walls
-            .push(Wall::new(level, P(0.3, 0.0), P(1000.0, 0.0), 2.0, 2500.0));
+            .push(Wall::new(level, P(0.25, 0.0), P(1000.0, 0.0), 2.0, 2500.0));
         let dragged = doc.walls[1].id;
         assert_eq!(doc.validate(), vec![]);
         let index = SnapIndex::build(&doc, level);
 
-        let point = P(0.4, -1.0);
-        let corner = P(0.3, -1.0);
+        let point = P(0.375, -1.0);
+        let corner = P(0.25, -1.0);
         let excluded = [dragged];
         let mut req = empty_query(point, point.x - corner.x);
         req.excluded_walls = &excluded;

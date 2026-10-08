@@ -124,8 +124,8 @@ over normative semantics.
   the domain is 3.7×10⁻⁹ mm² — identical at 10⁶, 10⁷ and 10⁹. With the
   numerical argument gone, the bound must simply cover the documents people
   draw. ±1 km excludes a campus, an airport apron or a long site plan; ±10 km
-  does not, and still leaves the 10⁻³ mm topology quantum about 537,000 ulps
-  wide at the bound.
+  does not, and still leaves the 2⁻¹⁰ mm topology quantum (ED-0110) about
+  2¹⁹ ulps wide at the bound.
 
   **Coordinates are PLAN-LOCAL.** No coordinate reference system and no
   georeferencing transform is defined for v0.1. National-grid coordinates in
@@ -709,6 +709,15 @@ Two of them are decided AGAINST the implementation, because the implementation
 contradicts a normative rule; those carry an obligation rather than a
 ratification, and the obligation is named with its owner.
 
+> **ED-0110 (2026-10-08, issue 0096) amends N-2 and N-3 below.** The quantum
+> is 2⁻¹⁰ mm with half-open cells `[k − ½, k + ½)`, and derived topology is
+> SNAP-ROUNDED: every segment is routed through the centres of all hot cells
+> (endpoints and crossings) it meets, and faces carry winding numbers.
+> Occupied boundaries, rooms and areas are expressed on cell centres. N-1
+> stands unchanged. Where N-2 and N-3 below speak of 10⁻³ mm, `VertexKey`
+> representatives or the cut-collapse rule, they record the superseded
+> pipeline.
+
 ### N-1 Stored coordinates are not quantized; sub-quantum geometry is topologically absent
 
 **Ratified.** A stored coordinate is any finite binary64 value within §3's
@@ -997,8 +1006,9 @@ was consulted for any of them.
 | Adaptive filtered orientation | `geometry::orientation` | Shewchuk 1997, "Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric Predicates", §2.2 forward error analysis | Error bound taken from the paper and cited at the constant; the exact path is this project's own, not the paper's expansion arithmetic |
 | Exact determinant sign over dyadic integers | `geometry::exact_det`, `geometry::dyadic` | None — derived from IEEE 754-2019 §3.4, which makes every finite binary64 exactly `±m · 2^e` | Original. Chosen over Shewchuk expansions because those lose exactness under underflow, with a witness recorded in the module |
 | Monotone-chain convex hull | `geometry::polygon::convex_hull` | A. M. Andrew, "Another efficient algorithm for convex hulls in two dimensions", 1979 | Turn test replaced by the exact predicate; degenerate input returned in reduced form per R3.2.3 |
-| Crossing-number point-in-ring | `geometry::arrangement::classify_point` | Standard published rule; boundary case decided by the exact predicate before the interior test | Half-open vertical-span rule so a ray through a vertex counts once |
-| Boundary classification booleans | `geometry::boolean` | None — built from this project's specification (R3.2, R3.2.4) | Original. Rooms are the bounded components of the COMPLEMENT, traced from the same boundary in the opposite direction, because clipping alone does not solve room topology |
+| Crossing-number point-in-ring | `geometry::arrangement::classify_point` | Standard published rule; boundary case decided by the exact predicate before the interior test | Half-open vertical-span rule so a ray through a vertex counts once; the crossing side is an exact orientation rather than a rounded abscissa (issue 0096) |
+| Snap rounding | `geometry::overlay` | J. D. Hobby, "Practical segment intersection with finite precision output", Computational Geometry 13 (1999) 199–214, §§2–4 | Half-open cells on a binary grid so membership is exact; a crossing rounded onto a cell boundary marks both neighbours; segment–cell incidence by separating axes with a first-order perturbation for the half-open edges (ED-0110, issue 0096) |
+| Winding-number overlay and face tracing | `geometry::overlay`, `geometry::boolean` | Standard planar-subdivision traversal (next = first half-edge clockwise from the twin); winding propagated across half-edges | Original. Per-label windings give R5.1.9 overlap as a face covered by two components; rooms are bounded components of the complement, traced from the reversed boundary |
 
 **Licences.** All of the above are original code in this repository under
 Apache-2.0. The exact and filtered predicate paths introduce no dependency:

@@ -25,6 +25,7 @@ mod enclosure;
 pub mod exact_area;
 pub mod hit;
 pub mod locality;
+pub mod overlay;
 pub mod polygon;
 pub mod rooms;
 pub mod snap;

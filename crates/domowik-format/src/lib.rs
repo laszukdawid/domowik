@@ -587,7 +587,10 @@ fn replace_or_push<T>(items: &mut Vec<T>, value: T, matches: impl Fn(&T) -> bool
 /// snap-rounding, and it is what the arrangement actually does, so validation
 /// answers the same way rather than a more comfortable way that would pass
 /// documents whose joins do not exist topologically.
-pub const JOIN_COINCIDENCE_MM: f64 = 0.001;
+///
+/// The quantum is 2⁻¹⁰ mm (ED-0110, issue 0096): a power of two, so scaling by
+/// its inverse is exact and every cell boundary is an exact binary64 value.
+pub const JOIN_COINCIDENCE_MM: f64 = 1.0 / 1024.0;
 
 /// The topology-grid cell a point falls in (ED-0103 N-2).
 ///
@@ -599,10 +602,20 @@ pub fn topology_cell(p: Point) -> (i64, i64) {
         p.x.is_finite() && p.y.is_finite(),
         "non-finite point has no cell"
     );
-    (
-        (p.x / JOIN_COINCIDENCE_MM).round() as i64,
-        (p.y / JOIN_COINCIDENCE_MM).round() as i64,
-    )
+    (cell_index(p.x), cell_index(p.y))
+}
+
+/// `floor(v · 1024 + ½)`, exactly: cells are half-open `[k − ½, k + ½)`.
+/// Scaling by a power of two is exact, and the fractional part of the scaled
+/// value is always representable, so no step rounds.
+fn cell_index(v: f64) -> i64 {
+    let s = v / JOIN_COINCIDENCE_MM;
+    let f = s.floor();
+    if s - f >= 0.5 {
+        f as i64 + 1
+    } else {
+        f as i64
+    }
 }
 
 /// How a background image is placed on a level.
