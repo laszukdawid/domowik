@@ -377,16 +377,22 @@ pub fn collinear_overlap_params(a: Point, b: Point, c: Point, d: Point) -> Vec<f
 /// along the segment and needs no division. Ties fall back to the exact
 /// coordinate pair, so the order is total even for coincident points.
 ///
-/// # The collapse tolerance is SPATIAL, and exact
+/// # Two cuts are one cut when they share a [`VertexKey`]
 ///
-/// Two cuts are the same cut when the points they name are closer than
-/// [`WELD_MM`], which is the tolerance that decides vertex identity. The
-/// comparison is `|p - q|² < WELD_MM²` evaluated exactly, so a long edge no
-/// longer dilutes it through a parameter-space epsilon.
+/// That is ED-0103 N-2's identity relation, and it is the one every other
+/// stage of the arrangement uses. A distance test here would be a second
+/// identity rule, and the two disagree at the margins: points 0.6 µm apart
+/// either side of a cell boundary are within [`WELD_MM`] of each other but are
+/// distinct vertices. Collapsing such a cut on one edge while the edge it
+/// crosses keeps it leaves the two edges without a shared vertex, and the
+/// union traced from them loses most of its area.
 ///
-/// Endpoints are reused exactly: the run begins at `a` and ends at `b`, and an
-/// interior cut that welds onto either is dropped in favour of the stored
-/// endpoint. Collinear overlap bounds are the OTHER segment's own vertices,
+/// A line meets a grid cell in one contiguous span, so cuts sharing a key are
+/// adjacent after the exact sort and `dedup_by` sees every pair. Which member
+/// survives does not matter: the caller replaces each cut by its weld class's
+/// representative.
+///
+/// Endpoints are reused exactly: the run begins at `a` and ends at `b`. Collinear overlap bounds are the OTHER segment's own vertices,
 /// reused exactly rather than reprojected.
 pub fn cuts_along(a: Point, b: Point, others: &[(Point, Point)]) -> Vec<Point> {
     let mut cuts: Vec<Point> = vec![a, b];
@@ -400,7 +406,7 @@ pub fn cuts_along(a: Point, b: Point, others: &[(Point, Point)]) -> Vec<Point> {
         cuts.extend(collinear_overlap_points(a, b, c, d));
     }
     cuts.sort_by(|p, q| compare_along(a, b, *p, *q));
-    cuts.dedup_by(|p, q| welds(*p, *q));
+    cuts.dedup_by(|p, q| VertexKey::of(*p) == VertexKey::of(*q));
     cuts
 }
 
@@ -414,15 +420,6 @@ fn compare_along(a: Point, b: Point, p: Point, q: Point) -> Ordering {
             .partial_cmp(&(q.x, q.y))
             .unwrap_or(Ordering::Equal)
     })
-}
-
-/// Whether two cut points are one vertex, by exact squared distance against
-/// the ratified topology quantum.
-fn welds(p: Point, q: Point) -> bool {
-    let ex = |x: f64, y: f64| Dyadic::from_f64(x).sub(&Dyadic::from_f64(y));
-    let (dx, dy) = (ex(p.x, q.x), ex(p.y, q.y));
-    let d2 = dx.square().add(&dy.square());
-    d2.cmp(&Dyadic::from_f64(WELD_MM).square()) == Ordering::Less
 }
 
 /// The other segment's own vertices where a COLLINEAR overlap begins or ends.
@@ -796,19 +793,33 @@ mod tests {
     }
 
     #[test]
-    fn cuts_along_collapses_cuts_closer_together_than_one_weld() {
-        // Half a weld apart: these are the same vertex by definition, and
-        // keeping both would emit a sub-weld fragment that VertexKey then
-        // collapses to zero length anyway.
+    fn cuts_along_collapses_cuts_in_one_topology_cell() {
+        // 0.4 µm apart in one cell: the same vertex under N-2, and keeping
+        // both would emit a fragment VertexKey collapses to zero length.
         let cuts = cuts_along(
             P(0.0, 0.0),
             P(1000.0, 0.0),
             &[
                 (P(500.0, -1.0), P(500.0, 1.0)),
-                (P(500.0005, -1.0), P(500.0005, 1.0)),
+                (P(500.0004, -1.0), P(500.0004, 1.0)),
             ],
         );
         assert_eq!(cuts.len(), 3, "one cut, not two: {cuts:?}");
+    }
+
+    #[test]
+    fn cuts_along_keeps_close_cuts_in_different_topology_cells() {
+        // 0.6 µm apart across the cell boundary at 500.0005: within WELD_MM of
+        // each other, but two vertices under N-2. A distance test would
+        // collapse them; the edge each one crosses keeps its own.
+        let (p, q) = (P(500.0002, 0.0), P(500.0008, 0.0));
+        assert_ne!(VertexKey::of(p), VertexKey::of(q));
+        let cuts = cuts_along(
+            P(0.0, 0.0),
+            P(1000.0, 0.0),
+            &[(P(p.x, -1.0), P(p.x, 1.0)), (P(q.x, -1.0), P(q.x, 1.0))],
+        );
+        assert_eq!(cuts, vec![P(0.0, 0.0), p, q, P(1000.0, 0.0)]);
     }
 
     #[test]

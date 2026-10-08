@@ -1053,6 +1053,28 @@ mod tests {
     }
 
     #[test]
+    fn a_sub_weld_overlap_keeps_the_whole_union_on_either_side_of_a_cell_boundary() {
+        // B sits on A's top edge, dipping in by `dy`. At 0.6 µm B's corners
+        // and the cuts on A's edge are within WELD_MM but in different cells;
+        // a distance-based cut collapse kept the vertex on one edge and dropped
+        // it on the other, and the union came back as a triangle.
+        for dy in [0.0004, 0.0006, 0.0014] {
+            let out = union(&[
+                rect(0.0, 0.0, 4000.0, 100.0),
+                rect(1000.0, 100.0 - dy, 3000.0, 300.0),
+            ]);
+            assert_eq!(out.len(), 1, "dy={dy}: {out:#?}");
+            assert!(out[0].holes.is_empty(), "dy={dy}: {out:#?}");
+            assert_eq!(out[0].outer.len(), 8, "dy={dy}: {out:#?}");
+            let area = out[0].area_mm2();
+            assert!(
+                (area - 800_000.0).abs() < 1.0,
+                "dy={dy}: area {area} is not the two rectangles"
+            );
+        }
+    }
+
+    #[test]
     fn union_is_invariant_under_ring_reversal() {
         // R3.2.4: derived output is invariant under wall reversal.
         let forward = rect(0.0, 0.0, 10.0, 10.0);

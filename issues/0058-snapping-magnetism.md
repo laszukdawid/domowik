@@ -1277,3 +1277,11 @@ made quiet.
 
 - **Implementation/spec commits:**
 - **Follow-up issues:**
+
+## Cross-issue fix from 0030 — 2026-10-08
+
+`arrangement::cuts_along` now deduplicates cuts on `VertexKey` equality
+instead of exact distance below `WELD_MM` (ED-0103 N-2: one identity rule).
+The distance rule dropped a cut on one edge that the crossing edge kept,
+and `union` lost most of a region at a 0.6 µm overlap. Details and the
+regression test are recorded in issue 0030.

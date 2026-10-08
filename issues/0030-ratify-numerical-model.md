@@ -505,3 +505,28 @@ midpoint of every open interval.
 **Containment and overlap are different contracts**, pinned on F39: ring
 enclosure links the island, occupied-set membership does not, and R5.1.9
 mandates the link.
+
+## Weld identity in `cuts_along` — 2026-10-08
+
+Probing the welded union before building the exact R5.1.9 predicate found a
+second identity rule still live in the arrangement. `cuts_along` collapsed
+cuts closer than `WELD_MM` by exact distance, while every other stage uses
+`VertexKey` (N-2). Rectangle B dipping 0.6 µm into A's top edge puts B's
+corners and the cuts on A's edge in different cells but within one weld: B's
+edge dropped the cut, A's kept it, the two edges shared no vertex, and
+`union` returned a triangle for an 800,000 mm² region. Room detection reads
+the same arrangement.
+
+Fixed by deduplicating on `VertexKey` equality and deleting the distance
+test. `boolean::tests::a_sub_weld_overlap_keeps_the_whole_union_on_either_side_of_a_cell_boundary`
+pins 0.4/0.6/1.4 µm and fails on the previous code at 0.6 µm.
+`arrangement.rs` belongs to 0058; recorded there as well.
+
+**What this does not close.** On the same fixture `locality::link` still
+links at 0.4 µm, where the welded union shows contact and ED-0103 (c)
+forbids the link, because `positive_area` compares unwelded per-component
+areas against the jointly welded union. And clarification (c)'s overlap
+route over EXISTING vertices alone cannot reproduce that welding: B's corner
+shares a cell with no vertex of A, so the vertex-only test still sees a
+0.4 µm overlap. The predicate must therefore run on the jointly welded
+fragment graph of both components, which is the next step.
