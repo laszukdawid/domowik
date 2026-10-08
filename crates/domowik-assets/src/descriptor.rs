@@ -152,10 +152,9 @@ impl Extent {
     /// BEHAVIOR-SPEC §2.1, where a level's height fields are elevations and
     /// thicknesses measured vertically, never plan extents.
     ///
-    /// This is issue 0026's reading of a gap, recorded rather than assumed,
-    /// and it is one of TWO answers the declared branch needs — whether the
-    /// declared extent also scales with `scaleUniform` belongs to ED-0106 and
-    /// is not settled here.
+    /// The owner approved this reading in BEHAVIOR-SPEC §9.6 on 2026-10-08,
+    /// and the declared branch applies instance scale and rotation before taking
+    /// axis-aligned bounds. ED-0106 still governs the fixed fallback.
     pub fn plan_footprint(&self) -> (f64, f64) {
         (self.width_mm, self.depth_mm)
     }

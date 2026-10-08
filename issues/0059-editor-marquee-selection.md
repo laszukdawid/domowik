@@ -4,11 +4,50 @@
 - **Priority:** Medium
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0012, 0049
-- **Deferred-closure gates:** 0010 (the `assetInstance` entity of FORMAT-SPEC
-  2.3, delivered on `finalize/0010`), 0026 (the section 9.6 per-instance
-  resolution result), 0012 (the `placeholder-box` hit class of R7.1.3,
-  assigned to this worker on `finalize/0012-placeholder`). See "Prerequisite
-  interface".
+- **Deferred-closure gates:** 0012 (remaining numerical/declared-box
+  conformance), 0033 (whole-app frame/input budgets), 0026 (remaining
+  asset-policy conformance). Descriptor-footprint decisions, per-instance
+  resolution integration and native-backed frontend PH1 coverage are delivered.
+  The full-verification criterion remains unchecked for the recorded clean-tree
+  failure.
+
+## Current disposition — 2026-10-08
+
+The frontend placeholder integration is delivered. Native marquee and point
+hits consume revision-cached per-instance resolution; degraded instances use
+§9.6 bounds, and resolved models stay on the separate editor-footprint path.
+The owner approved transformed width × depth declared footprints on 2026-10-08;
+the fallback remains the fixed 1000 mm square regardless of scale/rotation.
+The asset list paints the same placeholder bounds used for selection.
+
+Native-backed PH1/PH2 widget tests cover marquee selection, optional deletion,
+selection clearing and undo, and required-degraded inspection with deletion
+refusal. Rust boundary tests cover declared dimensions, coincident corners,
+tangency, active-level exclusion, resolved/unsupported/undecodable controls,
+and required normal-save refusal. A replay prerequisite defect was repaired:
+snapshot labels, dimensions and asset instances now receive live metadata,
+so deleting a snapshot instance is no longer silently discarded.
+
+Keep partial scope for 0012/0033 numerical and whole-app performance gates,
+and 0026's wider asset-policy obligations. This increment adds no configured
+external cache or remote retrieval and does not close those parent issues.
+See [the integration evidence](../docs/evidence/0059-marquee/2026-10-08.md).
+The older disposition and handoffs below are historical and superseded here.
+
+## Historical disposition — 2026-10-05
+
+Keep partial for frontend placeholder marquee integration.
+
+AssetInstance and PlaceholderBox, resolution snapshots and core PH1 tests
+exist. However `frontend/native/src/lib.rs::domowik_plan_marquee` calls
+`marquee` without a placeholder snapshot. Integrate per-instance degraded
+resolution and the reviewed declared-extent footprint, preserve read-only
+inspection, and add native-backed PH1 selection/deletion coverage.
+Numerical/frame budgets remain with 0012/0033; no new entity or hit class is
+needed.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
 
 ## Original problem
 
@@ -40,14 +79,13 @@ budgets, which issue 0033 lists in its query mix and owns.
 
 - [x] Modifier-drag over empty canvas performs the section 7.3 marquee rather
       than the current no-op, and plain drag behaviour is unchanged.
-- [ ] Additive membership, primary designation after the gesture (R7.4), and
+- [x] Additive membership, primary designation after the gesture (R7.4), and
       the R7.5 rules for hidden, placeholder and cross-level entities are
       implemented and tested. (Locked entities: excluded from v0.1 entirely
       per R7.5.2, not a rule this issue implements.)
-      **Partly unmet.** Additive membership, R7.4 primary designation, R7.5.1
-      hidden and R7.5.4 cross-level are implemented and tested. R7.5.3
-      placeholder participation is NOT, and cannot be from here: v0.1 defines
-      no asset-instance entity. See "What this does not deliver".
+      Delivered by the original gesture tests plus the 2026-10-08 native-backed
+      PH1/PH2 integration. The older missing-entity statements below are
+      superseded by the current disposition.
 - [x] Cancellation restores the pre-press selection, consistent with the
       gesture lifecycle issue 0043 established.
 - [x] The gesture consumes the existing core query; the editor introduces no
@@ -55,9 +93,11 @@ budgets, which issue 0033 lists in its query mix and owns.
 - [x] Pure state-machine tests and native-backed widget tests cover
       membership, cancellation, and interaction with cycling and modifier
       click from issue 0049.
-- [ ] Full repository verification passes. The last full run is `d0be026`
-      on 2026-09-07, which predates the work below; a run covering it is
-      queued behind the shared verification slot.
+- [ ] Full repository verification passes. The 2026-10-08 run passed all
+      functional checks, including 307 Flutter tests and Linux bundle probes,
+      but ended with `=== VERIFICATION FAILED ===` at `P13 clean tree`:
+      existing tracker edits and this uncommitted increment remain visible.
+      This is not an exit-0 verification claim.
 
 ## Provenance
 

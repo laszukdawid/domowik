@@ -5,6 +5,19 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0005, 0011, 0023, 0028
 
+## Current disposition — 2026-10-05
+
+Keep partial for complete persistence/recovery conformance.
+
+`crates/domowik-container/` provides Plan, guarded parsing, descriptors and
+degraded-mode admission. Current local round-trip/fault tests do not close
+every §9.7 platform/fault, opaque-data and §5.1 retention criterion. Audit
+that matrix and bridge inspection of degraded plans; do not claim power-loss
+safety or complete recovery UI.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
 Activated 2026-08-25 under ED-0021 on branch `issue/0029-persistence-recovery`.
 Consumes normative FORMAT-SPEC §7/§8/§9, issue 0011's delivered replay/session
 material as a labeled provisional handoff, and the issue 0028 fixture corpus
@@ -38,7 +51,7 @@ fail if divergence disappears or unexpected mismatches appear. Dependents may
 consume this delivered material as a labeled provisional handoff under
 partial-scope semantics.
 
-## Problem
+## Original problem
 
 Implement package read/write, manifests, operation framing, snapshots, and
 old-or-new atomic replacement. This separates persistence from 0010's entity

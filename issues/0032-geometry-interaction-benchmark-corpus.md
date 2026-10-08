@@ -4,10 +4,23 @@
 - **Priority:** High
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0013
-- **Deferred-closure gates:** 0013 (scoped recomputation), 0002/0013
-  (room metadata records), 0036 (reference-host CI runner)
+- **Deferred-closure gates:** 0013 (scoped recomputation), 0036 (reference-host CI runner)
 
-## Problem
+## Current disposition — 2026-10-08
+
+Keep partial for missing interaction workloads and locality validation.
+
+`crates/domowik-bench/` has generated corpora, measured scenarios and locality
+tests. RoomRecord now exists, so missing record-churn measurements are
+unstarted benchmark work, not blocked on an absent entity. Add
+create/update/delete/cross-level record workloads and prove real recomputation
+locality with 0013; keep timings separate from correctness and refresh
+named-host evidence.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Performance is a release criterion, not optional polish. Wall creation, editing,
 splitting, joining, and deletion trigger geometry resolution and derived-data
@@ -76,10 +89,10 @@ BEHAVIOR-SPEC semantics (sections 1–5; opening behavior is owned by issue
       scope above, with p50/p95/p99 latency reported per class and scale.
       **Partial.** Room DETECTION is measured at every scale and on named
       topology fixtures (holed, nested, non-convex, point-pinched, unjoined
-      overlapping). Room RECORD churn is not representable: rooms are derived
-      geometry with no persisted record in this implementation, so there is no
-      entity to create, update, delete or move between levels. Gated on the
-      §5.2 records.
+      overlapping). Room RECORD churn measurements remain outstanding. The persisted
+      RoomRecord entity and create/update/delete commands now exist; add
+      cross-level moves and candidacy/status/tie-break workload coverage. The
+      earlier absent-entity explanation is superseded, not a closure gate.
 - [x] p50/p95/p99 latency is reported per operation class and scale.
 - [x] Peak memory and allocation counts are bounded per operation class.
 - [ ] Invalidation-locality checks pass on every measured operation class.
@@ -136,6 +149,6 @@ Measured facts worth carrying forward:
 
 - **Implementation/spec commits:** see the `feat(bench)` commit adding
   `crates/domowik-bench` and `domowik_geometry::locality`.
-- **Follow-up issues:** scoped recomputation (issue 0013), room metadata
-  records (issues 0002/0013), a pinned reference-host runner for threshold
-  enforcement (issue 0036).
+- **Follow-up issues:** scoped recomputation (issue 0013) and a pinned
+  reference-host runner for threshold enforcement (issue 0036). Room-record
+  churn measurements remain owned here; the entity exists.

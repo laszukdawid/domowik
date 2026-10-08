@@ -113,76 +113,59 @@ impl Hit {
 /// The side of the fallback placeholder box, in millimetres (§9.6).
 pub const PLACEHOLDER_FALLBACK_MM: f64 = 1000.0;
 
-/// The deterministic placeholder box of BEHAVIOR-SPEC §9.6, for an instance
-/// whose descriptor declares no dimensions.
-///
-/// A [`PLACEHOLDER_FALLBACK_MM`] square, AXIS-ALIGNED IN PLAN SPACE, centred
-/// on the instance origin. `scaleUniform` and `rotationDeg` are deliberately
-/// IGNORED (ED-0106): §9.6 says a FIXED box and an AXIS-ALIGNED one, and a box
-/// scaled or rotated to match content would assert knowledge of content that
-/// could not be decoded — which is the one thing a degraded placeholder must
-/// not do. Translation is applied, because "centred on the instance origin" is
-/// `translationMm`.
-///
-/// That ignoring is scoped to THIS branch. The descriptor-dimensions branch of
-/// §9.6 is owed to asset resolution and is not implemented here; whether
-/// declared dimensions scale is a separate question and remains open.
-///
-/// Returns `None` for a non-finite origin, which the document model already
-/// rejects but which this function must not assume, since it is public.
-/// The §9.6 geometry for an instance, given what its descriptor declared.
-///
-/// Two variants because §9.6 has two branches and only one of them is decided.
-/// A caller must therefore SEE the undecided case rather than receive a box
-/// that quietly guessed, or a `None` that quietly drops the instance out of
-/// selection.
+/// The two §9.6 placeholder branches, in plan millimetres.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlaceholderGeometry {
-    /// No declared dimensions: the fixed 1000 mm box of ED-0106.
+    /// Fixed 1000 mm square; ignores instance scale and rotation (ED-0106).
     Fallback(Aabb),
-    /// The descriptor DID declare dimensions, and what to do with them is not
-    /// settled. ED-0106 decided only that the FALLBACK ignores `scaleUniform`
-    /// and `rotationDeg`, and said in terms that whether declared dimensions
-    /// scale is a separate, open question.
-    ///
-    /// Deliberately not a box. Building one here would answer that question by
-    /// implementation, which is the failure mode ED-0106 exists to prevent.
-    ///
-    /// Carries all THREE declared dimensions, unprojected, because choosing
-    /// two of them is part of what is undecided. A descriptor declares width,
-    /// height and depth; §9.6's box is a PLAN footprint, and the specification
-    /// does not say which axes map to it. The naive reading — width by height
-    /// — is very likely wrong for a floor plan, where the footprint is width
-    /// by depth and height is the vertical dimension. Projecting here would
-    /// bury that choice in geometry code.
-    DeclaredUndecided {
-        width_mm: f64,
-        height_mm: f64,
-        depth_mm: f64,
-    },
+    /// Axis-aligned bounds of the centered, scaled and rotated width/depth
+    /// rectangle. Height is vertical and does not affect the plan footprint.
+    Declared(Aabb),
 }
 
-/// [`placeholder_box`], for an instance whose descriptor may declare
-/// dimensions.
+/// Derive §9.6 interaction bounds from `(width, height, depth)` in mm.
 ///
-/// `declared_mm` is the descriptor's own `placeholderDimensions` as
-/// `(width, height, depth)` in millimetres, or `None` when it declared none.
-/// Plain `f64`s rather than an asset type: `domowik-geometry` must not depend
-/// on the asset store, so the caller copies three numbers across.
+/// Declared dimensions must be finite, positive and at most 10^6 mm. The
+/// transform must have finite translation/rotation and positive finite scale.
+/// Construction uses deterministic binary64 trigonometry, not exact-real
+/// arithmetic; returned bounds must fit `DERIVED_COORD_BOUND_MM`. Invalid or
+/// overflowing geometry returns `None`. No tolerance or coordinate snapping.
 pub fn placeholder_geometry(
     instance: &AssetInstance,
     declared_mm: Option<(f64, f64, f64)>,
 ) -> Option<PlaceholderGeometry> {
-    match declared_mm {
-        None => placeholder_box(instance).map(PlaceholderGeometry::Fallback),
-        Some((width_mm, height_mm, depth_mm)) => Some(PlaceholderGeometry::DeclaredUndecided {
-            width_mm,
-            height_mm,
-            depth_mm,
-        }),
+    let Some((width, height, depth)) = declared_mm else {
+        return placeholder_box(instance).map(PlaceholderGeometry::Fallback);
+    };
+    let t = &instance.transform;
+    if [width, height, depth]
+        .iter()
+        .any(|v| !v.is_finite() || *v <= 0.0 || *v > 1_000_000.0)
+        || !t.scale_uniform.is_finite()
+        || t.scale_uniform <= 0.0
+        || !t.rotation_deg.is_finite()
+        || t.translation_mm.iter().any(|v| !v.is_finite())
+    {
+        return None;
     }
+    let (sin, cos) = t.rotation_deg.rem_euclid(360.0).to_radians().sin_cos();
+    let half_x = (cos.abs() * width + sin.abs() * depth) * t.scale_uniform / 2.0;
+    let half_y = (sin.abs() * width + cos.abs() * depth) * t.scale_uniform / 2.0;
+    let bounds = Aabb {
+        min_x: t.translation_mm[0] - half_x,
+        min_y: t.translation_mm[1] - half_y,
+        max_x: t.translation_mm[0] + half_x,
+        max_y: t.translation_mm[1] + half_y,
+    };
+    [bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y]
+        .iter()
+        .all(|v| v.is_finite() && v.abs() <= domowik_format::DERIVED_COORD_BOUND_MM)
+        .then_some(PlaceholderGeometry::Declared(bounds))
 }
 
+/// Fixed 1000 mm axis-aligned square centered on the instance translation.
+/// Scale and rotation are ignored (ED-0106). Returns `None` for non-finite
+/// origins; valid document origins keep the box within derived bounds.
 pub fn placeholder_box(instance: &AssetInstance) -> Option<Aabb> {
     let origin = instance.origin();
     if !origin.x.is_finite() || !origin.y.is_finite() {
@@ -1353,37 +1336,49 @@ mod tests {
         assert_eq!(hits[0].distance_squared, 0.0);
     }
 
-    /// §9.6 has two geometry branches and only the fallback is decided, so
-    /// the undecided one must be VISIBLE rather than guessed or dropped.
     #[test]
-    fn a_declared_extent_is_reported_undecided_rather_than_boxed() {
-        let (doc, _, _) = ph1();
-        let instance = &doc.asset_instances[0];
-
-        // No declared dimensions: the settled branch, a plain fallback box.
-        match placeholder_geometry(instance, None) {
-            Some(PlaceholderGeometry::Fallback(b)) => {
-                assert_eq!(b, placeholder_box(instance).unwrap())
-            }
-            other => panic!("expected the fallback box, got {other:?}"),
+    fn declared_placeholders_use_scaled_rotated_width_and_depth() {
+        let (mut doc, _, _) = ph1();
+        let instance = &mut doc.asset_instances[0];
+        assert_eq!(
+            placeholder_geometry(instance, None),
+            placeholder_box(instance).map(PlaceholderGeometry::Fallback)
+        );
+        let declared = Some((600.0, 2100.0, 400.0));
+        assert_eq!(
+            placeholder_geometry(instance, declared),
+            Some(PlaceholderGeometry::Declared(Aabb::from_corners(
+                P(1700.0, -200.0),
+                P(2300.0, 200.0)
+            )))
+        );
+        instance.transform.scale_uniform = 2.0;
+        instance.transform.rotation_deg = 90.0;
+        let Some(PlaceholderGeometry::Declared(b)) = placeholder_geometry(instance, declared)
+        else {
+            panic!("declared box")
+        };
+        assert!((b.min_x - 1600.0).abs() < 1e-9);
+        assert!((b.max_x - 2400.0).abs() < 1e-9);
+        assert!((b.min_y + 600.0).abs() < 1e-9);
+        assert!((b.max_y - 600.0).abs() < 1e-9);
+        instance.transform.rotation_deg = 45.0;
+        let Some(PlaceholderGeometry::Declared(b)) = placeholder_geometry(instance, declared)
+        else {
+            panic!("declared box")
+        };
+        let half = 1000.0 / 2.0_f64.sqrt();
+        assert!((b.min_x - (2000.0 - half)).abs() < 1e-9);
+        assert!((b.max_y - half).abs() < 1e-9);
+        for bad in [
+            Some((0.0, 1.0, 1.0)),
+            Some((f64::NAN, 1.0, 1.0)),
+            Some((1.0, 1.0, 1_000_001.0)),
+        ] {
+            assert!(placeholder_geometry(instance, bad).is_none());
         }
-
-        // Declared dimensions: NOT a box. ED-0106 settled the fallback only,
-        // and building a box here would answer its open question by
-        // implementation.
-        match placeholder_geometry(instance, Some((600.0, 2100.0, 400.0))) {
-            Some(PlaceholderGeometry::DeclaredUndecided {
-                width_mm,
-                height_mm,
-                depth_mm,
-            }) => {
-                // All three survive unprojected: a door-like 600 x 2100 x 400
-                // has a PLAN footprint of 600 by 400, and picking that pair is
-                // exactly what is not yet decided.
-                assert_eq!((width_mm, height_mm, depth_mm), (600.0, 2100.0, 400.0));
-            }
-            other => panic!("expected the undecided branch, got {other:?}"),
-        }
+        instance.transform.scale_uniform = f64::MAX;
+        assert!(placeholder_geometry(instance, declared).is_none());
     }
 
     /// ED-0106's discriminating fixture. A non-identity transform must leave

@@ -6,7 +6,29 @@
 - **Depends on:** 0076, 0024
 - **Deferred-closure gates:** 0025, 0033
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial: Linux live 3D is delivered; portable/hardware/performance gates
+remain.
+
+`domowik-scene`, `domowik-models` and the frontend Linux GL texture runner
+implement the usable view. Subsequent full Linux verification passed
+(0092/0093), superseding the old dirty-tree-only failure as the latest
+evidence. Retain 0025/0033 gates and the documented non-PBR/LOD/platform
+limitations; do not recreate a renderer in spikes/.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Remaining acceptance work — 2026-10-08
+
+The original checked criteria below describe delivered scope and dated
+evidence. These later residuals explain the current nonterminal status.
+
+- [ ] Close or explicitly re-scope 0025 portable-backend/platform gates and
+      obtain 0033 named-device whole-app frame/input/resource evidence.
+
+## Original problem
 
 The owner wants an actual navigable 3D view comparable in use to public
 floor-plan editors, not top-down furniture previews. The current host/editor is

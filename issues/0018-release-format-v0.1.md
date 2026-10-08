@@ -3,9 +3,31 @@
 - **Phase:** 1
 - **Priority:** High
 - **Status:** Blocked
-- **Depends on:** 0005, 0011, 0026, 0027, 0028, 0029, 0031, 0035, 0036
+- **Depends on:** 0005, 0011, 0026, 0027, 0028, 0029, 0031, 0034, 0035, 0036
 
-## Problem
+## Current disposition — 2026-10-08
+
+Keep blocked as the format/binary publication milestone, not as a prerequisite
+for sharing source.
+
+Resolve 0034's release identity choices and audit the still-open format,
+corpus, persistence, size and GUI inventory gates before authorizing a
+release. Rust release validation and CLI cross-build jobs now exist; the old
+'no Rust process/SBOM/artifact' claim is superseded. No release or visibility
+change is authorized by this cleanup.
+
+For the first-release audit, distinguish 0031's actionable Rust framework
+from positive predecessor migration coverage. FORMAT-SPEC §8.2 V6 records an
+empty released predecessor set and forbids fabricating migration fixtures;
+positive migration coverage belongs to a later release claiming to open a real
+predecessor. Explicitly record that first-release dependency/criterion
+disposition here before publication, rather than making the first release
+wait for its own future predecessor or silently closing 0031.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Publish the first experimental `.domo` schema with an honest migration and
 compatibility promise. This is a release milestone, not a permanent freeze.

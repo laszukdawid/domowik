@@ -149,6 +149,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "domowik-assets"
+version = "0.1.0"
+dependencies = [
+ "domowik-container",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "domowik-container"
 version = "0.1.0"
 dependencies = [
@@ -201,6 +213,7 @@ dependencies = [
 name = "domowik-frontend-bridge"
 version = "0.0.0"
 dependencies = [
+ "domowik-assets",
  "domowik-container",
  "domowik-document",
  "domowik-edit",

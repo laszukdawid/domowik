@@ -235,6 +235,9 @@ fn baseline_ids(document: &Document) -> Vec<Uuid> {
         .chain(document.openings.iter().map(|o| o.id))
         .chain(document.joins.iter().map(|j| j.id))
         .chain(document.room_records.iter().map(|r| r.id))
+        .chain(document.labels.iter().map(|l| l.id))
+        .chain(document.dimensions.iter().map(|d| d.id))
+        .chain(document.asset_instances.iter().map(|a| a.id))
         .collect()
 }
 
@@ -1817,6 +1820,54 @@ mod tests {
         assert!(matches!(refusal, AdmissionFailure::WallContact(_)));
         assert_eq!(state(&p), before, "a refused batch must leave no trace");
         assert_eq!(wall_order(&p), walls.to_vec());
+    }
+
+    #[test]
+    fn snapshot_tier_b_entities_are_live_and_can_be_deleted() {
+        let mut doc = Document::with_ground_floor();
+        let level_id = doc.levels[0].id;
+        let label = Label {
+            id: Uuid::now_v7(),
+            level_id,
+            anchor_mm: [0.0, 0.0],
+            name: Some("Original".into()),
+            unknown: Default::default(),
+        };
+        let dimension = Dimension {
+            id: Uuid::now_v7(),
+            level_id,
+            start_mm: [0.0, 0.0],
+            end_mm: [100.0, 0.0],
+            label_override: None,
+            unknown: Default::default(),
+        };
+        let asset = AssetInstance {
+            id: Uuid::now_v7(),
+            level_id,
+            digest: format!("sha256:{}", "9a".repeat(32)),
+            transform: Default::default(),
+            display_name: None,
+            unknown: Default::default(),
+        };
+        let ids = [label.id, dimension.id, asset.id];
+        doc.labels.push(label);
+        doc.dimensions.push(dimension);
+        doc.asset_instances.push(asset);
+        let mut projection = project_from(&doc, &OperationLog::new());
+        for id in ids {
+            assert!(projection.is_live(id), "snapshot entity must be live");
+        }
+        let batch = Batch::new(
+            Uuid::now_v7(),
+            1,
+            Default::default(),
+            ids.into_iter().map(Operation::delete).collect(),
+        );
+        append_batch_guarded(&mut projection, &batch).unwrap();
+        for id in ids {
+            assert!(projection.is_tombstoned(id));
+            assert!(projection.document.entity(id).is_none());
+        }
     }
 
     /// A refused batch restores deleted Tier B entities to their own indices.

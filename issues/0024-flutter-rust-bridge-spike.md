@@ -1,9 +1,24 @@
-# 0024: Spike Flutter-to-Rust bridge
+# 0024: Validate the frontend Rust bridge and platform packaging
 
 - **Phase:** 2
 - **Priority:** High
 - **Status:** In Progress (partial scope)
-- **Depends on:** 0008, 0011
+- **Depends on:** 0037, 0011
+
+## Current disposition — 2026-10-05
+
+Keep partial as native bridge validation; the application is now `frontend/`,
+not a spike.
+
+`frontend/native/`, `frontend/plugin/` and `frontend/dart_harness/` hold the
+Rust ABI and platform packaging. Current Linux tests/build probes exist;
+Android/macOS evidence must be read at its tested ABI/feature scope. Refresh
+remaining platform/lifecycle/performance evidence and coordinate 0033; do not
+recreate the removed Go bridge or treat older Android runs as current editor
+validation.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
 
 Activated 2026-08-25 under ED-0020 on branch `issue/0024-bridge-spike`.
 Consumes the Done scaffold and issue 0011's delivered material as a labeled
@@ -39,7 +54,7 @@ ADR 0002. Per ED-0020 this issue also cannot close while 0011 remains
 unclosed under ED-0018 gates. Dependents may consume the Linux-slice evidence
 as a labeled provisional handoff under partial-scope semantics.
 
-## Problem
+## Original problem
 
 Validate ADR 0002's native bridge before building the GUI. A normal Go
 cross-build is not sufficient.

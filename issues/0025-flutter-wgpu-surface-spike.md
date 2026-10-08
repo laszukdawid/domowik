@@ -1,11 +1,25 @@
-# 0025: Spike Flutter-to-wgpu surface integration
+# 0025: Validate portable Flutter GPU surface integration
 
 - **Phase:** 3
 - **Priority:** High
 - **Status:** Open
 - **Depends on:** 0024
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep open: portable GPU integration is still unimplemented, not made obsolete
+by deleting scaffolding.
+
+Choose a reviewed backend and prove Flutter texture/surface interop on the
+required platforms with lifecycle/hardware/packaging evidence. `spikes/` is
+gone; its placeholder library was not a renderer. Reuse `domowik-scene` and
+frontend surface boundaries; 0078's Linux GL backend is the existing
+experiment, not a completed portable wgpu gate.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Validate a real Flutter rendering surface and native packaging; Dart FFI calls
 to wgpu-native alone do not display a frame.

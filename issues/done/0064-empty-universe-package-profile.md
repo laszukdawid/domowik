@@ -2,10 +2,24 @@
 
 - **Phase:** 1
 - **Priority:** Medium
-- **Status:** In Progress
+- **Status:** Done
 - **Depends on:** None
 
-## Problem
+## Current disposition — 2026-10-05
+
+Close: empty U(P) is portable, and both writer and CLI reporting implement
+that decision.
+
+Profile::derive in `crates/domowik-container/src/lib.rs` uses vacuous
+completeness; §7.9 states the rule. Current container and CLI tests cover
+portable/thin requests on empty plans plus a non-empty control. All passed
+locally on 2026-10-05. The original unchecked list is historical and the later
+completed acceptance list is authoritative.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 A package holding no assets always reads back as `thin`, whichever profile was
 asked for. A user can run `pack --portable`, get a result that is correct in
@@ -89,11 +103,11 @@ container's own profile-derivation test moves with it.
 
 ## Acceptance criteria
 
-- [ ] FORMAT-SPEC §7.9 states what an empty `U(P)` implies for the `profile`
+- [x] FORMAT-SPEC §7.9 states what an empty `U(P)` implies for the `profile`
       field, rather than leaving it to a writer's guard.
-- [ ] The container's derivation matches that statement, with a test that
+- [x] The container's derivation matches that statement, with a test that
       fails if the empty case changes.
-- [ ] Probe P13b and the `pack` message agree with both.
+- [x] Probe P13b and the `pack` message agree with both.
 
 ## Decided 2026-09-12 — portable by vacuous truth
 
@@ -169,5 +183,9 @@ Green on this branch: `cargo fmt --check`, `cargo clippy --workspace
 
 ## Closure
 
-- **Implementation/spec commits:** on `finalize/0064`
+- **Implementation/spec:** present in committed application baseline
+  `a3cc8ee`; closure reconciled by issue 0094 on 2026-10-05.
+- **Current verification:** CLI/container tests passed locally; all three
+  empty-request/non-empty-control reporting tests and the container derivation
+  test ran. Issue 0094 records final canonical verification.
 - **Follow-up issues:** none

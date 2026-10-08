@@ -2,10 +2,25 @@
 
 - **Phase:** 2
 - **Priority:** High
-- **Status:** In Progress
+- **Status:** In Progress (partial scope)
 - **Depends on:** 0001, 0037
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial for full wall-contact admission conformance, not an actively
+running implementation.
+
+Axis admission and separate area-overlap warnings exist in
+`crates/domowik-edit/` and document warnings. Complete remaining
+crossing/join-policy, raw/external/compensation boundaries and
+certified-construction criteria with 0030/0058; preserve atomic refusal and
+benchmark requirements. Existing warning evidence is not full R3.1.2
+conformance.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 The shared edit algebra does not implement every normative R3.1.2 contact
 class or its precedence. A root CLI reproduction on 2026-09-05 creates wall

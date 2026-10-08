@@ -1,17 +1,34 @@
-# Domowik Local Issue Tracker
+# Domowik Work Tracker
 
-Status: **local pre-publication tracker.** These are ordinary tracked files in
-the Domowik repository. They were a nested Git repository during early design;
-commit `00893a5` ("track issues as regular files instead of gitlink") ended
-that, so the issues are present in every clone and in CI. Relative
-documentation links are intentionally local and must be replaced by stable
-repository URLs before this tracker is published (issue 0034).
+These are ordinary tracked backlog files in the Domowik repository, present
+in every clone and in CI. They were a nested repository during early design,
+but are not one now. Relative documentation links work when this source tree
+is published on GitHub; separate tracker hosting is not planned.
 
 The issue text is licensed under Apache-2.0 with the rest of the repository.
 
-A per-issue reading of all 63 issues against their acceptance criteria, with
-residuals, ownership and sequencing, is in
-[AUDIT-2026-09-12.md](AUDIT-2026-09-12.md).
+Start with [the current backlog review](CURRENT-BACKLOG.md), updated 2026-10-08,
+and each nonterminal issue's Current disposition. The
+[September audit](AUDIT-2026-09-12.md) is a historical 63-issue snapshot,
+not the current count, owner roster or work plan. Issue 0059's
+[placeholder integration](../docs/evidence/0059-marquee/2026-10-08.md) is
+delivered; its numerical/performance and asset-policy gates remain partial,
+and full verification remains unchecked after the clean-tree failure.
+
+The [complete October audit](AUDIT-2026-10-08.md) covers all 94 preceding
+records, including terminal history, and records the named basis and next
+action for each. With audit issue 0095 closed, the tracker has **95 issues:
+62 Done, 24 partial scope, 4 Blocked and 5 Open**; none is actively In Progress.
+
+The later owner-selected [format direction](../docs/decisions/0011-extensible-versioned-document-format.md)
+keeps the existing file version key and adopts a defined core with namespaced
+extensions. Issues 0004/0005 remain partial for its wire contract and gates.
+
+Older progress notes retain original criteria and evidence. Removed Go/spike
+paths, old branches, local transcript/log locations and pre-squash commit IDs
+are historical references, not files or commits guaranteed in a fresh clone.
+Do not infer current defects, support or pending work from them without
+checking the dated current disposition and implementation.
 
 ## Required context
 
@@ -74,7 +91,7 @@ The clean-room rules apply fully to specification and spike issues.
 | [0021](0021-format-assets-size-budgets.md) | Format: assets, package profiles, size budgets | In Progress (partial scope) |
 | [0022](done/0022-geometry-numerical-model.md) | Decide numerical geometry model | Done |
 | [0023](done/0023-container-security-recovery.md) | Container threat model and recovery contract | Done |
-| [0030](0030-ratify-numerical-model.md) | Ratify numerical geometry model after spikes | In Progress (partial scope) |
+| [0030](0030-ratify-numerical-model.md) | Complete numerical-model implementation conformance | In Progress (partial scope) |
 | [0034](0034-identity-prerelease-finalization.md) | Pre-publication identity finalization | Blocked |
 | [0072](0072-curved-walls-decision.md) | Decide and specify curved walls | Open |
 
@@ -88,7 +105,7 @@ The clean-room rules apply fully to specification and spike issues.
 | [0012](0012-core-spatial-index.md) | Spatial index and hit testing | In Progress (partial scope) |
 | [0013](0013-core-geometry-engine.md) | Geometry engine and room reconciliation | In Progress (partial scope) |
 | [0014](0014-cli-new-info-validate.md) | CLI `new`, `info`, `validate` | In Progress (partial scope) |
-| [0015](0015-cli-apply.md) | CLI `apply` | In Progress (partial scope) |
+| [0015](done/0015-cli-apply.md) | CLI `apply` | Done |
 | [0016](0016-cli-export-svg.md) | CLI SVG export | In Progress (partial scope) |
 | [0017](0017-cli-export-png.md) | CLI PNG export | In Progress (partial scope) |
 | [0018](0018-release-format-v0.1.md) | Release experimental format v0.1 | Blocked |
@@ -107,8 +124,8 @@ The clean-room rules apply fully to specification and spike issues.
 
 | Issue | Phase | Title | Status |
 |---|---:|---|---|
-| [0024](0024-flutter-rust-bridge-spike.md) | 2 | Flutter-to-Rust bridge spike | In Progress (partial scope) |
-| [0025](0025-flutter-wgpu-surface-spike.md) | 3 | Flutter-to-wgpu surface spike | Open |
+| [0024](0024-flutter-rust-bridge-spike.md) | 2 | Validate frontend Rust bridge and platform packaging | In Progress (partial scope) |
+| [0025](0025-flutter-wgpu-surface-spike.md) | 3 | Validate portable Flutter GPU surface integration | Open |
 | [0033](0033-viewport-render-input-performance.md) | 2 | Viewport, render, and input performance criteria | Open |
 | [0039](done/0039-editor-workspace.md) | 2 | Make the Flutter editor workspace clear and usable | Done |
 | [0040](done/0040-editor-unsaved-changes.md) | 2 | Protect unsaved edits when replacing an editor session | Done |
@@ -126,16 +143,16 @@ The clean-room rules apply fully to specification and spike issues.
 | [0052](done/0052-editor-inspector-resilience.md) | 2 | Keep inspector layout and expansion usable | Done |
 | [0053](done/0053-authoritative-level-lifecycle.md) | 2 | Align authoritative level lifecycle with the specification | Done |
 | [0054](done/0054-level-fields-and-validation-warnings.md) | 2 | Complete authoritative level controls and validation warnings | Done |
-| [0055](0055-wall-contact-admission.md) | 2 | Enforce wall contact refusals and semantic overlap warnings | In Progress |
+| [0055](0055-wall-contact-admission.md) | 2 | Enforce wall contact refusals and semantic overlap warnings | In Progress (partial scope) |
 | [0056](0056-macos-sdk-module-redefinition.md) | 2 | Diagnose intermittent macOS SDK module redefinition | Open |
 | [0057](done/0057-macos-clean-checkout-build.md) | 2 | Repair the macOS build from a clean checkout | Done |
-| [0058](0058-snapping-magnetism.md) | 2 | Implement magnetism and snapping | In Progress |
+| [0058](0058-snapping-magnetism.md) | 2 | Implement magnetism and snapping | In Progress (partial scope) |
 | [0059](0059-editor-marquee-selection.md) | 2 | Supply the marquee selection gesture | In Progress (partial scope) |
-| [0060](0060-room-records-and-naming.md) | 2 | Deliver room records and room naming | In Progress |
-| [0061](0061-ci-macos-gui-coverage.md) | 2 | Give CI the macOS and GUI stages it currently never runs | In Progress |
+| [0060](0060-room-records-and-naming.md) | 2 | Deliver room records and room naming | Blocked |
+| [0061](0061-ci-macos-gui-coverage.md) | 2 | Verify hosted macOS packaging and GUI CI coverage | In Progress (partial scope) |
 | [0062](done/0062-retire-go-toolchain.md) | 2 | Retire the Go toolchain | Done |
 | [0063](done/0063-native-close-test-synchronization.md) | 2 | Make native close quiescence tests deterministic | Done |
-| [0064](0064-empty-universe-package-profile.md) | 1 | Decide the package profile of a plan with no assets | In Progress |
+| [0064](done/0064-empty-universe-package-profile.md) | 1 | Decide the package profile of a plan with no assets | Done |
 | [0065](done/0065-live-wall-drag-preview-and-shift-wheel.md) | 2 | Preview wall movement and pan with Shift+wheel | Done |
 | [0066](done/0066-select-openings-before-host-walls.md) | 2 | Select openings before their host walls | Done |
 | [0067](done/0067-edit-opening-position-and-size.md) | 2 | Edit opening position and dimensions | Done |
@@ -164,3 +181,5 @@ The clean-room rules apply fully to specification and spike issues.
 | [0091](done/0091-documentation-consolidation.md) | 0 | Consolidate documentation and retire archive references | Done |
 | [0092](done/0092-promote-frontend.md) | 2 | Promote the actively developed frontend | Done |
 | [0093](done/0093-remove-obsolete-repository-remnants.md) | 0 | Remove obsolete repository remnants | Done |
+| [0094](done/0094-reconcile-current-backlog.md) | 0 | Reconcile the tracker with the current application | Done |
+| [0095](done/0095-audit-issue-relevance-and-currency.md) | 0 | Audit issue relevance and currency | Done |

@@ -317,18 +317,18 @@ int32_t domowik_plan_snap(uint64_t handle, const uint8_t *req,
  * already in its selection, and changes nothing when every one of them
  * already is. Only ACTIVE-level entities are eligible (R7.1.3, R7.5.1,
  * R7.5.4) — the core's own level filter, not a second one here. A rectangle
- * the core currently treats as zero-area degenerates to POINT-HIT semantics
- * at its corner (R7.3.2), selecting at most the one top-ranked candidate
+ * with coincident corners degenerates to POINT-HIT semantics
+ * at its corner (R7.3.2a), selecting at most the one top-ranked candidate
  * there, exactly as domowik_plan_hit_test's own class precedence would.
  *
  * INHERITED, NOT FIXED, by this transport: issue 0012's own open gaps.
  * Distances and the occupied-polygon/closest-point construction the core's
  * exact-boundary test runs against are binary64, not exact-real, arithmetic
- * (the same caveat domowik_plan_hit_test's own doc states above). Exactly
- * which rectangles count as "zero-area" for the point-hit branch (currently
- * width == 0 AND height == 0, not either dimension alone) is under separate
- * review; this call forwards whatever the core currently does, unmodified,
- * and does not assert that question is settled.
+ * (the same caveat domowik_plan_hit_test's own doc states above).
+ * Degraded instances participate through per-instance local resolution:
+ * declared width/depth are scaled/rotated before taking axis-aligned bounds;
+ * absent dimensions use the fixed 1000 mm square ignoring scale/rotation.
+ * Required degradation permits inspection but refuses mutations/saving.
  *
  * READ-ONLY: never commits an operation, never advances document_revision,
  * never touches undo/redo. Selection is local view state, never document

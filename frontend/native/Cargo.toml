@@ -20,6 +20,7 @@ name = "domowik_bridge"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+domowik-assets = { path = "../../crates/domowik-assets" }
 domowik-container = { path = "../../crates/domowik-container" }
 domowik-document = { path = "../../crates/domowik-document" }
 domowik-edit = { path = "../../crates/domowik-edit" }

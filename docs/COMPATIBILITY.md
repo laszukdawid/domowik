@@ -32,6 +32,13 @@ released predecessor set from which a migration guarantee can be inferred.
 The stronger compatibility promise in
 [ADR 0007](decisions/0007-format-compatibility-promise.md) remains Proposed.
 
+The owner-selected [evolution direction](decisions/0011-extensible-versioned-document-format.md)
+keeps `formatVersion` in the manifest and adopts a defined core with namespaced
+extensions. Incompatible development schemas use distinct version labels;
+there is no promise to migrate every unpublished revision. The extension wire
+contract is pending, and current readers still emit/support `"0.1"`. Updating
+a version string alone does not convert an incompatible document.
+
 Keep untouched backups before opening important plans in a newer development
 build. Do not assume an older build can read a newly saved file or interpret
 every optional extension. A reader's preservation of unknown data is not proof
@@ -68,7 +75,16 @@ Supported model paths are GLB, OBJ and ZIP-OBJ, with bounded decode and static
 scene handling. Support for a container format is not a claim to implement
 all of its animation, material, texture or scene features. Unitless models use
 an estimated proportional scale. 2D previews and 3D LOD are approximations;
-missing/unsupported content can produce diagnosed placeholders.
+missing, unsupported or undecodable content can produce diagnosed placeholders.
+Degraded instances participate in point-hit and marquee selection using §9.6
+bounds. Declared width/depth are scaled and rotated before taking axis-aligned
+bounds; the absent-dimensions fallback is a fixed 1000 mm square. Required
+degradation permits inspection while refusing mutations and normal saving;
+optional instances remain deletable. Resolved model footprints have separate
+point-hit/drag support and are not included in the placeholder marquee query.
+The editor has no configured external-cache or remote-retrieval resolver.
+See [the 2026-10-08 evidence](evidence/0059-marquee/2026-10-08.md) for coverage
+and verification limits.
 
 Editor footprint and height metadata are optional extensions. Older readers
 may preserve an independently resized height but render it incorrectly; legacy

@@ -5,6 +5,21 @@
 - **Status:** Blocked
 - **Depends on:** 0005, 0028, 0029
 
+## Current disposition — 2026-10-05
+
+Keep blocked for positive released-schema migration coverage; framework work
+is not blocked.
+
+There is no earlier public schema to migrate from. The Rust CLI's
+developer-package conversion is not a public migration framework.
+Build/validate the registry, backup/rollback and unknown-data preservation
+machinery without inventing predecessor releases; activate positive migration
+fixtures when 0018 creates a real public baseline. Historical Go framework
+claims do not establish a current Rust implementation.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
 ## Released-schema reconciliation accepted 2026-08-29 (ED-0051)
 
 Branch `issue/0031-released-schema-honesty` (`ae759bb`..`a139681`, six
@@ -71,7 +86,7 @@ withdrawn: `persist/writer.go:346` is NOT a defect but the most faithful
 implementation of §8.1 V1; what was found is a testability limitation, now
 recorded beside the harness's non-claims.
 
-## Problem
+## Original problem
 
 Implement migrations for every public pre-v0.1 fixture Domowik claims to
 support and the backup/rollback behavior promised by the versioning policy.

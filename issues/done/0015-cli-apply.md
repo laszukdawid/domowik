@@ -2,10 +2,24 @@
 
 - **Phase:** 1
 - **Priority:** High
-- **Status:** In Progress (partial scope)
+- **Status:** Done
 - **Depends on:** 0011, 0029
 
-## Problem
+## Current disposition — 2026-10-05
+
+Close: the last recorded defect, L11 depth enforcement, is implemented and
+tested.
+
+`read_external_batch` uses Limits.max_nesting_depth, check_nesting_depth and
+the guarded parser. Current tests admit depths 127/128, reject 129 before
+mutation, and preserve unknown fields and file bytes. CLI/container tests
+passed locally on 2026-10-05. Earlier reopening notes are historical;
+batch-from-stdin/multi-batch remain optional future scope, not closure gates.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Apply operation scripts from a file or stdin. Define whether scripts contain
 commands or trusted stored operations; do not accept spoofed actor/counter
@@ -13,9 +27,9 @@ metadata accidentally.
 
 ## Acceptance criteria
 
-Checked against the Rust implementation on 2026-09-12; see
-`Checklist reconciled — 2026-09-12` below for why they were unchecked while
-the issue read `Done`.
+Reconciled against the Rust implementation on 2026-10-05. The September
+sections below retain the earlier closure/reopening history. All criteria
+are now satisfied for the documented single-batch invocation.
 
 - [x] External script schema and stored operation schema are separated or
       their trust/assignment rules are explicit. Not separated — `cmd_apply`
@@ -42,16 +56,12 @@ the issue read `Done`.
       `a_dry_run_apply_reports_the_projection_and_writes_nothing` asserts the
       plan is byte-identical afterwards, not merely that it re-projects the
       same.
-- [ ] Input size, operation count, depth, and numeric bounds are enforced.
-      **Three of the four.** `read_external_batch` checks the declared size
-      before the read and the bytes actually read after it, then the L23
-      per-batch operation count before the batch reaches the session; numeric
-      bounds are enforced by `Document::validate` against `COORD_BOUND_MM`
-      through the `accept_external` seam. **Depth is not enforced to any
-      chosen bound.** Nesting is bounded only by `serde_json`'s default
-      128-level recursion limit, which no specification row picked; `Limits`
-      has no depth field, and issue 0037 already carries L10 — "container
-      nesting depth has NO GUARD" — as a known corpus defect. See below.
+- [x] Input size, operation count, depth, and numeric bounds are enforced.
+      Rechecked 2026-10-05: declared/read byte limits and L23 checks remain;
+      validation enforces numeric bounds through `accept_external`. The L11
+      guard now uses `Limits.max_nesting_depth`, admits 127/128 and rejects
+      129 before parsing or mutation. Corresponding CLI tests pass. The dated
+      reopening below records the defect before this fix.
 
 
 Activated 2026-08-25 under ED-0022 on branch `issue/0015-cli-apply`. Consumes normative

@@ -6,7 +6,23 @@
 - **Depends on:** 0009
 - **Blocks:** 0018 (release format v0.1)
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep blocked on release identity/namespace decisions; do not re-run
+time-sensitive checks from old observations.
+
+Current local Git remote is configuration, not proof of public availability or
+trademark clearance. Separate source-preview readiness from
+application/package publication, finalize IDs/reservations only with owner
+authority, and refresh registry observations when actually preparing that
+release. Go module-path removal is discharged by 0062/0093. Relative
+repository documentation links need no replacement for a normal GitHub source
+publication.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 ADR 0006's release gate and `../docs/NAMING.md` defer several identity
 decisions to first publication. They must be completed before any public

@@ -6,7 +6,29 @@
 - **Depends on:** 0004 (logical operation/batch metadata), 0005 (physical batch framing + container compression fixation), 0026 (writer/tooling)
 - **Deferred-activation gate** (not a dependency edge; README "Partial-scope dependency semantics"): furnished-corpus activation additionally requires BEHAVIOR-SPEC §10 acceptance + 0004
 
-## Problem
+## Current disposition — 2026-10-08
+
+Keep partial for furnished/history scenarios and encoding measurements.
+
+Part A measurements exist and the room-record increment remeasured the full
+unfurnished corpus. Do not use earlier sizes as today's result or overwrite
+named-host evidence. Activate furnished scenarios only against reviewed §10
+semantics; produce Part B and candidate encoding/quality/decode/memory records
+before promotion. Existing furniture import does not by itself satisfy the
+corpus gate.
+
+BEHAVIOR-SPEC §10 now defines normative experimental-editor import,
+placement, preview and resizing. Its former "undefined" description is
+historical. Furnished-corpus activation still needs 0004 to reconcile those
+rules with FORMAT-SPEC's provisional Tier B envelopes and the corpus contract;
+working import alone does not activate the corpus or waive its criteria.
+Issue 0018 already declares its 0035 dependency; the historical request
+to add that publication edge is discharged.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Issue 0021 delivered the normative corpus definitions, revised
 preview-inclusive estimates, and the encoding promotion gate under partial

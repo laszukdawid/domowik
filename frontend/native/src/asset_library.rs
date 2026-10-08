@@ -22,8 +22,17 @@ pub(super) struct FootprintIndex {
 }
 
 impl FootprintIndex {
-    fn build(doc: &Document, level: Uuid, revision: usize) -> Self {
-        let instances: Vec<_> = doc.asset_instances_on_level(level).cloned().collect();
+    fn build(
+        doc: &Document,
+        level: Uuid,
+        revision: usize,
+        degraded: &std::collections::HashSet<Uuid>,
+    ) -> Self {
+        let instances: Vec<_> = doc
+            .asset_instances_on_level(level)
+            .filter(|a| !degraded.contains(&a.id))
+            .cloned()
+            .collect();
         let spatial = SpatialIndex::build(instances.iter().enumerate().filter_map(|(i, a)| {
             let points = corners(a);
             if points
@@ -177,7 +186,19 @@ fn corners(instance: &AssetInstance) -> [[f64; 2]; 4] {
     })
 }
 
-fn list(plan: &Plan) -> Value {
+fn list(plan: &mut Plan) -> Result<Value, String> {
+    let levels: Vec<_> = plan
+        .session()
+        .document()
+        .levels
+        .iter()
+        .map(|l| l.id)
+        .collect();
+    let mut placeholders = HashMap::new();
+    for level in levels {
+        let boxes = plan.placeholders(level)?;
+        placeholders.extend(boxes.into_iter().map(|p| (p.instance, p.bounds)));
+    }
     let models: Vec<Value> = plan
         .file
         .as_ref()
@@ -194,12 +215,12 @@ fn list(plan: &Plan) -> Value {
         "name": a.display_name.as_deref().unwrap_or("Model"),
         "positionMm": a.transform.translation_mm, "rotationDeg": a.transform.rotation_deg,
         "scaleUniform": a.transform.scale_uniform, "dimensionsMm": dimensions(a), "cornersMm":
-            corners(a).into_iter().filter(|p| p.iter().all(|v| v.is_finite() && v.abs() <= DERIVED_COORD_BOUND_MM)).collect::<Vec<_>>(),
+            placeholders.get(&a.id).map(|b| [[b.min_x,b.min_y],[b.max_x,b.min_y],[b.max_x,b.max_y],[b.min_x,b.max_y]]).unwrap_or_else(|| corners(a)).into_iter().filter(|p| p.iter().all(|v| v.is_finite() && v.abs() <= DERIVED_COORD_BOUND_MM)).collect::<Vec<_>>(),
         "heightMm": a.unknown.get("editorHeightMm").and_then(Value::as_f64)
             .filter(|h| h.is_finite() && *h > 0. && *h <= MAX_DIMENSION_MM)
     })).collect();
     instances.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-    json!({"directories": directories(plan), "models": models, "instances": instances})
+    Ok(json!({"directories": directories(plan), "models": models, "instances": instances}))
 }
 
 fn read_model(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
@@ -265,7 +286,7 @@ fn update_directory(
 
 fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
     match request {
-        Request::List => return Ok(list(plan)),
+        Request::List => return list(plan),
         Request::Preview { .. } | Request::Size { .. } => {
             return Err("Model decoding must run outside the plan lock".into())
         }
@@ -287,10 +308,17 @@ fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
             let revision = document_revision(plan.session());
             if !matches!(&plan.asset_hits, Some(index) if index.level == level_id && index.revision == revision)
             {
+                let degraded = plan
+                    .resolutions()
+                    .iter()
+                    .filter(|e| e.state.is_degraded())
+                    .map(|e| e.instance_id)
+                    .collect();
                 plan.asset_hits = Some(FootprintIndex::build(
                     plan.session().document(),
                     level_id,
                     revision,
+                    &degraded,
                 ));
             }
             let index = plan.asset_hits.as_ref().expect("just ensured");
@@ -536,7 +564,7 @@ fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
                 .map_err(|e| e.to_string())?;
         }
     }
-    Ok(list(plan))
+    list(plan)
 }
 
 /// JSON asset requests on one plan. Uses the same serialization lock, lease,
@@ -892,8 +920,8 @@ mod tests {
     fn directory_import_deduplicates_and_survives_source_removal_and_reopen() {
         let root = std::env::temp_dir().join(format!("domowik-library-{}", Uuid::now_v7()));
         std::fs::create_dir(&root).unwrap();
-        let file = root.join("original chair.glb");
-        std::fs::write(&file, b"original inert model content").unwrap();
+        let file = root.join("original chair.obj");
+        std::fs::write(&file, b"v 0 0 0\nv 1 0 0\nv 0 0 1\nf 1 2 3\n").unwrap();
         let (h, level) = create();
         request(h, json!({"kind":"attach", "directory":root})).unwrap();
         let (plan, _lease) = resolve(h).unwrap();

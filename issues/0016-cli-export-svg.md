@@ -5,7 +5,20 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0013, 0026
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial for shared semantic paint and visual conformance.
+
+SVG export and shared room-label generation exist in
+`crates/domowik-cli/src/{svg,label}.rs`. Extract the remaining
+occupied-region/aperture/background paint inputs into a renderer-neutral API,
+then add tolerant rasterized comparisons and omission coverage. Do not remove
+the working exporter.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Export the v0.1 renderable model through a semantic core paint model. Define
 supported entities and deliberate omissions instead of implying all entities

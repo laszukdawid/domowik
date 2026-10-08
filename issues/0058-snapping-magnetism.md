@@ -2,10 +2,34 @@
 
 - **Phase:** 2
 - **Priority:** High
-- **Status:** In Progress
+- **Status:** In Progress (partial scope)
 - **Depends on:** 0003, 0012, 0024, 0049
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial: snapping is implemented; remaining construction/conformance
+evidence is not complete.
+
+`crates/domowik-geometry/src/snap.rs` and frontend native snap calls replace
+the old Dart-only helper. S-series/lifecycle coverage and named-host query
+timings exist. Certified intersection construction is also present in
+`arrangement.rs`; its remaining review and fast/fallback measurements must be
+reconciled with 0030's exact topology/closure requirements. Do not implement
+that construction again or revive historical branch/ABI scheduling notes.
+Earlier ticked boxes do not waive the later residuals.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Remaining acceptance work — 2026-10-08
+
+The original checked criteria below describe delivered scope and dated
+evidence. These later residuals explain the current nonterminal status.
+
+- [ ] Reconcile certified construction and exact topology/distance guarantees
+      with 0012/0030, including reviewed fast/fallback benchmark evidence.
+
+## Original problem
 
 BEHAVIOR-SPEC section 6 is normative and 539 lines long, and almost none of it
 is built. A review on 2026-09-06 found that the only implemented part is

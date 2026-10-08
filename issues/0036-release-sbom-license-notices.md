@@ -3,9 +3,35 @@
 - **Phase:** 1
 - **Priority:** High
 - **Status:** In Progress (partial scope)
-- **Depends on:** 0008
+- **Depends on:** 0037
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial: CLI release machinery exists; release-grade GUI coverage remains
+incomplete.
+
+`scripts/release-{sbom,validate}.py`, `scripts/releaselib.py`, release
+manifests and CI rejection tests are active. Inventory actual frontend
+engine/runtime/plugins/fonts/native libraries and built artifacts, close
+staged coverage, then include reviewed notices in any authorized binary
+release. Earlier claims that these scripts never entered verify.sh are
+superseded. Keep native/path-dependency review explicit; no new license
+conclusion is made here.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Remaining acceptance work — 2026-10-08
+
+The original checked criteria below describe delivered scope and dated
+evidence. These later residuals explain the current nonterminal status.
+
+- [ ] Inventory actual GUI engine/runtime/plugins/fonts/native libraries and
+      built artifacts, with reviewed notices for each authorized binary release.
+- [ ] Reconcile the historical Go-scoped checklist with the Rust source/binary
+      inventory and reference-host runner obligation retained by 0032.
+
+## Original problem
 
 Before the first public binary release, turn the scaffold's dependency and
 runtime inventory into complete release artifacts: machine-readable SBOMs,

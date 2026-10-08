@@ -1,5 +1,21 @@
 # Unresolved §9.6 inputs after the placeholder-box class
 
+## Current disposition — 2026-10-08
+
+This is historical checkpoint evidence. The
+[2026-10-08 integration](../0059-marquee/2026-10-08.md) supersedes statements
+below about missing descriptors, requirement levels, read-only mode, frontend
+PH1 plumbing, deletion and the undecided declared footprint. Those inputs and
+native-backed selection/deletion/refusal tests are now delivered. Declared
+width × depth is scaled/rotated before taking axis-aligned bounds; the fixed
+fallback is unchanged. Resolved model footprint clicking/dragging exists
+separately; resolved footprints are not part of the placeholder marquee query.
+External-cache/retrieval, wider offline-summary obligations and numerical/
+whole-app performance conformance remain with their owning issues.
+The older measurements and observations below retain their original dates.
+
+## Historical checkpoint
+
 The `placeholder-box` hit class is delivered and R7.5.3 is still not
 implementable end to end. This is the specific list of what is missing, so the
 remaining work is a list of inputs rather than a feeling that something is

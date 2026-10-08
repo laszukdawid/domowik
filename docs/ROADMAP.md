@@ -12,7 +12,7 @@ omitted until those gates are sized.
 | 2 — interactive 2D GUI | Linux/macOS desktop work, imported furniture and preferences; full conformance and measured performance gates remain open |
 | 3 — 3D | Experimental Linux native-texture view (0078 / ADR 0010); portable backend and hardware/performance gates remain open |
 
-## Current development summary — 2026-10-04
+## Current development summary — 2026-10-08
 
 The editor now includes wall/opening property editing, selection and snapping
 controls, room naming, level controls, native Linux/macOS file workflows,
@@ -20,6 +20,15 @@ directory asset libraries, imported model previews, automatic dimensions and
 undoable resizing. Preferences persist a left/right default or stacked 2D/3D
 split on the device. Platform hints and session/file/cache boundaries are
 shared services rather than duplicated widget workflows.
+
+The 2026-10-08 placeholder increment connects per-instance resolution to native
+point-hit and marquee queries. Declared bounds and the fixed fallback are
+specified and tested, optional deletion/undo works, and required-degraded plans
+remain inspectable while refusing edits and normal saving. Snapshot live
+metadata now includes labels, dimensions and asset instances. Full numerical,
+asset-policy and whole-app performance gates remain open. The functional Linux
+checks passed; canonical verification ended at the uncommitted-tree gate.
+See [issue 0059 evidence](evidence/0059-marquee/2026-10-08.md).
 
 The 3D experiment derives scene data in Rust and displays it through a Linux
 native GL texture, with orbit/walk cameras. It does not finish Phase 3 or accept
@@ -37,7 +46,10 @@ claimed. Use [Getting started](GETTING-STARTED.md), the
 [user guide](USER-GUIDE.md) and [compatibility guide](COMPATIBILITY.md) for
 current onboarding. The dated handoffs and Phase 1 audit below are retained
 as historical records, not current feature lists. Issue status/acceptance
-criteria live in the [tracker](../issues/README.md).
+criteria live in the [tracker](../issues/README.md). The
+[2026-10-08 audit](../issues/AUDIT-2026-10-08.md) records the relevance, named
+basis and remaining action for every preceding issue, including historical
+closures.
 
 The implementation language changed during Phase 1: the core is Rust
 ([ADR 0008](decisions/0008-rust-core-implementation.md), superseding ADR 0002),
@@ -45,6 +57,12 @@ and the former Go archive was removed on 2026-10-05; earlier committed code
 remains in Git history. Phase bullets below
 that say "Go" are the original text, kept because rewriting history is worse
 than a dated note — read them as the work item, not the language.
+
+The owner selected a versioned core with namespaced feature extensions in
+[ADR 0011](decisions/0011-extensible-versioned-document-format.md). Finish the logical and
+physical extension/capability contract under 0004/0005 with 0028 fixtures;
+future feature payloads can be designed incrementally. The existing manifest
+version key remains, and current emission is `"0.1"`.
 
 ## Phase 0: specification and risk reduction
 

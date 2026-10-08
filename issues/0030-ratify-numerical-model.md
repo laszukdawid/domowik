@@ -1,15 +1,30 @@
-# 0030: Ratify numerical geometry model after spikes
+# 0030: Complete numerical-model implementation conformance
 
 - **Phase:** 0
 - **Priority:** High
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0006, 0007, 0022
 
+## Current disposition — 2026-10-05
+
+Keep partial for implementation guarantees, not a fresh numerical-model
+choice.
+
+Coordinate bounds/model policy are ratified. `locality::link` still maps
+PositiveArea::Uncertain to overlap; exact closure conformance therefore
+remains open. Inspect current arrangement/boolean construction and exact-area
+consumers, resolve conservative over-inclusion against R5.1.9, and measure
+certified fast/fallback paths with 0058. The F27 fixture correction is
+integrated, not an outstanding rename.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
 Activated under ED-0011 after the reviewed partial-scope 0007 handoff. Issue
 0030 owns the deferred structured face-input-or-rejection decision and must not
 treat 0007's withdrawn `CandFaces` claims as conformance evidence.
 
-## Problem
+## Original problem
 
 Turn the predicate, clipping, and planar-topology evidence into one final
 coordinate/numerical decision before entity numeric bounds or Phase 1 geometry

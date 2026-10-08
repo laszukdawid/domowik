@@ -1,12 +1,12 @@
 //! Original synthetic footprint corpus, no third-party model content. Measures
-//! warm spatial query + JSON/FFI ownership, not decoded rendering or disk I/O.
+//! warm placeholder query + JSON/FFI ownership, not decoded rendering or disk I/O.
 use domowik_bridge::*;
 use serde_json::{json, Value};
 use std::hint::black_box;
 use std::time::Instant;
 use uuid::Uuid;
 
-fn call(handle: u64, request: &Value, assets: bool) -> Vec<u8> {
+fn call(handle: u64, request: &Value, hit: bool) -> Vec<u8> {
     let bytes = serde_json::to_vec(request).unwrap();
     let mut out = DomowikBuf {
         data: std::ptr::null_mut(),
@@ -14,8 +14,8 @@ fn call(handle: u64, request: &Value, assets: bool) -> Vec<u8> {
         token: 0,
     };
     let code = unsafe {
-        if assets {
-            domowik_plan_assets(handle, bytes.as_ptr(), bytes.len() as u64, &mut out)
+        if hit {
+            domowik_plan_hit_test(handle, bytes.as_ptr(), bytes.len() as u64, &mut out)
         } else {
             domowik_plan_execute(handle, bytes.as_ptr(), bytes.len() as u64, &mut out)
         }
@@ -42,15 +42,19 @@ fn main() {
             "editorFootprintMm":[600,400]}}));
     }
     call(handle, &json!({"operations":operations}), false);
-    let request = json!({"kind":"hit", "levelId":level,"pointMm":[2000,2000],"radiusMm":120});
-    call(handle, &request, true); // Populate revision-keyed spatial cache.
+    let request = json!({"levelId":level,"pointMm":[2000,2000],"radiusMm":120});
+    let warm = call(handle, &request, true); // Populate revision-keyed spatial cache.
+    assert_eq!(
+        serde_json::from_slice::<Vec<Value>>(&warm).unwrap().len(),
+        1
+    );
     let count = 100_000;
     let start = Instant::now();
     for _ in 0..count {
         black_box(call(handle, black_box(&request), true));
     }
     println!(
-        "1000 rotated footprints, warm native query + JSON/ownership: {:.0} ns/op ({} iterations)",
+        "1000 missing-asset fallback placeholders, warm native query + JSON/ownership: {:.0} ns/op ({} iterations)",
         start.elapsed().as_nanos() as f64 / count as f64,
         count
     );

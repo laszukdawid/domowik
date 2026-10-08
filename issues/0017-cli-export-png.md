@@ -5,7 +5,20 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0016
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial for text/font and raster-export conformance.
+
+`crates/domowik-cli/src/png.rs` implements PNG export; pinned font notices
+exist. General shaping/bidi and the unsupported-name repertoire still need a
+reviewed solution and fixtures, coordinated with 0016's shared paint/visual
+tests. Recorded encoder options remain deliberate current limitations, not
+proof of complete rendering.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Rasterize the semantic 2D paint model with a selected, pinned,
 license-compatible renderer. A new internal anti-aliased renderer is out of

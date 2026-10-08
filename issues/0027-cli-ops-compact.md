@@ -5,7 +5,20 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0011, 0029
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial for full compaction metadata/equivalence conformance.
+
+`ops --json`, frontier/tombstone reports and local compaction exist in
+`crates/domowik-cli/src/lib.rs`; earlier missing-report claims are superseded.
+Audit §5.1 snapshot metadata and concurrent replay with 0011/0029, preserving
+synced-document refusal and interrupted-save guarantees. No synchronization
+protocol is implied.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Provide `domowik ops` inspection and `domowik compact` without implying that
 local truncation is safe for synchronized peers.

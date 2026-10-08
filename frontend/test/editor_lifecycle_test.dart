@@ -2987,6 +2987,110 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // Original PH1/PH2 snapshot, built from a native-written baseline package.
+  // Python only constructs the fixture and rebuilds its integrity inventory;
+  // all inspection, selection and deletion below run through the real bridge.
+  Future<String> openPlaceholder(
+    WidgetTester tester, {
+    required bool requiredAsset,
+  }) async {
+    const instance = '01950000-0000-7000-8000-000000000009';
+    final path = '${scratch.path}/placeholder.domo';
+    final ptr = toNative('$path\u0000');
+    final handle = alloc<Uint64>(sizeOf<Uint64>());
+    try {
+      expect(bridge.planCreateDefault(handle), ok);
+      expect(bridge.planSave(handle.value, ptr.cast()), ok);
+      expect(bridge.planClose(handle.value), ok);
+    } finally {
+      release(ptr);
+      release(handle);
+    }
+    final result = Process.runSync('python3', [
+      '-c',
+      r'''import hashlib, json, sys, zipfile
+path, instance, requirement = sys.argv[1:]
+with zipfile.ZipFile(path) as z:
+    blobs = {n: z.read(n) for n in z.namelist() if not n.startswith("ops/")}
+manifest = json.loads(blobs["domowik.json"])
+section = json.loads(blobs["snapshot/state.json"])
+doc = section["document"]
+digest = "sha256:" + "0" * 64
+doc["assetInstances"] = [{"id": instance, "levelId": doc["levels"][0]["id"],
+    "digest": digest, "displayName": "Missing model",
+    "transform": {"translationMm": [2000, 0], "scaleUniform": 3, "rotationDeg": 45},
+    "editorFootprintMm": [600, 400]}]
+blobs["snapshot/state.json"] = json.dumps(section).encode()
+blobs["assets/descriptors.json"] = json.dumps({digest: {"digest": digest,
+    "byteLength": 1, "mediaType": "model/obj", "purpose": "furniture-model",
+    "encoding": "original", "requirement": requirement, "provenance": {}}}).encode()
+manifest["assetRoot"] = [{"digest": digest}]
+manifest["profile"] = "thin"
+manifest["entries"] = {n: {"sha256": "sha256:" + hashlib.sha256(b).hexdigest(),
+    "byteLength": len(b)} for n, b in blobs.items() if n != "domowik.json"}
+blobs["domowik.json"] = json.dumps(manifest).encode()
+with zipfile.ZipFile(path, "w") as z:
+    for n, b in blobs.items(): z.writestr(n, b)
+''',
+      path,
+      instance,
+      requiredAsset ? 'required' : 'optional',
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    dialog = (call) async => call.method == 'openPlan' ? path : null;
+    await tester.tap(find.byTooltip('Open plan'));
+    await tester.pumpAndSettle();
+    expect(painter(tester).assets.single.id, instance);
+    return instance;
+  }
+
+  for (final requiredAsset in [false, true]) {
+    testWidgets(
+      'PH1 native-backed marquee and deletion with required=$requiredAsset',
+      (tester) async {
+        await start(tester);
+        final instance = await openPlaceholder(
+          tester,
+          requiredAsset: requiredAsset,
+        );
+        await zoomAt(tester, screenPoint(tester, const Offset(2000, 0)), false);
+        await zoomAt(tester, screenPoint(tester, const Offset(2000, 0)), false);
+        final from = screenPoint(tester, const Offset(1400, -600));
+        await modifierDragFrom(
+          tester,
+          from,
+          screenPoint(tester, const Offset(2600, 600)) - from,
+        );
+        expect(painter(tester).selectedIds, {instance});
+        expect(painter(tester).selected, instance);
+        expect(dirty(), isFalse);
+        // PH2 ignores both the non-identity transform and editor footprint.
+        expect(painter(tester).assets.single.corners, [
+          const Offset(1500, -500),
+          const Offset(2500, -500),
+          const Offset(2500, 500),
+          const Offset(1500, 500),
+        ]);
+        await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+        await tester.pumpAndSettle();
+        if (requiredAsset) {
+          expect(painter(tester).assets.single.id, instance);
+          expect(painter(tester).selectedIds, {instance});
+          expect(dirty(), isFalse);
+        } else {
+          expect(painter(tester).assets, isEmpty);
+          expect(painter(tester).selectedIds, isEmpty);
+          expect(painter(tester).selected, isNull);
+          await tester.tap(find.byTooltip('Undo'));
+          await tester.pumpAndSettle();
+          expect(painter(tester).assets.single.id, instance);
+          expect(painter(tester).selectedIds, isEmpty);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'modifier-drag from empty canvas performs additive marquee selection; '
     'plain drag still draws',

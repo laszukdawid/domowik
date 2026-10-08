@@ -2,10 +2,35 @@
 
 - **Phase:** 2
 - **Priority:** High
-- **Status:** In Progress
+- **Status:** Blocked
 - **Depends on:** 0010, 0013
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep blocked for the explicitly recorded owner/specification questions, not
+for missing room naming.
+
+Room records, commands, labels and editor naming are delivered. Decide
+R5.1.7's manual-geometry/opaque-field boundary and disposition the remaining
+diagnostic/project_against/interior_point findings, then recheck closure.
+F27's corrected geometry/test name is already integrated; text shaping and
+numerical guarantees remain with 0017/0030. Do not silently undo the recorded
+owner-directed reopening.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Remaining acceptance work — 2026-10-08
+
+The original checked criteria below describe delivered scope and dated
+evidence. These later residuals explain the current nonterminal status.
+
+- [ ] Record the owner/specification disposition of R5.1.7's manual-geometry/
+      opaque-field boundary and the remaining diagnostic, projection and
+      interior-point findings; then re-evaluate closure without reopening
+      delivered naming work.
+
+## Original problem
 
 A room cannot be named. `grep -rn 'R5\.2' crates/` returns nothing: there is
 no room record entity anywhere in the Rust core, so rooms exist only as

@@ -5,7 +5,20 @@
 - **Status:** Open
 - **Depends on:** 0012, 0020, 0024
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep open: whole-app performance budgets are still needed.
+
+Define desktop/mobile reference devices, corpus/resolution/query mix,
+p50/p95/p99 frame/input latency and memory budgets, then collect reproducible
+end-to-end results. Frontend CPU harnesses and core microbenchmarks do not
+discharge input-to-presented-frame or hardware 3D goals. Browser performance
+boundaries must also be explicit under 0088.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 BEHAVIOR-SPEC section 1.7 fixes only qualitative performance scopes. The
 interactive editor needs measurable criteria before Phase 2 claims any

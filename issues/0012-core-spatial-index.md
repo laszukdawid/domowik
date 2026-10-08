@@ -5,7 +5,39 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0011, 0013
 
-## Problem
+## Current disposition — 2026-10-08
+
+Keep partial for numerical/query conformance and representative performance
+coverage. Issue 0059 delivered caller-supplied per-instance resolution to the
+frontend point-hit and marquee queries, with native-backed PH1/PH2 selection,
+deletion and read-only inspection tests. The owner approved declared width ×
+depth footprints with instance scale/rotation and axis-aligned bounds; the
+geometry helper now constructs that branch. The fallback still follows ED-0106.
+
+Derived-distance and exact-real constructed-geometry guarantees, locality and
+certified fast/fallback performance evidence remain open. The new 42 ns
+construction and 1.9 μs warm native query samples do not discharge those gates
+or 0033's whole-app budgets. See
+[the integration evidence](../docs/evidence/0059-marquee/2026-10-08.md).
+
+The disposition below is historical and superseded by this update.
+
+## Historical disposition — 2026-10-05
+
+Keep partial for numerical/query conformance and end-to-end placeholder
+inputs.
+
+`crates/domowik-geometry/src/hit.rs` already defines PlaceholderBox, explicit
+placeholder snapshots, PH1 hit/marquee tests and declared-extent refusal.
+Selection cycling is delivered under 0049. Remaining work is
+derived-distance/constructed-geometry guarantees, representative benchmarks
+and caller-supplied placeholder resolution/extent integration (0026/0059), not
+implementing the class again.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Maintain a spatial index over entity/derived bounds, plus culling, proximity,
 and hit-testing queries. Distinguish committed updates from transient drag

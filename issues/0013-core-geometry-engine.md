@@ -5,7 +5,20 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0001, 0002, 0019, 0006, 0007, 0011
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial for scoped recomputation and complete geometry conformance.
+
+Wall joins, openings, room faces and persisted room records exist.
+`crates/domowik-geometry/src/locality.rs` computes closure, but the geometry
+path still needs actual scoped recomputation and proof against that oracle;
+coordinate its exact-link guarantee with 0030. Recheck all normative fixtures
+and cache invalidation before closing.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Implement wall outlines/joins, opening cuts, planar room topology, room
 metadata reconciliation, measurements, and deterministic derived output using

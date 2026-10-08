@@ -3,7 +3,21 @@
 - **Phase:** 1
 - **Priority:** High
 - **Status:** In Progress (partial scope)
-- **Depends on:** 0004, 0008
+- **Depends on:** 0004, 0037
+
+## Current disposition — 2026-10-05
+
+Keep partial for complete schema/property conformance, not for missing room or
+opening features.
+
+`crates/domowik-format/src/lib.rs` now includes RoomRecord, AssetInstance, and
+Opening's depth/side/hinge/opensToward/swing fields;
+`tests/entity_properties.rs` supplies property coverage. Reconcile the
+original checklist with these artifacts and remaining Tier B/unknown-data
+rules under 0004 before closure. Earlier missing-entity claims are historical.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
 
 Activated 2026-08-24 under ED-0016 on branch `issue/0010-entity-projection`.
 Consumes FORMAT-SPEC §2–§5 as integrated on main (normative, testable,
@@ -12,7 +26,15 @@ only via the named provisional parameters; no independent literals; RATIFICATION
 §6 deferrals untouched. This issue cannot reach Done while 0004 remains
 unclosed under ED-0014 gates, except by explicit re-scope.
 
-## Problem
+## Remaining acceptance work — 2026-10-08
+
+The original checked criteria below describe delivered scope and dated
+evidence. These later residuals explain the current nonterminal status.
+
+- [ ] Reconcile complete schema/property coverage, provisional Tier B promotion
+      and unknown-data preservation with issue 0004 before full closure.
+
+## Original problem
 
 Implement immutable/current entity projection and type schemas without a
 public direct-mutation API. An internal apply primitive may support 0011; file

@@ -5,7 +5,20 @@
 - **Status:** Open
 - **Depends on:** 0001, 0004, 0019, 0022, 0030
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep open as a low-priority future product/specification decision.
+
+Current normative walls are straight, and curved-wall support is not
+authorized by this cleanup. Decide future-version inclusion/exclusion through
+an ADR with fixtures and compatibility assessment before implementing. Do not
+delete the issue or pretend that an existing straight-wall exclusion answers
+its future-version question.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 BEHAVIOR-SPEC R3.0.1 defines a wall axis as a single straight segment and
 `unsupported-wall-shape` rejection for anything else; §3.6 lists curved walls

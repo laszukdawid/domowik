@@ -5,7 +5,20 @@
 - **Status:** Open
 - **Depends on:** 0037
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep open as a macOS-specific reproducibility investigation.
+
+The original intermittent module-redefinition evidence remains relevant until
+the cause/remedy is demonstrated. Collect three consecutive clean builds and
+supported-toolchain evidence on macOS using `frontend/`; Linux cannot validate
+that criterion. Do not infer resolution from an unrelated build fix or
+silently retry the failure.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 On 2026-09-06, the full verifier passed at `f12380f`, then failed at the
 macOS release-build stage on the documentation-only checkpoint `f0f70dc`.

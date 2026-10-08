@@ -5,6 +5,48 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0001, 0002, 0003, 0019, 0020, 0021, 0030
 
+## Current disposition — 2026-10-08
+
+Keep partial for the logical extension contract, Tier B reconciliation and
+snapshot-retention policy. The owner selected a defined core with namespaced
+extensions in [ADR 0011](../docs/decisions/0011-extensible-versioned-document-format.md). The
+existing `formatVersion` selects the overall schema; incompatible development
+revisions receive distinct labels without a promise to migrate every
+unpublished artifact. No new extension wire shape or reader capability is
+implemented by accepting that architecture direction.
+
+Next, define extension identity/versioning, document/entity placement,
+view/edit capability requirements, references/dependencies, operation/replay
+semantics and preservation. Coordinate physical gates with 0005 and fixtures
+with 0028 before implementation. Snapshot complete-coverage retention remains
+Proposed and needs a separate owner decision; the extension choice does not
+ratify it. Numeric/depth bounds are settled, including issue 0015's repair.
+
+The historical activation and handoffs below retain their original criteria;
+old parameter and scheduling claims do not supersede this disposition.
+
+## Extension-contract acceptance work — 2026-10-08
+
+- [x] Record the owner-selected versioned core/namespaced-extension direction.
+- [ ] Specify extension identity/versioning and document/entity placement;
+      reconcile currently provisional entity semantics with reviewed behavior.
+- [ ] Define optional versus view/edit-required capabilities and safe handling
+      of dependency-changing edits, unknown data, operations and compaction.
+- [ ] Coordinate 0005/0028 compatibility/security and conformance gates before
+      activating a new extension-enabled wire schema.
+
+## Decision validation — 2026-10-08
+
+Tracker consistency, documentation JSON syntax and local links in the changed
+documents pass. The existing container regression
+`a_future_format_version_is_refused_rather_than_guessed_at` passes, confirming
+the current unsupported-version gate. No serialized schema or application
+source changed for this decision. Extension conformance fixtures remain owed.
+This targeted validation is not a new full-repository verification claim;
+the latest canonical run remains the recorded 0059 P13 dirty-tree failure.
+
+## Historical activation — 2026-08-24
+
 Activated 2026-08-24 under ED-0014 on branch `issue/0004-format-entities-ops`.
 Consumes the Done behavior specifications as normative input, only material
 labeled "Provisional handoff — 0021 partial scope" for asset fields, and
@@ -31,7 +73,7 @@ dependent parameter fixation gates resolve or an explicit re-scope records
 otherwise. Dependents may consume only this delivered material as a labeled
 provisional handoff under the tracker's partial-scope semantics.
 
-## Problem
+## Original problem
 
 Turn `../docs/FORMAT-SPEC.md` sections 2–5 into normative logical schemas.
 Define stable entity IDs, room reconciliation representation, atomic batches,

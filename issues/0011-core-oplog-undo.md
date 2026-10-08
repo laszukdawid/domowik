@@ -5,6 +5,34 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0003, 0004, 0010
 
+## Current disposition — 2026-10-08
+
+Keep partial for full snapshot/compaction and history conformance. Issue 0059
+repaired snapshot live-metadata seeding for labels, dimensions and asset
+instances, which previously caused their deletion batches to be discarded.
+The core regression covers all three collections; native-backed placeholder
+deletion and undo after reopening also pass.
+
+Full FORMAT-SPEC §5.1 retention/winner metadata, concurrent-baseline behavior
+and R8.4.3's live-stack truncation diagnostic remain open with 0027/0029. The
+seeding repair does not discharge those gates. See
+[the integration evidence](../docs/evidence/0059-marquee/2026-10-08.md).
+
+The disposition below is historical and superseded by this update.
+
+## Historical disposition — 2026-10-05
+
+Keep partial for snapshot/compaction and history conformance.
+
+Replay, atomic admission and local undo/redo are delivered. Check full
+FORMAT-SPEC §5.1 retention/winner metadata and concurrent-baseline behavior,
+plus R8.4.3's live-stack truncation diagnostic, in `crates/domowik-document/`.
+Coordinate with 0027/0029; do not equate usable undo with complete snapshot
+semantics.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
 Activated 2026-08-24 under ED-0018 on branch `issue/0011-oplog-undo`.
 Consumes FORMAT-SPEC §2–§5 normative semantics and conformance vectors, the
 Done undo behavior specification, and issue 0010's delivered material as a
@@ -99,7 +127,7 @@ probe files, the pair contract, and the send/monitor/probe helpers — is at
 as its index. It is outside the repository because it is operational, and
 outside `/tmp` because that does not survive a reboot.
 
-## Problem
+## Original problem
 
 Implement operation/batch validation, idempotent replay, command grouping, and
 local undo/redo. Keep undo state separate from durable retention and restore an
@@ -426,3 +454,13 @@ show it are named in the evidence.
 ## Status corrected by ED-0096 — 2026-09-01
 
 **In Progress (partial scope).** Vectors V1–V6 covered, no public mutation surface on the session, replay from a baseline proven identical under ALL 24 delivery orders of four batches (three concurrent, one causally dependent, so most orders force a hold and a later promotion), and `causalPastSize` widened to `u128` on 2026-09-01 because §9.3 row L33 says in terms that a 64-bit accumulator cannot represent the range and that wrapping or saturating arithmetic is FORBIDDEN. NOT delivered, and the reason this is not Done: the compaction interaction does NOT match §5.1 — S1 and S3 are omitted and every batch concurrent with the snapshot is refused, which is a narrowing of the contract rather than an implementation of it — and R8.4.3's live-stack truncation diagnostic does not exist.
+
+## Follow-up — 2026-10-08, issue 0059 integration
+
+Snapshot replay seeding omitted labels, dimensions and asset instances from live
+entity metadata. They appeared in the projection but a local deletion was
+discarded as targeting a non-live entity. The baseline ID seed now includes
+all three collections. A core regression proves their deletion from a snapshot;
+issue 0059 also exercises native placeholder deletion and undo after reopening.
+This repairs the integration prerequisite, not the remaining full snapshot or
+retention gates described in the current disposition.

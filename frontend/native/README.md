@@ -20,6 +20,14 @@ No release is implied. `scripts/verify.sh` builds and tests the adapter and
 the actual application. Earlier issue-0024 measurements below are historical;
 see [the frontend README](../README.md) for the relocation map.
 
+Issue 0059's 2026-10-08 increment supplies degraded instances to marquee and
+point-hit queries from a revision-cached per-instance resolution. This editor
+uses embedded blobs and its GLB/OBJ/ZIP model decoder; it has no configured
+external cache or remote retrieval. Unsupported and undecodable models remain
+placeholders. Required degradation permits inspection but refuses mutations
+and normal saving. The ABI and ownership rules are unchanged. See
+[the integration evidence](../../docs/evidence/0059-marquee/2026-10-08.md).
+
 ## What exists
 
 - `src/lib.rs` — a `cdylib` exposing the spike C ABI over the core's stateful

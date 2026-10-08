@@ -2874,6 +2874,7 @@ class _PlanPageState extends State<PlanPage> with WidgetsBindingObserver {
       }
       return _DragMode.opening;
     }
+    if (hit.kind == 'placeholder-box') return _DragMode.selectOnly;
     if (hit.kind == 'asset-footprint') {
       _dragWall = hit.entityId;
       return _DragMode.asset;

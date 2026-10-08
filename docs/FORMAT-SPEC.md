@@ -11,6 +11,12 @@ provisionally by [ADR 0006](decisions/0006-naming-and-identity.md); all
 values are tracked and replaceable via the
 [naming registry](NAMING.md).
 
+**Evolution direction accepted — 2026-10-08:** a defined core with namespaced
+feature extensions, selected by the existing manifest `formatVersion`.
+[ADR 0011](decisions/0011-extensible-versioned-document-format.md) records the owner decision and
+§8.5 distinguishes it from pending extension wire design. Current readers
+still emit/support `"0.1"`; no extension wire capability is activated here.
+
 ## 1. What the format must provide
 
 - Compact local-first plan storage.
@@ -1644,9 +1650,14 @@ content remains owned by §§2–5; security ceilings of §9 apply unchanged.
      release claiming to open a v0.1 package; V4 never requires a migration
      of v0.1 to itself.
   2. **V5 is scoped to changes a PREVIOUSLY RELEASED reader could not
-     understand.** While v0.1 is unreleased no such reader exists, so a
-     revision of the v0.1 shape revises v0.1 in place and does not increment
-     the minor. After release, V5 binds without exception.
+     understand.** While v0.1 is unreleased no such reader exists, so
+     no released-schema migration duty is created by a development revision.
+     Under the owner's 2026-10-08 direction (ADR 0011), incompatible development
+     schemas nevertheless receive distinct `formatVersion` labels when
+     introduced; readers accept only labels they implement. Compatible additions
+     may retain a label under V5's safe optional-data rule. No support/migration
+     promise covers every unpublished revision. After release, V5 binds without
+     exception.
   3. **The §5.1 legacy snapshot members are an unreleased development
      shape, not a released schema.** Reading them under §5.1's documented
      convention is an accommodation for this project's own artifacts; it
@@ -1693,6 +1704,33 @@ labels alone.
 - **U4 Asset-root preservation.** The I2 invariant (§7.4) binds every
   reader regardless of schema comprehension: listed blobs are preserved on
   write-back or write-back is refused.
+
+### 8.5 Extensible format direction (ADR 0011)
+
+**Accepted architecture and development policy; extension wire specification
+pending.** [ADR 0011](decisions/0011-extensible-versioned-document-format.md) adopts a defined
+core with namespaced, versioned feature extensions. The existing manifest
+`formatVersion` remains the sole overall schema identifier. The same `.domo`
+file type and ZIP-based container are the baseline across schema revisions;
+core structure and semantics can evolve under a different supported label.
+Changing a label does not convert incompatible contents: a reader uses the
+rules for that label, performs a defined explicit conversion, or refuses.
+
+Issue 0004 owns the extension logical contract; issue 0005 owns package and
+capability/version gates. Exact extension field names, payloads, namespaces
+and operation behavior are pending reviewed wire design and issue 0028 tests.
+Until that design is normative and implemented, U1–U4 and §7.3's closed
+namespace rules remain unchanged. Accepting the direction does not make
+unknown entity/operation kinds or arbitrary archive paths permissible.
+
+The design must support safe preservation of unknown optional extensions and
+explicit requirements for correct viewing or editing. Byte/value preservation
+alone does not prove that editing a referenced core entity preserves unknown
+extension meaning. Required capabilities must be recognized before effects;
+an older reader that ignores an optional-looking declaration must not be
+allowed to edit a document requiring the declared capability. Development
+versioning follows V6; released-schema duties follow V4/V5. ADR 0007's post-v1
+promise and the proposed snapshot horizon remain separate decisions.
 
 ## 9. Security requirements
 

@@ -379,6 +379,31 @@ fn bulk_query(c: &mut Criterion) {
     group.finish();
 }
 
+// Original declared-placeholder construction corpus; no model content.
+fn declared_placeholder(c: &mut Criterion) {
+    let mut instance = domowik_format::AssetInstance {
+        id: Uuid::now_v7(),
+        level_id: Uuid::now_v7(),
+        digest: format!("sha256:{}", "0".repeat(64)),
+        transform: domowik_format::InstanceTransform {
+            translation_mm: [2000.0, 0.0],
+            ..Default::default()
+        },
+        display_name: None,
+        unknown: Default::default(),
+    };
+    instance.transform.scale_uniform = 2.0;
+    instance.transform.rotation_deg = 45.0;
+    c.bench_function("placeholder/declared-scaled-rotated", |b| {
+        b.iter(|| {
+            black_box(domowik_geometry::hit::placeholder_geometry(
+                black_box(&instance),
+                black_box(Some((600.0, 2100.0, 400.0))),
+            ))
+        })
+    });
+}
+
 criterion_group!(
     benches,
     build,
@@ -389,6 +414,7 @@ criterion_group!(
     dense_endpoints,
     preview,
     marquee_bench,
-    bulk_query
+    bulk_query,
+    declared_placeholder
 );
 criterion_main!(benches);

@@ -5,6 +5,48 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0004, 0009, 0021, 0023
 
+## Current disposition — 2026-10-08
+
+Keep partial for version/capability/package conformance and partial-history
+policy. The owner selected the existing file-level `formatVersion` with a
+defined core and namespaced extensions in
+[ADR 0011](../docs/decisions/0011-extensible-versioned-document-format.md). Incompatible
+unpublished development schemas receive distinct labels; no migration/support
+promise is made for every development artifact. Public-release duties remain
+under FORMAT-SPEC §8.2. Current emission/acceptance stays `"0.1"`.
+
+Next, coordinate 0004's extension contract with manifest capability gates,
+package placement/inventory and safe view/edit/write outcomes. A future
+required capability must not look optional to a reader that ignores it;
+version gating and positive/negative fixtures must precede activation. Current
+closed namespaces and unknown-required refusal still bind. Container selection,
+store/deflate and empty-universe portability are settled. L31 remains writer
+policy, and partial-history admission still needs an explicit disposition.
+
+Historical activation and handoff claims below retain their original criteria
+and evidence; they are superseded where this owner direction differs.
+
+## Extension/version acceptance work — 2026-10-08
+
+- [x] Retain the existing manifest version key and record development policy.
+- [ ] Specify extension inventory/namespace and capability gates with 0004;
+      unsupported required behavior must be detected before effects.
+- [ ] Assess older-reader behavior and provide 0028 conformance fixtures before
+      activating an extension-enabled schema; implement supported versions
+      explicitly rather than inferring them from contents.
+
+## Decision validation — 2026-10-08
+
+Tracker consistency, documentation JSON syntax and local links in the changed
+documents pass. The existing container regression
+`a_future_format_version_is_refused_rather_than_guessed_at` passes, confirming
+the current unsupported-version gate. No serialized schema or application
+source changed for this decision. Extension conformance fixtures remain owed.
+This targeted validation is not a new full-repository verification claim;
+the latest canonical run remains the recorded 0059 P13 dirty-tree failure.
+
+## Historical activation — 2026-08-24
+
 Activated 2026-08-24 under ED-0017 on branch `issue/0005-container-versioning`.
 Consumes Done 0009/0023 outputs, only "Provisional handoff — 0021 partial
 scope" material for asset/package fields, and FORMAT-SPEC §2–§5 as integrated
@@ -32,7 +74,7 @@ provisional or RATIFICATION §6 gates touching its criteria remain open.
 Dependents may consume this delivered material as a labeled provisional
 handoff under the tracker's partial-scope semantics.
 
-## Problem
+## Original problem
 
 Select the physical `.domo` container and define manifests, entry names,
 operation framing, thin/portable profiles, version identifiers, migration, and

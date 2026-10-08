@@ -3,9 +3,22 @@
 - **Phase:** 1
 - **Priority:** High
 - **Status:** In Progress (partial scope)
-- **Depends on:** 0008, 0010, 0011, 0013, 0026, 0029
+- **Depends on:** 0037, 0010, 0011, 0013, 0026, 0029
 
-## Problem
+## Current disposition — 2026-10-05
+
+Keep partial: CLI workflows and separate warnings are delivered, but the
+complete validation contract is not.
+
+`crates/domowik-cli/src/lib.rs` has Report.warnings and WarningReport; the old
+'errors only' claim is superseded. The exit module still defines only 0/1/2.
+Finish strict/compatibility-aware mode, six-way exit taxonomy and report
+coverage for asset digests; preserve existing stdout/stderr probes.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Create documents, inspect schema/entity/asset summaries, and validate logical,
 archive, asset, and derived-geometry integrity without destructive rewrites.

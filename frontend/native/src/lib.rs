@@ -62,7 +62,9 @@ use domowik_container::Plan as ContainerPlan;
 use domowik_document::operation::Operation;
 use domowik_document::session::Session;
 use domowik_format::{Document, Entity, OpeningKind, DERIVED_COORD_BOUND_MM};
-use domowik_geometry::hit::{marquee, HitClass, HitIndex};
+use domowik_geometry::hit::{
+    marquee_with, placeholder_geometry, HitClass, HitIndex, Placeholder, PlaceholderGeometry,
+};
 use domowik_geometry::polygon::Polygon;
 use domowik_geometry::rooms;
 use domowik_geometry::snap::{SnapClass, SnapError, SnapFeature, SnapIndex, SnapQuery};
@@ -205,6 +207,7 @@ struct Plan {
     scene_models: std::collections::BTreeMap<String, std::sync::Arc<domowik_models::ModelMesh>>,
     scene_model_decodes: u64,
     scene_model_errors: std::collections::BTreeMap<String, String>,
+    resolutions: Option<(usize, Vec<domowik_assets::resolve::InstanceResolution>)>,
     metadata_dirty: bool,
     asset_hits: Option<asset_library::FootprintIndex>,
     /// The file-backed plan, once this plan has one.
@@ -254,6 +257,106 @@ impl Plan {
         }
     }
 
+    /// Resolution is local and revision-cached: no network or external cache is
+    /// configured by this editor. Decoding is checked once per digest per revision.
+    fn resolutions(&mut self) -> &[domowik_assets::resolve::InstanceResolution] {
+        use domowik_assets::{
+            descriptor::DescriptorTable,
+            policy::RetrievalPolicy,
+            resolve::{self, DegradedReason, InstanceRef, Lookup, MediaSupport, ResolutionState},
+        };
+        let revision = document_revision(self.session());
+        if !matches!(&self.resolutions, Some((r, _)) if *r == revision) {
+            let empty = Default::default();
+            let descriptors = self
+                .file
+                .as_ref()
+                .map(|f| f.descriptors())
+                .unwrap_or(&empty);
+            let (table, _) = DescriptorTable::from_object(descriptors);
+            let empty_assets = Default::default();
+            let embedded = self
+                .file
+                .as_ref()
+                .map(|f| &f.assets)
+                .unwrap_or(&empty_assets);
+            let instances: Vec<_> = self
+                .session()
+                .document()
+                .asset_instances
+                .iter()
+                .map(|a| InstanceRef {
+                    instance_id: a.id,
+                    level_id: a.level_id,
+                    digest: a.digest.clone(),
+                })
+                .collect();
+            let media = MediaSupport::new(["model/gltf-binary", "model/obj", "application/zip"]);
+            let policy = RetrievalPolicy::default();
+            let snapshot = resolve::resolve(
+                &instances,
+                &table.as_vec(),
+                &Lookup {
+                    embedded,
+                    cache: None,
+                    retrieval: &policy,
+                    media: &media,
+                },
+            );
+            let mut decoded = HashMap::new();
+            let entries = snapshot
+                .iter()
+                .cloned()
+                .map(|mut entry| {
+                    if !entry.state.is_degraded() {
+                        if let Some(bytes) = embedded.get(&entry.digest) {
+                            let usable =
+                                *decoded.entry(entry.digest.clone()).or_insert_with(|| {
+                                    domowik_models::mesh_with_budget(bytes, 5000).is_ok()
+                                });
+                            if !usable {
+                                entry.state =
+                                    ResolutionState::Degraded(DegradedReason::Undecodable);
+                            }
+                        }
+                    }
+                    entry
+                })
+                .collect();
+            self.resolutions = Some((revision, entries));
+        }
+        &self.resolutions.as_ref().expect("just ensured").1
+    }
+
+    fn placeholders(&mut self, level: Uuid) -> Result<Vec<Placeholder>, String> {
+        let entries: Vec<_> = self
+            .resolutions()
+            .iter()
+            .filter(|e| e.level_id == level && e.state.is_degraded())
+            .map(|e| (e.instance_id, e.declared_extent))
+            .collect();
+        entries
+            .into_iter()
+            .map(|(id, extent)| {
+                let instance = self
+                    .session()
+                    .document()
+                    .asset_instance(id)
+                    .ok_or("Unknown placeholder instance")?;
+                let declared = extent.map(|e| (e.width_mm, e.height_mm, e.depth_mm));
+                let bounds = match placeholder_geometry(instance, declared)
+                    .ok_or("Placeholder bounds exceed the supported coordinate range")?
+                {
+                    PlaceholderGeometry::Fallback(b) | PlaceholderGeometry::Declared(b) => b,
+                };
+                Ok(Placeholder {
+                    instance: id,
+                    bounds,
+                })
+            })
+            .collect()
+    }
+
     /// The session, mutably, or the refusal that stops the edit.
     ///
     /// BEHAVIOR-SPEC §9.6 blocks editing while a required asset is unresolved,
@@ -263,9 +366,26 @@ impl Plan {
     /// does not happen, and a caller that asked to edit a read-only plan has
     /// made an ordinary refusable mistake rather than an ABI violation.
     ///
-    /// An unsaved plan has no package and nothing to be missing, so it is
-    /// always editable.
+    /// This editor also checks per-instance decodability: an embedded but
+    /// unusable required model blocks mutation and normal saving.
     fn session_mut(&mut self) -> Result<&mut Session, domowik_container::ContainerError> {
+        let blocking: Vec<_> = self
+            .resolutions()
+            .iter()
+            .filter(|e| e.state.is_degraded() && e.requirement.blocks_editing())
+            .map(|e| e.digest.clone())
+            .collect();
+        if !blocking.is_empty() {
+            return Err(domowik_container::ContainerError::ReadOnlyDegraded {
+                path: self
+                    .file
+                    .as_ref()
+                    .and_then(|f| f.path())
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unsaved>".into()),
+                assets: blocking.join("; "),
+            });
+        }
         match &mut self.file {
             Some(f) => f.session(),
             None => Ok(&mut self.session),
@@ -1003,6 +1123,7 @@ unsafe fn register_session(session: Session, out_handle: *mut u64) -> i32 {
     };
     let entry = Entry {
         plan: Arc::new(Mutex::new(Plan {
+            resolutions: None,
             metadata_dirty: false,
             scene_models: Default::default(),
             scene_model_decodes: 0,
@@ -1858,6 +1979,7 @@ pub unsafe extern "C" fn domowik_plan_open(path: *const c_char, out_handle: *mut
         };
         let entry = Entry {
             plan: Arc::new(Mutex::new(Plan {
+                resolutions: None,
                 metadata_dirty: false,
                 scene_models: Default::default(),
                 scene_model_decodes: 0,
@@ -1900,6 +2022,10 @@ pub unsafe extern "C" fn domowik_plan_save(handle: u64, path: *const c_char) -> 
             return status::UNKNOWN_HANDLE;
         };
         let mut plan = plan.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = plan.session_mut() {
+            plan.last_error = e.to_string();
+            return status::REJECTED;
+        }
         // A plan created in memory has no container behind it yet, so give it
         // one carrying the session it has been accumulating.
         if plan.file.is_none() {
@@ -2339,7 +2465,18 @@ pub unsafe extern "C" fn domowik_plan_hit_test(
                 Some(cache) if cache.level == request.level_id && cache.generation == generation
             );
             if !usable {
-                let index = HitIndex::build(locked.session().document(), request.level_id);
+                let placeholders = match locked.placeholders(request.level_id) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        locked.last_error = e;
+                        return status::REJECTED;
+                    }
+                };
+                let index = HitIndex::build_with(
+                    locked.session().document(),
+                    request.level_id,
+                    &placeholders,
+                );
                 locked.hit_index_builds = locked.hit_index_builds.saturating_add(1);
                 locked.hits = Some(HitCache {
                     level: request.level_id,
@@ -2615,7 +2752,7 @@ struct MarqueeRequest {
 ///
 /// # Why this is not geometry in the caller
 ///
-/// [`domowik_geometry::hit::marquee`] is R7.3's answer, in the SAME sense
+/// [`domowik_geometry::hit::marquee_with`] is R7.3's answer, in the SAME sense
 /// [`domowik_plan_hit_test`] is R7.1.3's: boundary-inclusive rectangle
 /// intersection (R7.3.1), the marquee-key ordering, and the zero-area case
 /// (R7.3.2) — which it resolves by delegating to the SAME point-hit index
@@ -2624,13 +2761,11 @@ struct MarqueeRequest {
 /// function and adds no second definition of what a rectangle selects
 /// (ED-0101); it does not even special-case the degenerate corner itself.
 ///
-/// This transport inherits, unchanged, two open issue-0012 gaps: the
-/// occupied-polygon construction and its vertex/edge/corner intersection
-/// test against the query rectangle run on binary64, not exact-real,
-/// arithmetic (the same caveat `domowik_plan_hit_test`'s own doc states);
-/// and which rectangles count as "zero-area" for R7.3.2's point-hit branch
-/// (currently `width == 0 && height == 0`, not either dimension alone) is
-/// under separate review, not asserted settled here.
+/// Degraded instances use the same per-instance resolution snapshot as point
+/// hits. Declared dimensions use §9.6's transformed width/depth bounds; absent
+/// dimensions use the fixed fallback. Coincident corners use point-hit semantics
+/// (R7.3.2a); one-dimensional rectangles keep intersection semantics. Wall
+/// polygon construction still inherits issue 0012's binary64 numerical limits.
 ///
 /// # Request
 ///
@@ -2702,8 +2837,20 @@ pub unsafe extern "C" fn domowik_plan_marquee(
         );
 
         let ids = {
-            let plan = plan.lock().unwrap_or_else(|e| e.into_inner());
-            marquee(plan.session().document(), request.level_id, rect)
+            let mut plan = plan.lock().unwrap_or_else(|e| e.into_inner());
+            let placeholders = match plan.placeholders(request.level_id) {
+                Ok(p) => p,
+                Err(e) => {
+                    plan.last_error = e;
+                    return status::REJECTED;
+                }
+            };
+            marquee_with(
+                plan.session().document(),
+                request.level_id,
+                rect,
+                &placeholders,
+            )
         };
 
         let payload: Vec<String> = ids.into_iter().map(|id| id.to_string()).collect();
@@ -6035,6 +6182,172 @@ mod tests {
             .iter()
             .map(|v| v.as_str().expect("string id").to_owned())
             .collect()
+    }
+
+    /// Original PH1/PH2 package, with explicit requirement and optional declared extent.
+    fn placeholder_plan(
+        required: bool,
+        declared: bool,
+        content: Option<&[u8]>,
+        media: &str,
+    ) -> (u64, Uuid, Uuid) {
+        let mut doc = Document::with_ground_floor();
+        let level = doc.levels[0].id;
+        let digest = content
+            .map(domowik_container::digest_of)
+            .unwrap_or_else(|| format!("sha256:{}", "0".repeat(64)));
+        let mut instance = domowik_format::AssetInstance {
+            id: Uuid::now_v7(),
+            level_id: level,
+            digest: digest.clone(),
+            transform: domowik_format::InstanceTransform {
+                translation_mm: [2000.0, 0.0],
+                ..Default::default()
+            },
+            display_name: None,
+            unknown: Default::default(),
+        };
+        let id = instance.id;
+        instance.transform.scale_uniform = 2.0;
+        instance.transform.rotation_deg = 90.0;
+        doc.asset_instances.push(instance);
+        let session =
+            Session::open_snapshot(Uuid::now_v7(), doc, &Default::default(), &[], vec![]).unwrap();
+        let mut file = ContainerPlan::unsaved(session);
+        let mut descriptor = serde_json::json!({
+            "digest": digest, "byteLength": content.map_or(1, |b| b.len()), "mediaType": media,
+            "purpose": "furniture-model", "encoding": "original", "requirement": if required { "required" } else { "optional" }, "provenance": {}
+        });
+        if declared {
+            descriptor["placeholderDimensions"] =
+                serde_json::json!({"widthMm":600.0,"heightMm":2100.0,"depthMm":400.0});
+        }
+        file.insert_descriptor(&digest, descriptor).unwrap();
+        if let Some(bytes) = content {
+            file.assets.insert(digest, bytes.to_vec());
+        }
+        let dir = std::env::temp_dir().join(format!("domowik-ph1-{}", Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ph1.domo");
+        file.save_as(&path).unwrap();
+        let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        let mut h = 0;
+        assert_eq!(
+            unsafe { domowik_plan_open(cpath.as_ptr(), &mut h) },
+            status::OK
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+        (h, level, id)
+    }
+
+    fn delete_placeholder(h: u64, id: Uuid) -> i32 {
+        let req =
+            serde_json::to_vec(&serde_json::json!({"kind":"delete","instanceId":id})).unwrap();
+        call_returning(|out| unsafe { domowik_plan_assets(h, req.as_ptr(), req.len() as u64, out) })
+            .0
+    }
+
+    #[test]
+    fn ph1_and_ph2_select_delete_and_undo_through_the_native_bridge() {
+        let (h, level, id) = placeholder_plan(false, false, None, "model/obj");
+        let expected = vec![id.to_string()];
+        let before = call_returning(|out| unsafe { domowik_plan_state(h, out) }).1;
+        assert_eq!(
+            marquee_at(h, level, (1400.0, -600.0), (2600.0, 600.0)),
+            expected
+        );
+        assert_eq!(
+            marquee_at(h, level, (1000.0, -100.0), (1500.0, 100.0)),
+            expected
+        );
+        assert!(marquee_at(h, level, (1000.0, -100.0), (1499.0, 100.0)).is_empty());
+        assert_eq!(marquee_at(h, level, (2000.0, 0.0), (2000.0, 0.0)), expected);
+        assert!(marquee_at(h, Uuid::now_v7(), (1400.0, -600.0), (2600.0, 600.0)).is_empty());
+        let hits = hits_at(h, level, 2000.0, 0.0, 0.0);
+        assert_eq!(hits[0]["class"], "placeholder-box");
+        assert_eq!(hits[0]["entityId"], id.to_string());
+        assert_eq!(
+            before,
+            call_returning(|out| unsafe { domowik_plan_state(h, out) }).1
+        );
+        assert_eq!(
+            delete_placeholder(h, id),
+            status::OK,
+            "{}",
+            resolve(h).unwrap().0.lock().unwrap().last_error
+        );
+        assert!(marquee_at(h, level, (1400.0, -600.0), (2600.0, 600.0)).is_empty());
+        assert!(hits_at(h, level, 2000.0, 0.0, 0.0).is_empty());
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(
+            marquee_at(h, level, (1400.0, -600.0), (2600.0, 600.0)),
+            expected
+        );
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn declared_placeholder_bounds_and_required_read_only_inspection_cross_the_bridge() {
+        let (h, level, id) = placeholder_plan(true, true, None, "model/obj");
+        let before = call_returning(|out| unsafe { domowik_plan_state(h, out) }).1;
+        // Width/depth 600/400, scale 2, rotation 90 gives 800/1200.
+        assert_eq!(
+            marquee_at(h, level, (1599.0, 550.0), (1601.0, 590.0)),
+            vec![id.to_string()]
+        );
+        assert!(marquee_at(h, level, (1500.0, 0.0), (1599.0, 100.0)).is_empty());
+        assert_eq!(
+            hits_at(h, level, 2000.0, 550.0, 0.0)[0]["entityId"],
+            id.to_string()
+        );
+        assert_eq!(delete_placeholder(h, id), status::REJECTED);
+        let path = std::env::temp_dir().join(format!(
+            "domowik-required-placeholder-{}.domo",
+            Uuid::now_v7()
+        ));
+        let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            unsafe { domowik_plan_save(h, cpath.as_ptr()) },
+            status::REJECTED
+        );
+        assert!(!path.exists(), "normal save must not write while read-only");
+        assert_eq!(
+            before,
+            call_returning(|out| unsafe { domowik_plan_state(h, out) }).1
+        );
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn resolved_unsupported_and_undecodable_instances_have_distinct_candidacy() {
+        let obj = b"v 0 0 0\nv 1 0 0\nv 0 0 1\nf 1 2 3\n";
+        for (content, media, degraded) in [
+            (obj.as_slice(), "model/obj", false),
+            (obj.as_slice(), "application/x-unsupported", true),
+            (b"invalid model".as_slice(), "model/obj", true),
+        ] {
+            let (h, level, id) = placeholder_plan(false, false, Some(content), media);
+            let ids = marquee_at(h, level, (1400.0, -600.0), (2600.0, 600.0));
+            assert_eq!(ids.contains(&id.to_string()), degraded);
+            assert_eq!(!hits_at(h, level, 2000.0, 0.0, 0.0).is_empty(), degraded);
+            assert_eq!(domowik_plan_close(h), status::OK);
+        }
+        let (h, level, _) = placeholder_plan(true, false, Some(b"invalid model"), "model/obj");
+        assert!(!marquee_at(h, level, (1400.0, -600.0), (2600.0, 600.0)).is_empty());
+        let id = resolve(h)
+            .unwrap()
+            .0
+            .lock()
+            .unwrap()
+            .session()
+            .document()
+            .asset_instances[0]
+            .id;
+        assert_eq!(delete_placeholder(h, id), status::REJECTED);
+        assert_eq!(domowik_plan_close(h), status::OK);
     }
 
     /// R7.3.1: tangential contact selects. Mirrors BEHAVIOR-SPEC fixture L2 —

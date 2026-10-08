@@ -5,7 +5,37 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0021, 0029
 
-## Problem
+## Current disposition — 2026-10-08
+
+Keep partial for the full asset-store/profile contract: external-cache/thin
+workflow, retrieval and the recorded 0021/0029 gates remain unfinished.
+Issue 0059 now consumes per-instance resolution in frontend marquee and
+point-hit queries. Its declared-footprint decision and PH1/PH2 inspection,
+optional deletion and required-degraded refusal coverage are delivered; they
+are no longer missing integration work for this issue.
+
+The editor resolves embedded GLB/OBJ/ZIP models with bounded decoding, with no
+configured external cache or remote retrieval. This does not complete the
+wider asset-policy/profile contract or offline-summary obligations. The empty
+universe profile decision remains complete under 0064. See
+[the integration evidence](../docs/evidence/0059-marquee/2026-10-08.md).
+
+The disposition below is historical and superseded by this update.
+
+## Historical disposition — 2026-10-05
+
+Keep partial for the full asset-store/profile contract.
+
+Embedded import, descriptors, resolution policy and asset CLI commands exist.
+`pack --thin` still refuses the unimplemented external-cache workflow; remote
+retrieval is absent. Reconcile the old 'all six met' note against actual
+cache/thin behavior, 0029 persistence gates and 0059's descriptor-footprint
+integration. The empty-package profile decision is complete under 0064.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Implement streaming content-addressed import, shared cache, portable embedding,
 deduplication, integrity verification, and CLI management.
@@ -537,7 +567,7 @@ remains is wiring, not design. Criterion 1 above stays unchecked until it is
 done, which is this issue's own record of the gap.
 
 One finding from this work did NOT fit these criteria and became
-[issue 0064](0064-empty-universe-package-profile.md): a package with no assets
+[issue 0064](done/0064-empty-universe-package-profile.md): a package with no assets
 always reads back as `thin` however it was packed, because the container
 requires a non-empty asset-root table before it will say `portable`. Found when
 verification's probe P13b rejected a change made here; reverted in `45e31f4`

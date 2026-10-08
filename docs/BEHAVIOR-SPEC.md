@@ -4141,8 +4141,14 @@ repack portable once available, or remove the referencing instance).
 
 Deterministic placeholders:
 
-- Geometry: an axis-aligned box using dimensions declared by the descriptor;
-  when none are declared, a fixed 1000 mm box centred on the instance origin.
+- Geometry: when dimensions are declared, use width × depth (height is
+  vertical), centered on the instance origin. Apply `scaleUniform` and
+  `rotationDeg`, then use the axis-aligned bounds of that rectangle in plan
+  space. When none are declared, use a fixed 1000 mm axis-aligned square
+  centered on the instance origin, ignoring scale and rotation (ED-0106).
+  The declared-branch rule was approved by the owner on 2026-10-08 for issue
+  0059. Construction uses binary64; exact-real construction guarantees remain
+  with issues 0012/0030.
 - Interaction: the placeholder participates in hit testing exactly as its
   entity normally would, so instances stay selectable and deletable while
   degraded.
@@ -5698,4 +5704,18 @@ Actions performed or question considered: F26 and F27 contradicted each other on
 Observed fact or decision (no source-code description): F27 courtyard hole ring, hole area, courtyard exact area and display value as written. The island face ring and its 5,040,000 mm² area are re-verified UNCHANGED — a patch diamond reaches 100 mm from its node along each axis while the loop's interior corner stands 100 mm away along both, so inner corners stay square. The R5.3.2 examples are unchanged: `A = 38,200,000 → 38.20 m²` remains a correct display example and never depended on F27.
 Affected sections: 5.4 (F27, F39)
 Test-vector provenance: original - re-derived from R3.2.3 and the fixture's stated wall axes and thickness, verified with an exact integer shoelace over the ring vertices; no implementation output was used as the oracle.
+```
+
+```text
+Date: 2026-10-08
+Contributor: Codex, with explicit owner approval in the issue-0059 session
+Source type: original product decision
+Source identification/version/URL: Domowik BEHAVIOR-SPEC §9.6 and ED-0106
+Consulted artifact: repository specifications and the owner's approval; no third-party application source or fixtures
+License: repository Apache-2.0
+Independently derived: yes
+Actions performed or question considered: settle the declared placeholder footprint's axes and instance-transform rule.
+Observed fact or decision: width × depth forms the centered plan rectangle, height is vertical, instance scale and rotation apply, and the axis-aligned bounds provide placeholder interaction geometry. The fixed no-dimensions fallback continues to ignore scale and rotation. Binary64 construction does not discharge exact-real numerical gates.
+Affected sections: 9.6
+Test-vector provenance: original 600 × 2100 × 400 mm descriptor at (2000,0), scale 2, rotation 90°; expected footprint bounds [1600,2400] × [-600,600], contrasted with PH1/PH2's fallback.
 ```

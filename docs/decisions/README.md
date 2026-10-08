@@ -12,6 +12,8 @@ ADRs capture durable project decisions and their validation state.
 | [0006](0006-naming-and-identity.md) | Accepted | Provisional naming and identity with canonical registry |
 | [0007](0007-format-compatibility-promise.md) | Proposed | Post-v1 format compatibility contract (SemVer-backed, ADR normative) |
 | [0008](0008-rust-core-implementation.md) | Accepted (gates 1-4 open) | Rust core implementation, superseding 0002 |
+| [0010](0010-native-3d-texture-experiment.md) | Proposed | Linux native texture experiment; portable renderer gates remain open |
+| [0011](0011-extensible-versioned-document-format.md) | Accepted (extension wire design pending) | Versioned core with namespaced feature extensions |
 
 Statuses:
 

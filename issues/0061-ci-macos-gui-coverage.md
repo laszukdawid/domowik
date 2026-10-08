@@ -1,11 +1,27 @@
-# 0061: Give CI the macOS and GUI stages it currently never runs
+# 0061: Verify hosted macOS packaging and GUI CI coverage
 
 - **Phase:** 2
 - **Priority:** Medium
-- **Status:** In Progress
+- **Status:** In Progress (partial scope)
 - **Depends on:** 0024, 0057
 
-## Problem
+## Current disposition — 2026-10-08
+
+Keep partial for observed hosted acceptance, not adding CI jobs again.
+
+`.github/workflows/ci.yml` already requires Linux editor checks and includes
+macOS, summaries, cross-artifact inspection and packaging-negative proofs.
+Reconcile the remaining unchecked boxes with a successful real hosted run and
+its summary/mutation evidence when available; no workflow dispatch or push is
+needed for this cleanup. Old 'GUI executes nowhere' and pending Go-removal
+claims are superseded. The checked-in HOSTED-RUN.md records a failed first
+macOS build and successful cross-build inspection, not complete macOS
+acceptance. Keep that evidence dated; this audit does not refresh remote runs.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 `.github/workflows/ci.yml` runs `verify` on `ubuntu-24.04` only. Several
 `scripts/verify.sh` stages test `[ "$(uname -s)" = "Darwin" ]` or the presence

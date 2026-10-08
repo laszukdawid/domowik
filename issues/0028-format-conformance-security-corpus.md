@@ -5,6 +5,21 @@
 - **Status:** In Progress (partial scope)
 - **Depends on:** 0004, 0005, 0021, 0023
 
+## Current disposition — 2026-10-05
+
+Keep partial for diagnostic-accurate corpus coverage and unresolved fixture
+dispositions.
+
+The generator is Rust (`crates/domowik-devtools/src/corpusgen`); L11 twins and
+container diagnostic tests exist, and the reader uses `domowik.json`. Old
+missing-manifest/depth claims must not be treated as current defects.
+Reconcile EXPECTATIONS.md's stale ambiguous-manifest owner blocker with the
+recorded reserved/unreachable ruling, and validate remaining
+golden/hostile/limit cases by their actual diagnostic, not rejection alone.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
 Activated 2026-08-24 under ED-0019 on branch `issue/0028-conformance-corpus`.
 Fixtures are authored from FORMAT-SPEC §2–§9.6 as integrated on main plus
 only labeled 0021 provisional material, before persistence implementation.
@@ -34,7 +49,7 @@ carry no conformance claims and upstream gates stay open. Dependents may
 consume this delivered material as a labeled provisional handoff under
 partial-scope semantics.
 
-## Problem
+## Original problem
 
 Create reusable golden, adversarial, migration, and hostile fixtures for every
 reader/writer and validator. Fixtures are authored from the normative specs
@@ -477,4 +492,3 @@ a reproduction. The `domowik-document` framing harness is unaffected and its
 had one out-of-scope reader change accepted with the breach recorded; the lesson
 was to route, so it is routed. The corpus gap is closed; the reader gap is not,
 and no fixture here should be read as evidence that it is.
-

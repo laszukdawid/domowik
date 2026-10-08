@@ -16,7 +16,26 @@
   path: 0035 results are published through 0018's existing acceptance
   criterion as an explicit non-dependency handoff (see Partial-scope guard).
 
-## Problem
+## Current disposition — 2026-10-08
+
+Keep partial for asset/profile specification and outstanding corpus
+obligations.
+
+Local model import, embedded placement and sizing now work, but do not
+complete cache/remote policy, furnished/history corpus or encoding promotion
+criteria. Reconcile ASSET-STRATEGY against 0026, 0028 and 0035; preserve the
+split between user content and licensed bundled assets.
+
+BEHAVIOR-SPEC §10 now defines normative experimental-editor import,
+placement, preview and resizing. Its former "undefined" description is
+historical. Furnished-corpus activation still needs 0004 to reconcile those
+rules with FORMAT-SPEC's provisional Tier B envelopes and the corpus contract;
+working import alone does not activate the corpus or waive its criteria.
+
+This disposition supersedes older progress/status claims below; original
+criteria and dated evidence are retained, not waived.
+
+## Original problem
 
 Turn `../docs/ASSET-STRATEGY.md` into normative v0.1 descriptors and measured
 budgets. Keep asset identity, entity IDs, storage locations, and logical asset

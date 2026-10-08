@@ -20,6 +20,13 @@ product constraint, not an afterthought.
 > no part of it is a completed v0.1 asset contract while the partial scope
 > holds.
 
+**Gate clarification — 2026-10-08:** BEHAVIOR-SPEC §10 now contains normative
+experimental-editor behavior. The furnished-corpus gate still requires 0004
+to reconcile that behavior with provisional Tier B format envelopes and the
+corpus contract. The corpus remains dormant; no measurements or encoding
+criteria are discharged by the existence of editor import. See the
+[issue audit](../issues/AUDIT-2026-10-08.md).
+
 ## Goals
 
 - Keep ordinary plan documents small enough to sync and version cheaply.

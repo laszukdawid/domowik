@@ -39,7 +39,7 @@ The editor's in-app hints detect the platform. Use these primary shortcuts:
 | Pan | Scroll, middle-drag, or Space-drag | Scroll, middle-drag, or Space-drag |
 | Zoom about the cursor | Ctrl + scroll | Command (⌘) + scroll |
 | Toggle an object in the selection | Shift-click or Ctrl-click | Shift-click or Command-click |
-| Add walls with a marquee | Shift-drag or Ctrl-drag from empty canvas | Shift-drag or Command-drag from empty canvas |
+| Add to selection with a marquee | Shift-drag or Ctrl-drag from empty canvas | Shift-drag or Command-drag from empty canvas |
 | Undo | Ctrl+Z | Command+Z |
 | Redo | Ctrl+Shift+Z | Command+Shift+Z |
 | Cancel a gesture | Escape | Escape |
@@ -47,8 +47,10 @@ The editor's in-app hints detect the platform. Use these primary shortcuts:
 Click repeatedly at the same spot to cycle overlapping objects. Selection can
 contain several objects, but edits and Delete act on the **primary object**,
 not the entire group. Removing the primary does not silently promote another
-object. The marquee adds intersecting active-level walls; it is not a general
-group-edit command.
+object. The marquee adds intersecting active-level walls and degraded asset
+instances. Resolved furniture remains selectable by clicking its editor
+footprint; marquee selection does not include those resolved footprints.
+Selection does not provide a general group-edit command.
 
 Drag a wall body to move it, or an endpoint to move its joined corner. Escape
 during a gesture restores the pre-gesture state; Escape while idle clears the
@@ -103,6 +105,18 @@ Insertion size follows what the decoder can establish:
 The 2D view displays a cached top-down model preview where decoding succeeds.
 A footprint/diagnostic fallback does not mean the source is fully rendered.
 Current preview rendering is approximate, not photorealistic.
+
+Missing, unsupported or undecodable model content uses a selectable placeholder.
+Declared dimensions use width × depth, scaled and rotated with the instance,
+then enclosed by an axis-aligned box. Without declared dimensions, the box is
+fixed at 1000 × 1000 mm around the instance origin, ignoring scale and rotation.
+These bounds also determine clicking and marquee selection.
+
+An optional degraded instance can be deleted; undo restores it without
+reselecting it. An unresolved required asset leaves the plan available for
+inspection and selection but blocks edits, deletion and normal saving. The
+editor currently resolves embedded content; attaching a library directory does
+not provide external-cache or remote retrieval for a missing reference.
 
 Only import content you have rights to use. Imported models retain their own
 rights; importing them does not license them under Apache-2.0. Sharing a plan

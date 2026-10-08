@@ -3,7 +3,7 @@
 Status: **Proposed architecture.** Accepted project goals are separated below
 from technology choices that still require feasibility spikes.
 
-Current implementation (2026-10-04): the core and CLI are Rust (accepted ADR
+Current implementation (2026-10-08): the core and CLI are Rust (accepted ADR
 0008). The experimental Flutter desktop editor uses that core through issue
 0024's native bridge, with Linux and macOS evidence bounded by the increment
 and ABI tested. Imported models are decoded by `domowik-models`; the
@@ -12,6 +12,21 @@ adds an experimental Linux native-OpenGL texture backend (ADR 0010), not a
 portable renderer or acceptance of ADR 0003. Whole-app performance and
 remaining platform/rendering gates remain open. See
 [Getting started](GETTING-STARTED.md) and [compatibility](COMPATIBILITY.md).
+
+Issue 0059's frontend queries now consume per-instance asset resolution for
+placeholder selection. The adapter caches local embedded-model resolution by
+document revision, checks bounded model decodability, and supplies §9.6 bounds
+to the shared geometry queries. Required degradation gates mutation and normal
+save; inspection remains available. Resolved editor footprints stay separate
+from degraded placeholders. No external cache or retrieval is configured in
+the editor. See [the integration evidence](evidence/0059-marquee/2026-10-08.md)
+for the approved declared-footprint rule and bounded Linux validation.
+
+The document evolves through the existing manifest `formatVersion`, with a
+defined core and namespaced feature extensions under accepted
+[ADR 0011](decisions/0011-extensible-versioned-document-format.md). The extension wire contract
+and capability gates remain design/implementation work under 0004/0005;
+current schema acceptance and closed package namespaces are unchanged.
 
 ## Accepted system boundaries
 

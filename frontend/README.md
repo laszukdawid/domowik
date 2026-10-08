@@ -22,6 +22,14 @@ Start with the repository guides:
   platform/feature limits.
 - [Contributing](../CONTRIBUTING.md): source ownership and verification.
 
+Degraded model instances participate in point-hit and marquee selection.
+Optional instances can be deleted and restored by undo; required degradation
+preserves inspection while refusing editing and normal saving. Declared
+placeholders use transformed width/depth bounds; the fallback remains a fixed
+1000 mm square. Resolved models keep separate footprint clicking/dragging and
+are outside the placeholder marquee query. See
+[the integration evidence](../docs/evidence/0059-marquee/2026-10-08.md).
+
 ## Layout and naming
 
 The displayed name is **Domowik**; the Dart package and desktop executable

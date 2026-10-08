@@ -1,5 +1,21 @@
 # Marquee selection checkpoint
 
+## Current disposition — 2026-10-08
+
+This is historical checkpoint evidence. The
+[2026-10-08 integration](2026-10-08.md) supersedes statements
+below about missing descriptors, requirement levels, read-only mode, frontend
+PH1 plumbing, deletion and the undecided declared footprint. Those inputs and
+native-backed selection/deletion/refusal tests are now delivered. Declared
+width × depth is scaled/rotated before taking axis-aligned bounds; the fixed
+fallback is unchanged. Resolved model footprint clicking/dragging exists
+separately; resolved footprints are not part of the placeholder marquee query.
+External-cache/retrieval, wider offline-summary obligations and numerical/
+whole-app performance conformance remain with their owning issues.
+The older measurements and observations below retain their original dates.
+
+## Historical checkpoint
+
 The Rust marquee query now finds walls crossed by extremely large finite
 rectangles. The Flutter gesture consumes that query once on release. This
 checkpoint does not establish complete R7 conformance or application frame
