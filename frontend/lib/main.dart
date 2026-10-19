@@ -41,6 +41,7 @@ import 'level_properties_form.dart';
 import 'opening_properties_form.dart';
 import 'wall_properties_form.dart';
 import 'asset_library.dart';
+import 'asset_rotation.dart';
 import 'user_config.dart';
 import 'preferences_dialog.dart';
 import 'three_d_view.dart';
@@ -122,6 +123,8 @@ enum _DragMode {
   openingResize,
   openingSwing,
   asset,
+  assetRotate,
+  poseAccept,
   pan,
   place,
   selectOnly,
@@ -205,7 +208,9 @@ class _PlanPageState extends State<PlanPage>
     askToLeave: _askToLeave,
     save: _saveFile,
     beforeAction: () {
-      _cancelAssetPose();
+      if (!_acceptAssetPose()) {
+        throw StateError('Fix invalid placement values before continuing.');
+      }
       _cancelDrag();
     },
     onBusyChanged: (_) {
@@ -253,6 +258,10 @@ class _PlanPageState extends State<PlanPage>
   AssetChoice? _assetChoice;
   String? _poseAssetId;
   List<double>? _poseInitial;
+  List<double>? _poseDraft;
+  bool _poseDraftValid = true;
+  List<double>? _poseDragInitial;
+  AssetRotationDrag? _assetRotationDrag;
   double? _poseHeight;
   int _posePreviewRevision = 0;
   List<double>? _pendingPose;
@@ -918,8 +927,36 @@ class _PlanPageState extends State<PlanPage>
   bool _observeSelectionKeys(KeyEvent event) {
     final next = _readModifierMask();
     if (next != _modifierMask) {
+      final shiftChanged = ((next ^ _modifierMask) & shiftModifier) != 0;
       _modifierMask = next;
       _selection.observeContext(_selectionContext);
+      if (shiftChanged &&
+          _mode == _DragMode.assetRotate &&
+          _dragClassified &&
+          _pointerPosition != null) {
+        _updateAssetRotation(_view.toPlan(_pointerPosition!));
+      }
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.keyR &&
+        !keyboard.isControlPressed &&
+        !keyboard.isMetaPressed &&
+        !keyboard.isAltPressed &&
+        !_fileActionPending &&
+        _activePointer == null &&
+        _navigationStart == null &&
+        _poseAssetId == null &&
+        ModalRoute.of(context)?.isCurrent == true) {
+      final focus = FocusManager.instance.primaryFocus?.context;
+      final typing =
+          focus?.widget is EditableText ||
+          focus?.findAncestorWidgetOfExactType<EditableText>() != null;
+      final asset = _activeAssets.where((a) => a.id == _selected).firstOrNull;
+      if (!typing && asset != null) {
+        _rotateAsset(asset, show3d: false);
+        return true;
+      }
     }
     return false;
   }
@@ -1091,7 +1128,7 @@ class _PlanPageState extends State<PlanPage>
   }
 
   Object? _assetMutation(Map<String, Object?> request, String what) {
-    _cancelAssetPose();
+    if (!_acceptAssetPose()) return null;
     final result = _assetRequest(request);
     if (result != null) _setStatus('$what accepted', isError: false);
     _refresh();
@@ -1099,7 +1136,7 @@ class _PlanPageState extends State<PlanPage>
   }
 
   Future<void> _openPreferences() async {
-    _cancelAssetPose();
+    if (!_acceptAssetPose()) return;
     await _configReady;
     if (!mounted) return;
     _cancelDrag();
@@ -1112,7 +1149,7 @@ class _PlanPageState extends State<PlanPage>
   }
 
   Future<void> _openAssetLibrary() async {
-    _cancelAssetPose();
+    if (!_acceptAssetPose()) return;
     await _configReady;
     if (!mounted) return;
     _cancelDrag();
@@ -1466,13 +1503,19 @@ class _PlanPageState extends State<PlanPage>
     if (choice == 'cut') _copySelection(cut: true);
   }
 
-  Future<void> _rotateAsset(AssetFootprint asset) async {
-    _cancelAssetPose();
+  Future<void> _rotateAsset(AssetFootprint asset, {bool show3d = true}) async {
+    if (_poseAssetId == asset.id || !_acceptAssetPose()) return;
+    _cancelDrag();
     final handle = _handle;
     final height = await _assetHeight(asset);
-    if (!mounted || _handle != handle) return;
+    if (!mounted || _handle != handle || _selected != asset.id) return;
     _showSelectionInspector();
+    _canvasFocus.requestFocus();
     setState(() {
+      _wallChainTool = false;
+      _chain.clear();
+      _placing = null;
+      _assetChoice = null;
       _poseHeight = height;
       _selection.selectForDrag(asset.id);
       _poseAssetId = asset.id;
@@ -1487,11 +1530,14 @@ class _PlanPageState extends State<PlanPage>
         asset.rotationYDeg,
         asset.rotationDeg,
       ];
-      _viewMode = 'split';
+      _poseDraft = List.of(_poseInitial!);
+      _poseDraftValid = true;
+      if (show3d) _viewMode = 'split';
     });
   }
 
   void _previewAssetPose(List<double> values) {
+    setState(() => _poseDraft = List.of(values));
     _pendingPose = List.of(values);
     if (_poseFrameScheduled) return;
     _poseFrameScheduled = true;
@@ -1544,21 +1590,56 @@ class _PlanPageState extends State<PlanPage>
       'rotationDeg': values.sublist(3),
       'heightMm': _poseHeight,
     });
-    if (result == null) return;
+    if (result == null) {
+      setState(() {}); // Show the refusal while retaining the editable draft.
+      return;
+    }
     setState(() {
       _poseAssetId = null;
       _poseInitial = null;
+      _poseDraft = null;
       _posePreviewRevision++;
     });
     _refresh();
   }
 
+  bool get _poseHasChanges {
+    final draft = _poseDraft, initial = _poseInitial;
+    return _poseAssetId != null &&
+        _poseDraftValid &&
+        draft != null &&
+        initial != null &&
+        List.generate(6, (i) => draft[i] != initial[i]).any((v) => v);
+  }
+
+  /// Finish the latest draft, including input still queued for a preview frame.
+  /// Refusal keeps rotation active and prevents the click's follow-up action.
+  bool _acceptAssetPose() {
+    if (_poseAssetId == null) return true;
+    if (!_poseDraftValid) {
+      setState(
+        () => _setStatus(
+          'Fix invalid placement values before finishing.',
+          isError: true,
+        ),
+      );
+      return false;
+    }
+    _cancelDrag();
+    final values = _poseDraft;
+    if (values == null) return false;
+    _applyAssetPose(List.of(values));
+    return _poseAssetId == null;
+  }
+
   void _cancelAssetPose() {
+    if (_assetRotationDrag != null) _cancelDrag();
     _pendingPose = null;
     if (_poseAssetId == null) return;
     _assetRequest({'kind': 'clearPosePreview'});
     _poseAssetId = null;
     _poseInitial = null;
+    _poseDraft = null;
     _posePreviewRevision++;
     _refresh();
   }
@@ -2108,7 +2189,7 @@ class _PlanPageState extends State<PlanPage>
       _rememberActiveLevel(id);
       return;
     }
-    _cancelAssetPose();
+    if (!_acceptAssetPose()) return;
     _cancelDrag();
     setState(() {
       if (!_levelView.activate(id)) return;
@@ -2538,7 +2619,7 @@ class _PlanPageState extends State<PlanPage>
 
   void _changeHistory({bool redo = false}) {
     if (_fileActionPending) return;
-    _cancelAssetPose();
+    if (!_acceptAssetPose()) return;
     _cancelDrag();
     final bridge = _bridge;
     if (bridge == null || _handle == 0) {
@@ -2647,7 +2728,7 @@ class _PlanPageState extends State<PlanPage>
           _cancelDrag();
           setState(() => _viewMode = mode);
         },
-        onUndo: _undoDepth > 0 ? _changeHistory : null,
+        onUndo: _undoDepth > 0 || _poseHasChanges ? _changeHistory : null,
         onRedo: _redoDepth > 0 ? () => _changeHistory(redo: true) : null,
         tools: Row(
           children: [
@@ -2661,7 +2742,7 @@ class _PlanPageState extends State<PlanPage>
               tooltip: 'Choose door type',
               icon: const Icon(Icons.arrow_drop_down),
               onSelected: (type) {
-                _cancelAssetPose();
+                if (!_acceptAssetPose()) return;
                 _cancelDrag();
                 setState(() {
                   _wallChainTool = false;
@@ -2685,7 +2766,7 @@ class _PlanPageState extends State<PlanPage>
               tooltip: 'Choose window type',
               icon: const Icon(Icons.arrow_drop_down),
               onSelected: (type) {
-                _cancelAssetPose();
+                if (!_acceptAssetPose()) return;
                 _cancelDrag();
                 setState(() {
                   _wallChainTool = false;
@@ -2922,7 +3003,9 @@ class _PlanPageState extends State<PlanPage>
                   ],
                   floorElevationMm: elevation,
                   active: _viewMode != '2d',
-                  onUndo: _undoDepth > 0 ? _changeHistory : null,
+                  onUndo: _undoDepth > 0 || _poseHasChanges
+                      ? _changeHistory
+                      : null,
                   onRedo: _redoDepth > 0
                       ? () => _changeHistory(redo: true)
                       : null,
@@ -2949,7 +3032,7 @@ class _PlanPageState extends State<PlanPage>
       selected: !_wallChainTool && _placing == placing,
       showCheckmark: false,
       onSelected: (_) {
-        _cancelAssetPose();
+        if (!_acceptAssetPose()) return;
         _cancelDrag();
         setState(() {
           _wallChainTool = false;
@@ -2976,7 +3059,7 @@ class _PlanPageState extends State<PlanPage>
       selected: _wallChainTool,
       showCheckmark: false,
       onSelected: (_) {
-        _cancelAssetPose();
+        if (!_acceptAssetPose()) return;
         _cancelDrag();
         setState(() {
           _placing = null;
@@ -3084,6 +3167,12 @@ class _PlanPageState extends State<PlanPage>
         !clearSelection &&
         !chainPending) {
       return;
+    }
+    final poseBeforeDrag = _poseDragInitial;
+    _poseDragInitial = null;
+    _assetRotationDrag = null;
+    if (poseBeforeDrag != null && _poseAssetId != null) {
+      _previewAssetPose(poseBeforeDrag);
     }
     setState(() {
       if (_activePointer != null && _selectionBeforeDrag != null) {
@@ -3325,6 +3414,24 @@ class _PlanPageState extends State<PlanPage>
                   !event.localPosition.dy.isFinite ||
                   !_finite(_view.toPlan(event.localPosition)))
                 return;
+              final keyboard = HardwareKeyboard.instance;
+              final spacePan = keyboard.logicalKeysPressed.contains(
+                LogicalKeyboardKey.space,
+              );
+              if (_poseAssetId != null &&
+                  _activePointer == null &&
+                  _navigationStart == null &&
+                  _releasedGestureTouches.isEmpty &&
+                  event.kind != PointerDeviceKind.touch &&
+                  !spacePan &&
+                  (event.buttons == kPrimaryButton ||
+                      event.buttons == kSecondaryMouseButton) &&
+                  !_assetRotationHandleHit(
+                    event.localPosition,
+                    touch: event.kind == PointerDeviceKind.touch,
+                  )) {
+                if (!_acceptAssetPose()) return;
+              }
               if (_wallChainTool && event.buttons == kSecondaryMouseButton) {
                 // R6.5.10 finish event: ends the chain, adds no segment.
                 // Fires even mid-drag; the in-flight preview is discarded
@@ -3402,6 +3509,8 @@ class _PlanPageState extends State<PlanPage>
                 _evaluateEditSnap(_view.toPlan(event.localPosition));
               if (_mode == _DragMode.opening && _dragClassified)
                 _updateOpeningTarget(_view.toPlan(event.localPosition));
+              if (_mode == _DragMode.assetRotate && _dragClassified)
+                _updateAssetRotation(_view.toPlan(event.localPosition));
             },
             onPointerUp: (event) {
               if (!event.localPosition.dx.isFinite ||
@@ -3431,6 +3540,8 @@ class _PlanPageState extends State<PlanPage>
                 _evaluateEditSnap(_view.toPlan(event.localPosition));
               if (_mode == _DragMode.opening && _dragClassified)
                 _updateOpeningTarget(_view.toPlan(event.localPosition));
+              if (_mode == _DragMode.assetRotate && _dragClassified)
+                _updateAssetRotation(_view.toPlan(event.localPosition));
               _pointerPosition = null;
               _finishDrag(event.localPosition, event.timeStamp);
             },
@@ -3449,6 +3560,13 @@ class _PlanPageState extends State<PlanPage>
                 final at = _view.toPlan(event.localPosition);
                 if (!_finite(at)) return;
                 _hoverPlanMm = at;
+                if (_poseAssetId != null) {
+                  final next = _assetRotationHandleHit(event.localPosition)
+                      ? SystemMouseCursors.grab
+                      : SystemMouseCursors.basic;
+                  if (next != _hoverCursor) setState(() => _hoverCursor = next);
+                  return;
+                }
                 if (_activePointer != null ||
                     _wallChainTool ||
                     _placing != null)
@@ -3500,6 +3618,7 @@ class _PlanPageState extends State<PlanPage>
                     showGrid: _showGrid,
                     backgroundLevels: _backgroundLevels,
                     assets: _activeAssets,
+                    rotatingAssetId: _poseAssetId,
                     groupPreview:
                         _mode == _DragMode.group &&
                             _dragClassified &&
@@ -3536,6 +3655,26 @@ class _PlanPageState extends State<PlanPage>
     );
   }
 
+  bool _assetRotationHandleHit(Offset screen, {bool touch = false}) {
+    final asset = _activeAssets.where((a) => a.id == _poseAssetId).firstOrNull;
+    return asset != null &&
+        (assetRotationHandlePosition(asset, _view) - screen).distance <=
+            (touch ? 22 : 14);
+  }
+
+  void _updateAssetRotation(Offset at) {
+    final drag = _assetRotationDrag, initial = _poseDragInitial;
+    if (drag == null || initial == null || _poseAssetId == null) return;
+    _previewAssetPose([
+      ...initial.take(5),
+      drag.update(
+        at,
+        zoom: _view.zoom,
+        snapTo15Degrees: HardwareKeyboard.instance.isShiftPressed,
+      ),
+    ]);
+  }
+
   /// Decides what this drag will do from what is under the cursor.
   ///
   /// Endpoints win over bodies, because they are smaller targets and the
@@ -3566,7 +3705,28 @@ class _PlanPageState extends State<PlanPage>
     if (_placing != null) return _DragMode.place;
     if (_poseAssetId != null) {
       _showSelectionInspector();
-      return _DragMode.none;
+      final asset = _activeAssets
+          .where((a) => a.id == _poseAssetId)
+          .firstOrNull;
+      if (_poseDraftValid &&
+          asset != null &&
+          _assetRotationHandleHit(
+            e.localPosition,
+            touch: e.kind == PointerDeviceKind.touch,
+          )) {
+        _poseDragInitial = List.of(_poseDraft!);
+        _assetRotationDrag = AssetRotationDrag(
+          center: asset.position,
+          start: at,
+          angleDeg: _poseDraft![5],
+        );
+        return _DragMode.assetRotate;
+      }
+      // A touch click-away accepts on release, so a second finger can still
+      // interrupt it to start navigation without committing the draft.
+      return e.kind == PointerDeviceKind.touch
+          ? _DragMode.poseAccept
+          : _DragMode.none;
     }
     final selectedDoor = _derived.openings
         .where((o) => o.id == _selected && o.isDoor)
@@ -4322,7 +4482,19 @@ class _PlanPageState extends State<PlanPage>
       _snapFailed = false;
       _snapStartQueried = false;
       _snapRawStart = null;
+      _assetRotationDrag = null;
+      _poseDragInitial = null;
     });
+
+    // Releasing the handle keeps a draft only, including a click without drag.
+    // In particular, it must not fall through to object selection or history.
+    if (mode == _DragMode.assetRotate) return;
+    if (mode == _DragMode.poseAccept) {
+      if (!classified && _acceptAssetPose() && to != null) {
+        _selectAt(to, logicalPosition);
+      }
+      return;
+    }
 
     if (chaining) {
       _finishChainGesture(
@@ -4352,6 +4524,8 @@ class _PlanPageState extends State<PlanPage>
         }
         return;
       case _DragMode.pan:
+      case _DragMode.assetRotate:
+      case _DragMode.poseAccept:
       case _DragMode.none:
       case _DragMode.place:
       case _DragMode.selectOnly:
@@ -4946,7 +5120,7 @@ class _PlanPageState extends State<PlanPage>
   }
 
   int _gesture(Map<String, Object?> request, String what) {
-    _cancelAssetPose();
+    if (!_acceptAssetPose()) return invalidArgument;
     final bridge = _bridge;
     if (bridge == null || _handle == 0) return invalidArgument;
     try {
@@ -5171,6 +5345,9 @@ class _PlanPageState extends State<PlanPage>
               units: _userConfig.unitSystem,
               key: ValueKey('pose-${selectedAsset.id}'),
               initial: _poseInitial!,
+              rotationZDeg: _poseDraft?[5],
+              onValidityChanged: (valid) =>
+                  setState(() => _poseDraftValid = valid),
               onPreview: _previewAssetPose,
               onApply: _applyAssetPose,
               onCancel: _cancelAssetPose,

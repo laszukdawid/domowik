@@ -629,9 +629,15 @@ class AssetPoseControls extends StatefulWidget {
     required this.onPreview,
     required this.onApply,
     required this.onCancel,
+    this.rotationZDeg,
+    this.onValidityChanged,
     this.units = UnitSystem.metric,
   });
   final List<double> initial;
+
+  /// Current yaw from direct plan dragging; other draft fields remain intact.
+  final double? rotationZDeg;
+  final ValueChanged<bool>? onValidityChanged;
   final UnitSystem units;
   final ValueChanged<List<double>> onPreview, onApply;
   final VoidCallback onCancel;
@@ -652,6 +658,18 @@ class _AssetPoseControlsState extends State<AssetPoseControls> {
             : '$v',
       ),
   ];
+
+  @override
+  void didUpdateWidget(AssetPoseControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final angle = widget.rotationZDeg;
+    if (angle != null &&
+        angle != oldWidget.rotationZDeg &&
+        double.tryParse(_fields[5].text) != angle) {
+      _fields[5].text = '$angle';
+    }
+  }
+
   List<double>? get values {
     final parsed = [
       for (var i = 0; i < _fields.length; i++)
@@ -674,6 +692,7 @@ class _AssetPoseControlsState extends State<AssetPoseControls> {
   void changed() {
     setState(() {});
     final v = values;
+    widget.onValidityChanged?.call(v != null);
     if (v != null) widget.onPreview(v);
   }
 
@@ -708,7 +727,14 @@ class _AssetPoseControlsState extends State<AssetPoseControls> {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text('3D placement · live preview'),
-          const Text('Apply to keep changes; Cancel to discard.'),
+          const Text(
+            'Click elsewhere in the plan or Apply to keep changes. '
+            'Undo restores the previous pose; Cancel discards the preview.',
+          ),
+          const Text(
+            'Drag the round handle in the 2D plan to rotate around Z. '
+            'Hold Shift for 15° steps.',
+          ),
           const Text(
             'X then Y then Z rotations, about the center. Elevation is relative to this level.',
           ),

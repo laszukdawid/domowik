@@ -25,6 +25,16 @@ field operations and atomic admission. Tests use original synthetic walls and
 openings, not personal plans. No external publication, application source,
 artwork or test data was consulted or adapted; no dependencies or notices added.
 
+## Direct 2D object rotation
+
+The rotation handle, Shift-held 15° snapping, R shortcut and click-away acceptance
+are original owner-requested interactions, specified in BEHAVIOR-SPEC's direct
+2D rotation rule. Pointer headings use elementary atan2 angle differences;
+footprint projection and edits reuse the existing Rust core.
+Tests use original synthetic coordinates and the existing original model
+fixture. No external publication, source, artwork or test data was consulted or
+adapted. No dependencies, distributed content or notice obligations were added.
+
 ## Robust predicates
 
 - **Publication:** Jonathan Richard Shewchuk, *Adaptive Precision Floating-Point

@@ -29,7 +29,9 @@ class EditorWorkflows {
       'Click again to cycle overlapping objects. Hold Shift or '
       '$primaryModifier and click to toggle selection. '
       'Select multiple walls to edit their height and thickness together; '
-      'other property edits and deletion act on the primary object.';
+      'other property edits and deletion act on the primary object. '
+      'Press R to rotate selected furniture; click elsewhere in the plan to '
+      'accept, then Undo to revert.';
 
   String get marqueeHint =>
       'Hold Shift or $primaryModifier and drag from empty space to add '

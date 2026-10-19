@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
@@ -346,8 +347,136 @@ void main() {
         picture.dispose();
       });
 
+      // R enables direct rotation without switching away from the 2D plan.
+      final canvasBeforeShortcut = tester.getSize(canvas());
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await io();
+      expect(scene().assetRotationHandle, isNotNull);
+      expect(tester.getSize(canvas()), canvasBeforeShortcut);
+      await tap(find.byKey(const ValueKey('view-mode-menu')));
+      await tap(find.text('2D plan'));
+
+      Future<TestGesture> turnHandle({
+        PointerDeviceKind kind = PointerDeviceKind.mouse,
+        double degrees = 90,
+      }) async {
+        final center = scene().toScreen(scene().assets.single.position);
+        final handle = scene().assetRotationHandle!;
+        final vector = handle - center;
+        final angle = degrees * math.pi / 180;
+        final gesture = await tester.startGesture(
+          tester.getTopLeft(canvas()) + handle,
+          kind: kind,
+        );
+        await gesture.moveTo(
+          tester.getTopLeft(canvas()) +
+              center +
+              Offset(
+                vector.dx * math.cos(angle) + vector.dy * math.sin(angle),
+                -vector.dx * math.sin(angle) + vector.dy * math.cos(angle),
+              ),
+        );
+        await tester.pumpAndSettle();
+        return gesture;
+      }
+
+      // A canceled pointer restores the draft; a release leaves only preview.
+      var turn = await turnHandle();
+      expect(scene().assets.single.rotationDeg, 90);
+      await turn.cancel();
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 0);
+
+      // Starting a pinch from empty plan space is navigation, not click-away.
+      final navigationTouch = await tester.startGesture(
+        tester.getTopLeft(canvas()) + const Offset(40, 40),
+        kind: PointerDeviceKind.touch,
+      );
+      final navigationSecondTouch = await tester.startGesture(
+        tester.getTopLeft(canvas()) + const Offset(100, 40),
+        kind: PointerDeviceKind.touch,
+      );
+      await navigationSecondTouch.up();
+      await navigationTouch.up();
+      await tester.pumpAndSettle();
+      expect(scene().assetRotationHandle, isNotNull);
+
+      turn = await turnHandle(kind: PointerDeviceKind.touch);
+      expect(scene().assets.single.rotationDeg, 90);
+      final secondTouch = await tester.startGesture(
+        tester.getTopLeft(canvas()) +
+            scene().toScreen(scene().assets.single.position),
+        kind: PointerDeviceKind.touch,
+      );
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 0);
+      await secondTouch.up();
+      await turn.up();
+      await tester.pumpAndSettle();
+
+      // Shift changes preview immediately, without another pointer event.
+      // Either Shift key works, and cancellation restores the pre-drag draft.
+      turn = await turnHandle(degrees: 44);
+      expect(scene().assets.single.rotationDeg, 44);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 45);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('asset-pose-5')))
+            .controller!
+            .text,
+        '45.0',
+      );
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 44);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftRight);
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 45);
+      await turn.cancel();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftRight);
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 0);
+
+      turn = await turnHandle();
+      await turn.up();
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 90);
+      expect(scene().selected, initial.id);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await tester.pumpAndSettle();
+      expect(
+        scene().assets.single.rotationDeg,
+        90,
+        reason: 'R does not reset an existing rotation draft',
+      );
+      expect(scene().assets.single.position, placed.position);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('asset-pose-5')))
+            .controller!
+            .text,
+        '90.0',
+      );
+      tester
+          .widget<AssetPoseControls>(find.byType(AssetPoseControls))
+          .onCancel();
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 0);
+      expect(scene().assetRotationHandle, isNull);
       await contextMenu();
       await tap(find.text('Rotate…'));
+      // The same handle works in split view; focusing a field cancels only
+      // the in-flight drag, not the rotation session or its prior draft.
+      turn = await turnHandle();
+      expect(scene().assets.single.rotationDeg, 90);
+      await tester.tap(find.byKey(const ValueKey('asset-pose-0')));
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 0);
+      expect(scene().assetRotationHandle, isNotNull);
+      await turn.up();
+      await tester.pumpAndSettle();
       expect(
         tester
             .widget<TextField>(find.byKey(const ValueKey('asset-pose-5')))
@@ -421,6 +550,12 @@ void main() {
               .onPressed,
           isNull,
         );
+        await click(tester.getTopLeft(canvas()) + const Offset(40, 40));
+        expect(
+          scene().assetRotationHandle,
+          isNotNull,
+          reason: 'invalid fields block accepting the draft',
+        );
       }
       await inspector(find.byKey(const ValueKey('cancel-asset-pose')));
       expect(scene().assets.single.rotationDeg, 0);
@@ -486,6 +621,50 @@ void main() {
       expect(scene().assets.single.widthMm, 2000);
       expect(scene().assets.single.depthMm, 800);
       expect(scene().assets.single.heightMm, 600);
+
+      // Direct rotation also preserves a previously committed elevation/tilt,
+      // and Apply creates exactly one undoable edit after pointer release.
+      await contextMenu();
+      await tap(find.text('Rotate…'));
+      await tap(find.byKey(const ValueKey('view-mode-menu')));
+      await tap(find.text('2D plan'));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      turn = await turnHandle(degrees: 88);
+      await turn.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      expect(scene().assets.single.rotationDeg, 180);
+      expect(scene().assets.single.position, placed.position);
+      expect(scene().assets.single.elevationMm, 1500);
+      expect(scene().assets.single.rotationXDeg, 100);
+      expect(scene().assets.single.rotationYDeg, 0);
+      expect(scene().assets.single.widthMm, 2000);
+      expect(scene().assets.single.depthMm, 800);
+      expect(scene().assets.single.heightMm, 600);
+      core.refusePoseCommit = true;
+      await click(tester.getTopLeft(canvas()) + const Offset(40, 40));
+      expect(scene().assetRotationHandle, isNotNull);
+      expect(
+        scene().selected,
+        placed.id,
+        reason: 'a refused commit must not select the click-away target',
+      );
+      expect(find.textContaining('Asset action refused:'), findsWidgets);
+      core.refusePoseCommit = false;
+      final acceptTouch = await tester.startGesture(
+        tester.getTopLeft(canvas()) + const Offset(40, 40),
+        kind: PointerDeviceKind.touch,
+      );
+      await acceptTouch.up();
+      await tester.pumpAndSettle();
+      expect(scene().assetRotationHandle, isNull);
+      expect(scene().assets.single.rotationDeg, 180);
+      await tap(find.byTooltip('Undo'));
+      expect(scene().assets.single.rotationDeg, 90);
+      await tap(find.byTooltip('Redo'));
+      expect(scene().assets.single.rotationDeg, 180);
+      await tap(find.byTooltip('Undo'));
+      expect(scene().assets.single.rotationDeg, 90);
 
       final before = scene().assets.single.position;
       await tester.dragFrom(
@@ -590,7 +769,19 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.runAsync(() async {
         await tester.pumpWidget(
-          MaterialApp(home: PlanPage(bridgeLoader: () => FfiCore(bridge))),
+          MaterialApp(
+            home: Column(
+              children: [
+                const SizedBox(
+                  height: 56,
+                  child: Material(
+                    child: TextField(key: ValueKey('shortcut-typing-probe')),
+                  ),
+                ),
+                Expanded(child: PlanPage(bridgeLoader: () => FfiCore(bridge))),
+              ],
+            ),
+          ),
         );
         await Future<void>.delayed(const Duration(milliseconds: 150));
       });
@@ -730,6 +921,100 @@ void main() {
       expect({
         for (final asset in scene().assets) asset.id: asset.position,
       }, before);
+
+      final first = scene().assets.first;
+      final second = scene().assets.last;
+      await click(
+        tester.getTopLeft(canvas()) + scene().toScreen(first.position),
+      );
+      expect(scene().selected, first.id);
+      await tap(find.byKey(const ValueKey('shortcut-typing-probe')));
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await tester.pumpAndSettle();
+      expect(
+        scene().assetRotationHandle,
+        isNull,
+        reason: 'R is not an editor shortcut while typing',
+      );
+
+      await click(
+        tester.getTopLeft(canvas()) + scene().toScreen(first.position),
+      );
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(
+        scene().assetRotationHandle,
+        isNull,
+        reason: 'Ctrl+R must not be intercepted',
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await io();
+      expect(scene().assetRotationHandle, isNotNull);
+
+      // Click another asset BEFORE a pending preview frame: commit the latest
+      // draft once, then let the same click select its normal target.
+      tester
+          .widget<AssetPoseControls>(find.byType(AssetPoseControls))
+          .onPreview([first.position.dx, first.position.dy, 0, 0, 0, 45]);
+      await click(
+        tester.getTopLeft(canvas()) + scene().toScreen(second.position),
+      );
+      expect(scene().assetRotationHandle, isNull);
+      expect(scene().selected, second.id);
+      expect(scene().assets.first.rotationDeg, 45);
+      await tap(find.byTooltip('Undo'));
+      expect(scene().assets.first.rotationDeg, 0);
+      expect(scene().assets.first.position, first.position);
+      expect(scene().assets.last.position, second.position);
+      await tap(find.byTooltip('Redo'));
+      expect(scene().assets.first.rotationDeg, 45);
+
+      // An untouched session must not add a history entry on click-away.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await io();
+      await click(tester.getTopLeft(canvas()) + const Offset(40, 40));
+      await tap(find.byTooltip('Undo'));
+      expect(scene().assets.first.rotationDeg, 0);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await tester.pumpAndSettle();
+      expect(
+        scene().assetRotationHandle,
+        isNull,
+        reason: 'R without a selected asset does nothing',
+      );
+
+      // Undo during rotation undoes that draft, not the older placement edit.
+      await click(
+        tester.getTopLeft(canvas()) + scene().toScreen(first.position),
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await io();
+      tester
+          .widget<AssetPoseControls>(find.byType(AssetPoseControls))
+          .onPreview([first.position.dx, first.position.dy, 0, 0, 0, 30]);
+      await tester.pumpAndSettle();
+      await tap(find.byTooltip('Undo'));
+      expect(scene().assetRotationHandle, isNull);
+      expect(scene().assets, hasLength(2));
+      expect(scene().assets.first.rotationDeg, 0);
+      await tap(find.byTooltip('Redo'));
+      expect(scene().assets.first.rotationDeg, 30);
+
+      // Save accepts before encoding, so a draft is not silently thrown away.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await io();
+      tester
+          .widget<AssetPoseControls>(find.byType(AssetPoseControls))
+          .onPreview([first.position.dx, first.position.dy, 0, 0, 0, 60]);
+      await tap(find.text('Save'));
+      expect(output.existsSync(), isTrue);
+      expect(scene().assetRotationHandle, isNull);
+      expect(scene().assets.first.rotationDeg, 60);
+      await tap(find.byTooltip('Undo'));
+      expect(scene().assets.first.rotationDeg, 30);
     },
   );
 
@@ -882,9 +1167,15 @@ void main() {
 class _CountingCore extends FfiCore {
   _CountingCore(super.bridge);
   int previews = 0, stateReads = 0, listReads = 0;
+  bool refusePoseCommit = false;
   @override
   CoreReply assets(int handle, String request) {
     final message = jsonDecode(request) as Map;
+    if (refusePoseCommit &&
+        message['kind'] == 'pose' &&
+        message['preview'] != true) {
+      return const CoreReply.failed(5);
+    }
     if (message['kind'] == 'pose' && message['preview'] == true) previews++;
     if (message['kind'] == 'list') listReads++;
     return super.assets(handle, request);

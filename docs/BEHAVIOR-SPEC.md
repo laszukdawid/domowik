@@ -4403,6 +4403,32 @@ its yaw-aligned rectangle; it is not the exact projected model silhouette.
 Live preview is session-local, never saved or logged. Apply commits one batch;
 Cancel removes the preview. No external application source was consulted.
 
+**Direct 2D rotation (owner direction, 2026-10-19).** While placement/rotation
+mode is active, a round handle outside the selected object's footprint can be
+dragged in the 2D plan. It changes only Z rotation about the object's center;
+plan position, elevation, X/Y tilt and dimensions remain unchanged. The handle
+and inspector angle share the same live preview, including across the angle
+wrap boundary. Holding either Shift key snaps the absolute Z angle to the
+nearest multiple of 15° (half steps away from zero), not increments relative to
+the angle at grab. Pressing or releasing Shift during a drag updates the preview
+even without pointer movement. Releasing Shift restores the unsnapped angle;
+snapped output never feeds back into accumulated pointer motion. A click without
+a drag does not change the angle. R starts rotation for the primary selected
+asset in the current view, without changing plan geometry. It does not intercept
+typing, Control/Meta/Alt combinations, modal dialogs or key repeats, and does not
+reset an already active draft. Releasing the handle retains the draft. Clicking
+another object or empty plan space accepts the latest draft as one undoable
+batch, then performs the same click's normal selection action. Switching tools,
+changing levels and file actions also accept a valid draft first. Panning,
+zooming and inspector tabs/fields remain available without ending the session.
+Apply explicitly accepts; Cancel/Escape explicitly discards an unaccepted draft.
+Undo during rotation first accepts the draft, then undoes that batch rather than
+an older edit. Unchanged drafts add no history. Invalid fields or core refusal
+keep the session active and prevent the follow-up action; queued previews cannot
+overwrite an accepted pose. Pointer cancellation, focus loss or a second touch
+restores the pre-drag draft. Handle size and hit tolerance use logical pixels,
+independent of plan zoom. This is an original product choice, with no format change.
+
 **Live-preview responsiveness (issue 0112, 2026-10-15).** Continuous controls
 coalesce input to the latest valid pose once per frame, rather than building an
 input queue. An in-flight preview may display while a newer pose is pending;
@@ -4416,7 +4442,8 @@ Cut, plus Paste while the clipboard is non-empty; wall-chain
 right-click keeps its existing finish behavior. Rotate selects the object and
 opens the three-axis placement controls above, superseding issue 0108's
 single-angle dialog. Apply is one undoable edit; Cancel and unchanged values
-emit no edit. Resize selects the object and
+emit no edit. A valid draft is also accepted when clicking away in the plan;
+Undo restores its previous pose. Resize selects the object and
 opens width/depth/height in millimetres. Proportions are locked by default:
 editing any dimension scales the other two by the same factor. Unlocking permits
 independent changes. Apply commits all three dimensions in one undoable batch;

@@ -11,8 +11,8 @@ later phase does not imply that earlier exit criteria are complete.
   scripts and AI agents.
 - **2D editor:** the Flutter editor runs on Linux and macOS desktop and in a
   browser. It supports walls, openings, levels, room labels, selection,
-  furniture, bulk wall height/thickness editing, undo/redo and plan file
-  workflows.
+  furniture with R-activated 2D rotation, Shift-held 15° snapping and click-away
+  acceptance, bulk wall height/thickness editing, undo/redo and plan file workflows.
   Plans open on the first listed floor by default and remember the device's last
   active-floor choice, including for older files without document identity.
 - **3D view:** experimental views derive scene data from the same plan. Linux

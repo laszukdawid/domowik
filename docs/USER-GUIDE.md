@@ -85,6 +85,7 @@ The editor's in-app hints detect the platform. Use these primary shortcuts:
 | Copy selected furniture | Ctrl+C | Command+C |
 | Cut selected furniture | Ctrl+X | Command+X |
 | Paste furniture at the pointer | Ctrl+V | Command+V |
+| Rotate selected furniture | R | R |
 | Undo | Ctrl+Z | Command+Z |
 | Redo | Ctrl+Shift+Z | Command+Shift+Z |
 | Cancel a gesture | Escape | Escape |
@@ -265,18 +266,28 @@ with embedded models also shares their bytes.
 Right-click an imported object and choose **Rotate…**, or select it and use
 **Position and rotate in 3D** in the inspector. This opens the live placement
 controls and the **2D + 3D** split view. You can still orbit the 3D camera.
+Alternatively, select an object and press **R** to start rotation in the current
+view. The shortcut does not activate while typing in a text field.
 
 - Set **X**, **Y** and **Elevation** in millimetres. Elevation is an offset above
   the active level, measured at the object's unrotated bottom.
 - Rotate around **X**, **Y** or **Z** using angles, sliders or the fine-step
   buttons. **X +90°** / **Y +90°** can stand a flat TV upright; adjust that
   angle to about 100° for a further 10° tilt, depending on the model's axis.
+- In the **2D plan**, drag the round handle outside the selected object to turn
+  it around **Z**. The angle field and both views update together. Position,
+  elevation and tilt stay unchanged. This also works in the **2D** view.
+- Hold **Shift** while dragging to snap to **15° steps**, including 45°, 90°
+  and 180°. Release Shift for free rotation; you can switch mid-drag.
 - Rotation is about the object's center; its local dimensions stay unchanged.
   Rotations apply X, then Y, then Z (Z turns the object on the floor plan).
 - Both views update during adjustment. The 2D view shows a conservative
   projected footprint for tilted objects, not an exact model silhouette.
-- **Apply** commits the entire placement as one undoable change. **Cancel**
-  discards it; preview changes are never saved. Invalid input disables Apply.
+- Click another object or empty plan space to accept the rotation and select
+  normally. **Apply** also accepts it. The entire placement is one undoable
+  change: use **Undo** to restore the previous pose. Switching tools or saving
+  also accepts the draft. Invalid values must be corrected before accepting.
+- **Cancel** or **Escape** can still discard an unaccepted preview.
 
 Older editor versions preserve the extra pose metadata but display the object
 without its tilt and elevation. Use the updated editor to view its full pose.

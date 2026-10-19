@@ -21,6 +21,7 @@ import 'editor_fonts.dart';
 import 'plan_viewport.dart';
 import 'measurement_units.dart';
 import 'asset_library.dart';
+import 'asset_rotation.dart';
 
 class Wall {
   const Wall(this.id, this.start, this.end, this.thicknessMm, this.heightMm);
@@ -326,6 +327,7 @@ class PlanPainter extends CustomPainter {
     this.snapGuide,
     this.assets = const [],
     this.assetPreview,
+    this.rotatingAssetId,
     this.groupPreview,
     this.modelPreviews = const {},
   });
@@ -334,6 +336,14 @@ class PlanPainter extends CustomPainter {
   final Derived derived;
   final List<AssetFootprint> assets;
   final (String, Offset)? assetPreview;
+  final String? rotatingAssetId;
+
+  /// Same logical-pixel handle position used by canvas hit testing.
+  Offset? get assetRotationHandle {
+    final asset = assets.where((a) => a.id == rotatingAssetId).firstOrNull;
+    return asset == null ? null : assetRotationHandlePosition(asset, view);
+  }
+
   final (Set<String>, Offset)? groupPreview;
   final Map<String, ui.Image> modelPreviews;
 
@@ -510,6 +520,23 @@ class PlanPainter extends CustomPainter {
     _paintSelectionAndDraft(canvas);
 
     if (showGrid) _paintGrid(canvas, size, rulers: true);
+    final handle = assetRotationHandle;
+    if (handle != null) {
+      final asset = assets.firstWhere((a) => a.id == rotatingAssetId);
+      final ink = Paint()
+        ..color = const Color(0xFF167D8D)
+        ..strokeWidth = 2;
+      canvas.drawLine(toScreen(asset.position), handle, ink);
+      canvas.drawCircle(handle, 10, Paint()..color = Colors.white);
+      canvas.drawCircle(handle, 10, ink..style = PaintingStyle.stroke);
+      canvas.drawArc(
+        Rect.fromCircle(center: handle, radius: 5),
+        -math.pi / 2,
+        math.pi * 1.5,
+        false,
+        ink,
+      );
+    }
   }
 
   void _paintAssets(
@@ -1018,6 +1045,7 @@ class PlanPainter extends CustomPainter {
       old.units != units ||
       old.assets != assets ||
       old.assetPreview != assetPreview ||
+      old.rotatingAssetId != rotatingAssetId ||
       old.groupPreview != groupPreview ||
       old.modelPreviews != modelPreviews ||
       old.walls != walls ||
