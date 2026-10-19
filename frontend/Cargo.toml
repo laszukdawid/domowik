@@ -1,0 +1,19 @@
+# Platform/FFI workspace for the actively developed Domowik frontend.
+[workspace]
+resolver = "2"
+members = ["native", "renderer", "web-renderer"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# FFI transports panics rather than aborting the host application.
+panic = "unwind"
+
+# The browser modules (issue 0088): release code without the WebAssembly
+# function-name section, which is 600 KB of the core module and serves only
+# browser stack traces. A separate profile, so native release builds keep
+# their symbols and the two never invalidate each other's artefacts.
+[profile.web]
+inherits = "release"
+strip = true

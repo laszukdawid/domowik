@@ -1,0 +1,8 @@
+Copyright The Domowik Contributors
+
+Licensed under the Apache License, Version 2.0. This spike is part of the
+Domowik repository and carries the repository's licence; the full text is in
+LICENSE at the repository root.
+
+This file exists because a CocoaPods podspec requires a licence file to exist
+at the path it names. It is a POINTER, not a second licence grant.

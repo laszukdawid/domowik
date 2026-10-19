@@ -1,0 +1,134 @@
+{
+  "toolsSchema": 1,
+  "description": "Pinned development-time and CI tools that are not distributed with Domowik artifacts, per docs/THIRD-PARTY-POLICY.md. Status values: dev-only (not distributed) or distributed. Revisit triggers apply to every row.",
+  "tools": [
+    {
+      "name": "github-actions/checkout",
+      "version": "v5.0.0",
+      "commitSha": "08c6903cd8c0fde910a37f88322edcfb5dd907a8",
+      "sourceUrl": "https://github.com/actions/checkout",
+      "license": "MIT",
+      "status": "dev-only",
+      "usedIn": ".github/workflows/ci.yml, .github/workflows/release.yml",
+      "added": "2026-08-23"
+    },
+    {
+      "name": "github-actions/upload-artifact",
+      "version": "v7.0.2",
+      "commitSha": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "sourceUrl": "https://github.com/actions/upload-artifact",
+      "license": "MIT",
+      "status": "dev-only",
+      "usedIn": ".github/workflows/release.yml",
+      "added": "2026-10-10"
+    },
+    {
+      "name": "python3",
+      "version": "3.14.7-1 (CPython; stdlib zlib runtime 1.3.2)",
+      "sourceUrl": "https://github.com/python/cpython.git",
+      "license": "PSF-2.0",
+      "status": "dev-only",
+      "usedIn": "ASSET-STRATEGY §10.9 reference thumbnail encoding: the pinned PNG vector uses the unmodified Python standard library zlib module",
+      "provenance": "Arch Linux system package (python 3.14.7-1), invoked read-only as a dev-only subprocess by the size-corpus measurement harness; never distributed with Domowik. The stdlib zlib module is used unmodified; its DEFLATE output is hard-bound to the pinned ASSET-STRATEGY §10.9 reference-PNG vector (1809 bytes, SHA-256 recorded there), which pins the effective zlib runtime to the 1.3.x line — ZLIB_RUNTIME_VERSION 1.3.2 observed on this host, matching the zlib 1.3.2 artifact already recorded verbatim in ASSET-STRATEGY §10.10. Environments whose output differs from the pinned vector fail the §10.9 check; no silent acceptance.",
+      "added": "2026-08-25"
+    },
+    {
+      "name": "docker-desktop",
+      "version": "4.75.0 (227598); engine 29.5.2, linux/arm64, kernel 6.12.76-linuxkit",
+      "sourceUrl": "https://www.docker.com/products/docker-desktop/",
+      "license": "Docker Subscription Service Agreement (proprietary); eligibility for this use UNASSESSED",
+      "status": "dev-only",
+      "usedIn": "frontend/docker/run-linux-abi.sh: supplies the Linux kernel, glibc and ELF loader that issue 0024's Linux slice executes on. Nothing from Docker is linked into, bundled with, or distributed by Domowik.",
+      "provenance": "Owner-installed local development tool, already present and running on this machine; not procured, not purchased, and not installed by this work. Used as authorised local platform setup. NOTHING FROM DOCKER IS ADOPTED, LINKED OR DISTRIBUTED by Domowik: the dependency is on the container runtime only, and the images, toolchains and scripts inside it are separately licensed and listed as their own rows. Licence eligibility for this use is recorded as UNASSESSED — this row is not a compliance clearance and must not be read as one. No concrete unmet licence or purchase requirement has been encountered. The scripts invoke the runtime through one command name and are written to stay portable, but NO alternative runtime (Podman, Lima, Colima) has been executed here and no parity with them is claimed.",
+      "added": "2026-09-12"
+    },
+    {
+      "name": "docker-image/rust:1.98.0-slim-bookworm",
+      "version": "rust 1.98.0 on debian bookworm-slim; digest sha256:3ddf079542eb8513a989f55bc68de3f3dff469bf8916400d955ce3a80a9ff8f0 (linux/arm64)",
+      "sourceUrl": "https://hub.docker.com/_/rust",
+      "license": "Apache-2.0 OR MIT (Rust toolchain); Debian base packages under their own licences",
+      "status": "dev-only",
+      "usedIn": "frontend/docker/Dockerfile.linux-abi: the build host for the Linux .so, the Rust test suite, and the sanitised C harness.",
+      "provenance": "Official Docker Hub library image, pinned BY DIGEST rather than by tag so the base cannot drift under the evidence it produces. The tag was chosen because it carries rustc 1.98.0 — exactly what rust-toolchain.toml pins — which the Dockerfile then asserts with a `test` on the full version string rather than trusting the tag. rustfmt and clippy are added with `rustup component add` because the official image ships the minimal profile. Nothing from the image is distributed.",
+      "added": "2026-09-12"
+    },
+    {
+      "name": "debian-bookworm/clang-llvm-14",
+      "version": "clang 1:14.0-55.7~deb12u1, llvm 1:14.0-55.7~deb12u1, libclang-rt-14-dev 1:14.0.6-12",
+      "sourceUrl": "https://packages.debian.org/bookworm/clang",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "status": "dev-only",
+      "usedIn": "frontend/docker/Dockerfile.linux-abi: compiles charness/main.c with -fsanitize=address,undefined and supplies llvm-symbolizer.",
+      "provenance": "Debian bookworm archive packages, version-pinned to the candidates observed on the pinned base image. clang rather than gcc because scripts/verify.sh invokes clang by name on macOS, and a Linux run using a different compiler would not be testing the same thing. libclang-rt-14-dev is listed separately and is NOT optional: Debian ships the sanitizer runtimes apart from the compiler, so without it the harness compiles and then fails at link with a missing libclang_rt.asan-aarch64.a — observed here before it was added.",
+      "added": "2026-09-12"
+    },
+    {
+      "name": "dart-sdk-linux-arm64",
+      "version": "3.11.4 stable; SHA-256 c35ba6f0de1f5ebbf23506612bffc347c7ba94c3a4c75110cab1157892166d3c",
+      "sourceUrl": "https://storage.googleapis.com/dart-archive/channels/stable/release/3.11.4/sdk/dartsdk-linux-arm64-release.zip",
+      "license": "BSD-3-Clause",
+      "status": "dev-only",
+      "usedIn": "frontend/docker/Dockerfile.linux-abi: runs dart_harness/bin/harness.dart against the Linux .so, so dart:ffi symbol resolution is executed on Linux rather than inferred from the macOS run.",
+      "provenance": "Official Dart archive, pinned by version AND by the publisher's own SHA-256, which the Dockerfile verifies with `sha256sum -c` BEFORE unpacking. Version 3.11.4 is not a free choice: it is the Dart that Flutter 3.41.6 carries, so the harness runs on the same VM the application does. No Dart SDK component is distributed with Domowik.",
+      "added": "2026-09-12"
+    },
+    {
+      "name": "flutter-sdk-linux-x64 (issue 0024 Rust spike)",
+      "version": "3.41.6 stable; SHA-256 503b3e6b7d352fca5d21b6474eca95ad544d8fc3b053782eab63a360c7fc7569; bundled Dart 3.11.4",
+      "sourceUrl": "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.41.6-stable.tar.xz",
+      "license": "BSD-3-Clause (framework and Dart SDK); prebuilt engine artifacts carry their own aggregated terms and are not redistributed",
+      "status": "dev-only",
+      "usedIn": "frontend/docker/Dockerfile.linux-app: builds and runs the Flutter LINUX application so bundle packaging is executed on Linux, not assumed from the macOS bundle.",
+      "provenance": "Official Flutter release archive, pinned by version and by the SHA-256 published in releases_linux.json, verified before unpacking. 3.41.6 matches the macOS host SDK exactly so the two platform runs are the same framework. NOTE FOR THE RECORD, and it constrains the evidence: Flutter publishes NO stable Linux arm64 archive — releases_linux.json lists dart_sdk_arch x64 only — so this slice runs as linux/amd64 under emulation on an Apple Silicon host. Functional and packaging results are valid; timings from it are not and are not quoted as measurements.",
+      "added": "2026-09-12"
+    },
+    {
+      "name": "domowik-release-sbom",
+      "version": "0.1.0",
+      "sourceUrl": "https://domowik.dev/domowik",
+      "license": "Apache-2.0",
+      "status": "dev-only",
+      "usedIn": "scripts/release-sbom.py with scripts/releaselib.py; deterministic CycloneDX 1.6 SBOM generation for the source tree and for each artifact declared in release/rust-manifest.json",
+      "provenance": "First-party, project-owned, Apache-2.0. Python 3 standard library ONLY: no SBOM or licence-scanning package is linked or vendored, so nothing new enters the third-party surface to build a document about it. The version constant GENERATOR_VERSION lives in scripts/release-sbom.py and is mirrored here; any change that can alter emitted bytes must move both together, which is the pinning rule used for deterministic output. If a third-party SBOM or licence-scanning tool is ever adopted it must be recorded here and reviewed under docs/THIRD-PARTY-POLICY.md BEFORE use.",
+      "added": "2026-09-12"
+    },
+    {
+      "name": "domowik-release-validate",
+      "version": "0.1.0",
+      "sourceUrl": "https://domowik.dev/domowik",
+      "license": "Apache-2.0",
+      "status": "dev-only",
+      "usedIn": "scripts/release-validate.py; fail-closed release validation, exercised against deliberately broken trees by scripts/ci/release-inventory-test.sh",
+      "provenance": "First-party, project-owned, Apache-2.0, Python 3 standard library only. It shares scripts/releaselib.py with the generator deliberately: a shared core keeps their answers about the dependency graph aligned. It imports the reviewed licence allow-list from scripts/rust-deps-inventory.py rather than carrying a second copy, because the copy that drifts is always the one nobody diffs. VALIDATOR_VERSION in the script is mirrored here under the same rule as the generator.",
+      "added": "2026-09-12"
+    },
+    {
+      "name": "wasm-bindgen-cli",
+      "version": "0.2.127",
+      "sourceUrl": "https://github.com/wasm-bindgen/wasm-bindgen",
+      "license": "MIT OR Apache-2.0",
+      "status": "dev-only",
+      "usedIn": "frontend/scripts/wasm-bindgen.sh, frontend/scripts/build-web-modules.sh: generates the JavaScript glue for the browser 3D renderer module (issue 0088)",
+      "provenance": "Installed on demand with `cargo install wasm-bindgen-cli --version =0.2.127 --locked --root frontend/.tools/wasm-bindgen-0.2.127` (ignored). Must equal the wasm-bindgen crate version, which is pinned to the 0.2.127 that wgpu 30.0.1 resolves. The tool is not distributed; the glue it emits (domowik_renderer.js) is, as wasm-bindgen output under the crate's MIT/Apache-2.0 terms, and is listed with the domowik-gui-web-renderer artifact.",
+      "added": "2026-10-12"
+    },
+    {
+      "name": "chrome-for-testing",
+      "version": "155.0.8059.39",
+      "sourceUrl": "https://googlechromelabs.github.io/chrome-for-testing/",
+      "license": "Google Chrome Terms of Service (proprietary; built from Chromium)",
+      "status": "dev-only",
+      "usedIn": "frontend/scripts/chrome-for-testing.sh, frontend/scripts/test-web.sh, frontend/scripts/web-probe.sh: headless browser for the browser-backed editor tests and the release-build probe (issue 0088)",
+      "provenance": "Downloaded on demand from storage.googleapis.com/chrome-for-testing-public into frontend/.tools (ignored) and checked against SHA-256 values pinned in frontend/scripts/chrome-for-testing.sh (mac-arm64, mac-x64, linux64). Used instead of an installed Chrome because a managed desktop Chrome can force a sign-in profile picker on start, which hangs headless test runs. Never distributed, never linked; the browser editor runs in whatever browser the user chooses.",
+      "added": "2026-10-12"
+    }
+  ],
+  "revisitTriggers": [
+    "any pinned action version or commit SHA change",
+    "any action transitioning from dev-only to distributed use (requires full third-party review)",
+    "GitHub Actions runner or Node runtime changes affecting action behavior"
+  ],
+  "distributedTools": [],
+  "packagingTools": [],
+  "declarationNote": "Both lists are permanently validated as EMPTY: distributing any CI or packaging tool is an unsupported future state in this schema. Validation rejects every nonempty list outright — reviewed registry admission cannot enable it; doing so requires an explicit schema change plus full third-party review."
+}

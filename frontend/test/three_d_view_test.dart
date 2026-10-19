@@ -1,0 +1,606 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:ffi' hide Size;
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
+import 'package:domowik_editor/core/ffi_core.dart';
+import 'package:domowik_editor/core/domowik_core.dart' show DomowikCore;
+import 'package:domowik_editor/three_d_view.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  testWidgets('embedded texture bytes cross the Linux presenter channel once', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      ThreeDViewState.channel,
+      (call) async {
+        calls.add(call);
+        if (call.method == 'create') return {'textureId': 74, 'session': 6};
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ThreeDView(
+            core: const _TextureCore(),
+            handle: 7,
+            revision: 1,
+            levelIds: const ['level'],
+            ghostedIds: const [],
+            floorElevationMm: 0,
+            active: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final mesh = calls.singleWhere((c) => c.method == 'mesh').arguments as Map;
+    final texture = mesh['texture'] as Map;
+    expect(texture['rgba'], isA<Uint8List>());
+    expect(texture['rgba'], [255, 0, 0, 255]);
+    expect(texture['coordinates'], isA<Float32List>());
+    expect(texture['width'], 1);
+    await tester.drag(find.byType(Texture), const Offset(50, 30));
+    await tester.pumpAndSettle();
+    expect(calls.where((c) => c.method == 'mesh'), hasLength(1));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+  for (final failingMethod in ['create', 'loadScene']) {
+    testWidgets('$failingMethod errors are selectable and fully copyable', (
+      tester,
+    ) async {
+      final details = List.filled(
+        30,
+        'No suitable WebGPU graphics adapter.',
+      ).join('\n');
+      final key = GlobalKey<ThreeDViewState>();
+      String? copied;
+      var clipboardFails = false;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (call) async {
+          if (call.method == failingMethod) {
+            throw PlatformException(code: 'no-webgpu', message: details);
+          }
+          if (call.method == 'create') {
+            return {'textureId': 74, 'session': 6, 'loadScene': true};
+          }
+          return null;
+        },
+      );
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            if (clipboardFails)
+              throw PlatformException(code: 'clipboard-denied');
+            copied = (call.arguments as Map)['text'] as String;
+          }
+          return null;
+        },
+      );
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        );
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        );
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ThreeDView(
+              key: key,
+              core: const _UnusedCore(),
+              handle: 7,
+              revision: 1,
+              levelIds: const ['level'],
+              ghostedIds: const [],
+              floorElevationMm: 0,
+              active: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final error = key.currentState!.diagnosticError!;
+      expect(error, contains(details));
+      final selection = find.byWidgetPredicate(
+        (widget) => widget is SelectableText && widget.data == error,
+      );
+      expect(selection, findsOneWidget);
+      final camera = key.currentState!.camera;
+      final eye = camera.eye;
+      final start = tester.getTopLeft(selection) + const Offset(8, 8);
+      final drag = await tester.startGesture(
+        start,
+        kind: PointerDeviceKind.mouse,
+      );
+      await drag.moveBy(const Offset(90, 16));
+      await drag.up();
+      await tester.pumpAndSettle();
+      expect(
+        camera.eye,
+        eye,
+        reason: 'selecting text must not navigate the camera',
+      );
+      final editable = tester.widget<EditableText>(
+        find.descendant(of: selection, matching: find.byType(EditableText)),
+      );
+      expect(
+        editable.focusNode.hasFocus,
+        isTrue,
+        reason: 'camera focus must not steal text selection',
+      );
+      expect(editable.controller.selection.isCollapsed, isFalse);
+
+      // The complete message and copy action stay reachable even in a small pane.
+      await tester.binding.setSurfaceSize(const Size(320, 240));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpAndSettle();
+      final copy = find.text('Copy 3D error');
+      await tester.ensureVisible(copy);
+      await tester.pumpAndSettle();
+      await tester.tap(copy);
+      await tester.pumpAndSettle();
+      expect(
+        copied,
+        error,
+        reason: 'copy includes the full, untruncated diagnostic',
+      );
+      expect(tester.takeException(), isNull);
+
+      clipboardFails = true;
+      await tester.tap(copy);
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Could not copy the 3D error.'),
+        findsOneWidget,
+      );
+      expect(key.currentState!.diagnosticError, error);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
+    'navigation uploads only cameras; revisions rebuild the same plan scene',
+    (tester) async {
+      final suffix = Platform.isMacOS ? 'dylib' : 'so';
+      final image = File(
+        'target/release/libdomowik_bridge.$suffix',
+      ).absolute.path;
+      final bridge = Bridge(image);
+      final output = alloc<Uint64>(sizeOf<Uint64>());
+      expect(bridge.planCreateDefault(output), ok);
+      final handle = output.value;
+      release(output);
+      addTearDown(() => bridge.planClose(handle));
+      final snapshot = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
+      expect(bridge.planSnapshot(handle, snapshot), ok);
+      final document = jsonDecode(bridge.takeString(snapshot)) as Map;
+      release(snapshot);
+      final level = (document['levels'] as List).single['id'] as String;
+      void wall() {
+        final text = jsonEncode({
+          'kind': 'addWall',
+          'levelId': level,
+          'start': [0, 0],
+          'end': [4000, 0],
+          'thicknessMm': 200,
+          'heightMm': 2500,
+        });
+        final ptr = toNative(text);
+        final out = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
+        expect(bridge.planEdit(handle, ptr, utf8.encode(text).length, out), ok);
+        bridge.takeString(out);
+        release(ptr);
+        release(out);
+      }
+
+      wall();
+      final calls = <String>[];
+      final heights = <double>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (call) async {
+          calls.add(call.method);
+          if (call.method == 'scene') {
+            final args = call.arguments as Map;
+            final nodes = args['nodes'] as List;
+            if (nodes.isNotEmpty)
+              heights.add((nodes.first['matrix'] as List)[5] as double);
+          }
+          if (call.method == 'create') return {'textureId': 71, 'session': 1};
+          if (call.method == 'stats') return {'frames': 1};
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        ),
+      );
+      final key = GlobalKey<ThreeDViewState>();
+      Future<void> build(int revision) async {
+        await tester.runAsync(() async {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: ThreeDView(
+                  key: key,
+                  core: FfiCore(bridge),
+                  handle: handle,
+                  revision: revision,
+                  levelIds: [level],
+                  ghostedIds: const [],
+                  floorElevationMm: 0,
+                  active: true,
+                ),
+              ),
+            ),
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await tester.pumpAndSettle();
+      }
+
+      await build(1);
+      expect(find.byType(Texture), findsOneWidget);
+      expect(calls.where((c) => c == 'scene'), hasLength(1));
+      final meshes = calls.where((c) => c == 'mesh').length;
+      final reads = key.currentState!.sceneRequests;
+      await tester.drag(find.byType(Texture), const Offset(80, 35));
+      await tester.pumpAndSettle();
+      expect(calls.where((c) => c == 'camera').length, greaterThan(1));
+      expect(calls.where((c) => c == 'scene'), hasLength(1));
+      expect(calls.where((c) => c == 'mesh'), hasLength(meshes));
+      expect(key.currentState!.sceneRequests, reads);
+      await tester.tap(find.byKey(const ValueKey('3d-walk')));
+      await tester.pumpAndSettle();
+      expect(key.currentState!.camera.eye[1], 1.65);
+      final eye = key.currentState!.camera.eye;
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyW);
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyW);
+      await tester.pumpAndSettle();
+      expect(key.currentState!.camera.eye, isNot(eye));
+      expect(calls.where((c) => c == 'scene'), hasLength(1));
+      final current = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
+      expect(bridge.planSnapshot(handle, current), ok);
+      final wallId =
+          (jsonDecode(bridge.takeString(current)) as Map)['walls'][0]['id'];
+      release(current);
+      final text = jsonEncode({
+        'kind': 'setWall',
+        'wallId': wallId,
+        'heightMm': 3000,
+      });
+      final ptr = toNative(text);
+      final changed = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
+      expect(
+        bridge.planEdit(handle, ptr, utf8.encode(text).length, changed),
+        ok,
+      );
+      bridge.takeString(changed);
+      release(ptr);
+      release(changed);
+      await build(2);
+      expect(heights, [
+        2.5,
+        3.0,
+      ], reason: 'the rendered scene follows the authoritative edit');
+      expect(calls.where((c) => c == 'scene'), hasLength(2));
+      expect(find.textContaining('Could not build'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(calls.last, 'destroy');
+      expect(bridge.outstandingBuffers(), 0);
+    },
+  );
+
+  testWidgets(
+    'a Rust-loading presenter gets the plan handle, and a load finished while '
+    'hidden is repeated when shown',
+    (tester) async {
+      final loads = <Map>[];
+      var pending = Completer<Object?>();
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (call) async {
+          if (call.method == 'create') {
+            return {'textureId': 72, 'session': 9, 'loadScene': true};
+          }
+          if (call.method == 'loadScene') {
+            loads.add(call.arguments as Map);
+            return pending.future;
+          }
+          if (call.method == 'mesh' || call.method == 'scene') {
+            fail('a Rust-loading presenter must not receive pushed geometry');
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        ),
+      );
+      Future<void> build({required bool active}) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ThreeDView(
+              core: _UnusedCore(),
+              handle: 41,
+              revision: 1,
+              levelIds: const ['level'],
+              ghostedIds: const [],
+              floorElevationMm: 0,
+              active: active,
+            ),
+          ),
+        ),
+      );
+      final scene = {
+        'originMm': [0, 0],
+        'center': [0, 1, 0],
+        'radius': 5,
+        'diagnostics': <String>[],
+      };
+      await build(active: true);
+      await tester.pump();
+      expect(loads, hasLength(1));
+      expect(loads.single['plan'], 41);
+      expect(loads.single['generation'], 1);
+      await build(active: false);
+      pending.complete(scene);
+      await tester.pump();
+      expect(loads, hasLength(1), reason: 'nothing loads while hidden');
+      pending = Completer<Object?>()..complete(scene);
+      await build(active: true);
+      await tester.pump();
+      expect(loads, hasLength(2), reason: 'the discarded load is repeated');
+      expect(loads.last['generation'], 2);
+    },
+  );
+
+  testWidgets(
+    'continuous pose input presents in-flight results and coalesces the latest request',
+    (tester) async {
+      final key = GlobalKey<ThreeDViewState>();
+      final loads = <Map>[];
+      final pending = <Completer<Object?>>[];
+      var cameras = 0;
+      final scene = {
+        'originMm': [0, 0],
+        'center': [0, 1, 0],
+        'radius': 5,
+        'diagnostics': <String>[],
+        'sceneToken': 11,
+      };
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (call) async {
+          if (call.method == 'create')
+            return {'textureId': 74, 'session': 8, 'loadScene': true};
+          if (call.method == 'camera') cameras++;
+          if (call.method == 'loadScene') {
+            loads.add(call.arguments as Map);
+            if (loads.length == 1) return scene;
+            final result = Completer<Object?>();
+            pending.add(result);
+            return result.future;
+          }
+          return null;
+        },
+      );
+      addTearDown(() {
+        for (final result in pending) {
+          if (!result.isCompleted) result.complete(scene);
+        }
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        );
+      });
+      Future<void> build(int pose, {int revision = 1}) => tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ThreeDView(
+              key: key,
+              core: const _UnusedCore(),
+              handle: 41,
+              revision: revision,
+              poseRevision: pose,
+              levelIds: const ['level'],
+              ghostedIds: const [],
+              floorElevationMm: 0,
+              active: true,
+            ),
+          ),
+        ),
+      );
+      await build(0);
+      await tester.pumpAndSettle();
+      final initialCameras = cameras;
+      await build(1);
+      await tester.pump();
+      expect(loads, hasLength(2));
+      expect(loads.last['poseOnly'], true);
+      expect(loads.last['sceneToken'], 11);
+      for (var i = 2; i <= 20; i++) {
+        await build(i);
+      }
+      expect(loads, hasLength(2), reason: 'only one request may be in flight');
+      pending.first.complete(scene);
+      await tester.pump();
+      await tester.pump();
+      expect(
+        cameras,
+        greaterThan(initialCameras),
+        reason:
+            'continued input must not discard the visible intermediate result',
+      );
+      expect(
+        loads,
+        hasLength(3),
+        reason:
+            'one new request delivers the latest pose, not every intermediate angle',
+      );
+      final beforeDocumentChange = cameras;
+      await build(21, revision: 2);
+      pending[1].complete(scene);
+      await tester.pump();
+      await tester.pump();
+      expect(
+        cameras,
+        beforeDocumentChange,
+        reason: 'a document change still invalidates stale results',
+      );
+      expect(loads.last['poseOnly'], false);
+      pending.last.complete({...scene, 'sceneToken': 12});
+      await tester.pumpAndSettle();
+      expect(key.currentState!.loading, false);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a presenter failure shows at once and clears on recovery without hiding '
+    'other errors',
+    (tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (call) async {
+          if (call.method == 'create') {
+            return {'textureId': 73, 'session': 5, 'loadScene': true};
+          }
+          if (call.method == 'loadScene') {
+            return {
+              'originMm': [0, 0],
+              'center': [0, 1, 0],
+              'radius': 5,
+              'diagnostics': <String>[],
+            };
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        ),
+      );
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ThreeDView(
+              core: _UnusedCore(),
+              handle: 7,
+              revision: 1,
+              levelIds: ['level'],
+              ghostedIds: [],
+              floorElevationMm: 0,
+              active: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      Future<void> health(int session, String? error) async {
+        await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+          ThreeDViewState.channel.name,
+          const StandardMethodCodec().encodeMethodCall(
+            MethodCall('health', {'session': session, 'error': error}),
+          ),
+          (_) {},
+        );
+        await tester.pump();
+      }
+
+      await health(99, 'another session');
+      expect(find.textContaining('3D rendering failed'), findsNothing);
+      await health(5, 'GPU error: device lost');
+      expect(
+        find.text('3D rendering failed: GPU error: device lost'),
+        findsOneWidget,
+      );
+      await health(5, null);
+      expect(find.textContaining('3D rendering failed'), findsNothing);
+    },
+  );
+}
+
+/// For presenter tests whose scene requests never reach a core.
+class _UnusedCore implements DomowikCore {
+  const _UnusedCore();
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('this test has no core');
+}
+
+class _TextureCore extends _UnusedCore {
+  const _TextureCore();
+  @override
+  Future<Object?> assetsInBackground(
+    int handle,
+    Map<String, Object?> request,
+  ) async {
+    if (request['kind'] == 'mesh')
+      return {
+        'vertices': List<double>.filled(30, 0),
+        'texture': {
+          'width': 1,
+          'height': 1,
+          'layers': 1,
+          'rgba': [255, 0, 0, 255],
+          'coordinates': [
+            0.5,
+            0.5,
+            0,
+            1,
+            1,
+            0.5,
+            0.5,
+            0,
+            1,
+            1,
+            0.5,
+            0.5,
+            0,
+            1,
+            1,
+          ],
+        },
+      };
+    return {
+      'originMm': [0, 0],
+      'center': [0, 0, 0],
+      'radius': 1,
+      'meshes': <String, Object?>{},
+      'requiredModels': ['model'],
+      'nodes': <Object?>[],
+      'diagnostics': <String>[],
+    };
+  }
+}

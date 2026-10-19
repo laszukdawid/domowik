@@ -1,0 +1,53 @@
+# Private workspace material and internal administration are not public source.
+/private/
+/issues/
+/docs/evidence/
+/EXECUTIVE-DECISIONS.md
+/STATE-*.md
+/floor-layout.*
+/frontend/floor-layout.domo
+/lower-floor*.png
+/lower-floor*.svg
+/main-floor*.png
+/main-floor*.svg
+
+# Local credentials; example configuration may be reviewed and committed.
+.aws/
+.env
+.env.*
+!.env.example
+
+# Go
+*.test
+*.out
+
+# Dart/Flutter
+.dart_tool/
+.flutter-plugins*
+build/
+
+# Go build, coverage, and profiling output
+/domowik
+coverage.out
+*.prof
+
+# Native bridge output
+*.so
+*.dylib
+*.dll
+
+# editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Rust
+/target/
+
+# Python (scripts/releaselib.py is imported, not run, so it caches)
+__pycache__/
+*.pyc
+
+# Owner-imported model library, not reviewed bundled assets under crates/.
+/assets/

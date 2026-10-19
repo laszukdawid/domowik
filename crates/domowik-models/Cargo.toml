@@ -1,0 +1,26 @@
+[package]
+name = "domowik-models"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+domowik-format = { path = "../domowik-format" }
+domowik-geometry = { path = "../domowik-geometry" }
+serde.workspace = true
+serde_json.workspace = true
+zip.workspace = true
+tiny-skia.workspace = true
+draco-core = { version = "=2.2.1", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
+# Pure-Rust embedded PNG/JPEG/WebP decoding; MIT OR Apache-2.0. No native
+# codecs, network, rayon or unrelated image formats. See issue 0120 provenance.
+image = { version = "=0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[dev-dependencies]
+criterion.workspace = true
+draco-core = { version = "=2.2.1", default-features = false, features = ["encoder"] }
+
+[[bench]]
+name = "preview"
+harness = false

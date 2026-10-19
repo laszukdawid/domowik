@@ -1,0 +1,18 @@
+{
+ "id": "019534c7-0000-7000-8000-000000000005",
+ "type": "opening",
+ "kind": "door",
+ "hostWallId": "019534c7-0000-7000-8000-000000000002",
+ "u": 0.5,
+ "widthMm": 900,
+ "heightMm": 2100,
+ "sillMm": 0,
+ "depthMm": 120,
+ "side": "Left",
+ "hinge": "nearStart",
+ "opensToward": "Left",
+ "swingDeg": 90,
+ "styleRefs": [
+  "S0"
+ ]
+}

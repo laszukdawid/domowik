@@ -1,0 +1,21 @@
+[package]
+name = "domowik-container"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+domowik-document = { path = "../domowik-document" }
+domowik-format = { path = "../domowik-format" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+zip = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+domowik-format = { path = "../domowik-format" }
+tempfile = "3"

@@ -1,0 +1,31 @@
+# The browser's 3D presenter (issue 0088, ADR 0012): the shared renderer on
+# WebGPU, drawing into a page canvas, fed scene frames the WebAssembly core
+# derives. Built for wasm32-unknown-unknown and bound with wasm-bindgen; it
+# is a separate module from the core so the core stays free of JavaScript
+# bindings and GPU code.
+
+[package]
+name = "domowik-web-renderer"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.98.0"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "domowik_renderer"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+domowik-scene-wire = { path = "../../crates/domowik-scene-wire" }
+serde_json = "1.0"
+
+# The browser half only; the crate is empty elsewhere so the native workspace
+# build and test stages still compile it.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+domowik-renderer = { path = "../renderer" }
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
+# Exactly the versions wgpu already resolves; wasm-bindgen-cli must match.
+wasm-bindgen = "=0.2.127"
+wasm-bindgen-futures = "=0.4.77"
+web-sys = { version = "=0.3.104", features = ["HtmlCanvasElement"] }

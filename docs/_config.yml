@@ -1,0 +1,27 @@
+title: Domowik
+description: A local-first home layout editor. Plan in 2D, explore in 3D.
+url: https://laszukdawid.github.io
+baseurl: /domowik
+repository: laszukdawid/domowik
+source_branch: main
+markdown: kramdown
+kramdown:
+  input: GFM
+  hard_wrap: false
+plugins:
+  - jekyll-optional-front-matter
+  - jekyll-readme-index
+  - jekyll-relative-links
+readme_index:
+  remove_originals: true
+relative_links:
+  enabled: true
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor

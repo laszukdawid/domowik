@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{ site.description | escape }}">
+  {% assign heading = content | split: '</h1>' | first | split: '>' | last | strip_html | strip %}
+  <title>{{ page.title | default: heading | escape }} · Domowik</title>
+  <link rel="stylesheet" href="{{ '/site/style.css' | relative_url }}">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="{{ '/' | relative_url }}">⌂ <span>Domowik</span></a>
+    <span class="tagline">Make room for your ideas.</span>
+    <nav aria-label="Main navigation">
+      <a href="{{ '/GETTING-STARTED.html' | relative_url }}">Get started</a>
+      <a href="{{ '/USER-GUIDE.html' | relative_url }}">User guide</a>
+      <a href="{{ '/ARCHITECTURE.html' | relative_url }}">Architecture</a>
+      <a href="https://github.com/{{ site.repository }}">GitHub ↗</a>
+    </nav>
+  </header>
+  <div class="site-body">
+    <aside aria-label="Documentation navigation">
+      <p class="nav-label">Explore Domowik</p>
+      <a href="{{ '/' | relative_url }}">Documentation home</a>
+      <a href="{{ '/GETTING-STARTED.html' | relative_url }}">Build and run</a>
+      <a href="{{ '/USER-GUIDE.html' | relative_url }}">Edit your first plan</a>
+      <a href="https://github.com/{{ site.repository }}/blob/{{ site.source_branch }}/examples/welcome-home/README.md">Try Welcome Home ↗</a>
+      <a href="{{ '/COMPATIBILITY.html' | relative_url }}">Compatibility</a>
+      <a href="{{ '/AGENT-GUIDE.html' | relative_url }}">Draft with an agent</a>
+      <p class="nav-label">Inside the project</p>
+      <a href="{{ '/ROADMAP.html' | relative_url }}">Roadmap</a>
+      <a href="{{ '/ARCHITECTURE.html' | relative_url }}">Architecture</a>
+      <a href="{{ '/decisions/' | relative_url }}">Decisions</a>
+      <a href="{{ '/GLOSSARY.html' | relative_url }}">Glossary</a>
+      <a href="https://github.com/{{ site.repository }}/blob/{{ site.source_branch }}/CONTRIBUTING.md">Contribute ↗</a>
+    </aside>
+    <main id="main" tabindex="-1" data-source="{{ page.path | escape }}">
+      {{ content }}
+    </main>
+  </div>
+  <footer>
+    Experimental software, built in the open.
+    <a href="https://github.com/{{ site.repository }}/blob/{{ site.source_branch }}/docs/{{ page.path }}">View this page on GitHub</a>
+    · <a href="https://github.com/{{ site.repository }}/blob/{{ site.source_branch }}/LICENSE">Apache-2.0</a>
+  </footer>
+  <script src="{{ '/site/links.js' | relative_url }}" data-repository="{{ site.repository }}" data-branch="{{ site.source_branch }}" defer></script>
+</body>
+</html>

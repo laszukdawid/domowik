@@ -1,0 +1,35 @@
+{
+ "sha256:9ca758f319e76338ee864522157a8733f1ce25b9e101e637d69a8d240b832022": {
+  "digest": "sha256:9ca758f319e76338ee864522157a8733f1ce25b9e101e637d69a8d240b832022",
+  "byteLength": 63,
+  "mediaType": "image/png",
+  "purpose": "background-image",
+  "encoding": "identity",
+  "requirement": "required",
+  "provenance": {
+   "displayName": "Synthetic floor tile",
+   "sourceDescription": "authored for the issue 0028 corpus",
+   "author": "",
+   "acquiredAt": "2026-08-24T00:00:00Z"
+  }
+ },
+ "sha256:524f170c49ff7c181ac9e7c36c7186b476c326499c721d51275bb0d088104e2d": {
+  "digest": "sha256:524f170c49ff7c181ac9e7c36c7186b476c326499c721d51275bb0d088104e2d",
+  "byteLength": 62,
+  "mediaType": "application/x-domowik-synthetic",
+  "purpose": "furniture-model",
+  "encoding": "identity",
+  "requirement": "optional",
+  "provenance": {
+   "displayName": "Synthetic armchair proxy",
+   "sourceDescription": "authored for the issue 0028 corpus",
+   "author": "",
+   "acquiredAt": "2026-08-24T00:00:00Z"
+  },
+  "placeholderDimensions": {
+   "widthMm": 1000,
+   "heightMm": 1000,
+   "depthMm": 1000
+  }
+ }
+}

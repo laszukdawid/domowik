@@ -1,0 +1,38 @@
+{
+  "policy": "Symbolic provenance table for named parameters. Numeric values are defined by the referenced normative documents, not duplicated here. Fixtures reference parameters by name; ratified bounds and proposed retention policy remain distinct.",
+  "parameters": [
+    {
+      "name": "coordBoundMm",
+      "definedAt": "FORMAT-SPEC §3.1",
+      "meaning": "Maximum |x|,|y| for every authoritative plan coordinate",
+      "candidateValueSource": "NUMERICAL-MODEL.md §3 (ratified coordinate and dimension bounds)",
+      "ratifiedBy": "NUMERICAL-MODEL §3",
+      "status": "ratified"
+    },
+    {
+      "name": "dimensionCapMm",
+      "definedAt": "FORMAT-SPEC §3.1",
+      "meaning": "Inclusive upper cap for strictly-positive dimension fields and non-negative sillMm",
+      "candidateValueSource": "NUMERICAL-MODEL.md §3 (ratified dimension bound)",
+      "ratifiedBy": "NUMERICAL-MODEL §3",
+      "status": "ratified"
+    },
+    {
+      "name": "derivedCoordBoundMm",
+      "definedAt": "FORMAT-SPEC §3.1",
+      "meaning": "Upper bound for ideal derived vertices; breach is an implementation defect, never user-input rejection",
+      "candidateValueSource": "NUMERICAL-MODEL.md §3 (ratified derived-coordinate bound)",
+      "ratifiedBy": "NUMERICAL-MODEL §3",
+      "status": "ratified"
+    },
+    {
+      "name": "lwwHorizon",
+      "definedAt": "FORMAT-SPEC §5.1 S3",
+      "meaning": "Retained competing-write horizon for snapshot winner positions, creation positions and tombstones (FORMAT-SPEC §5.1 S1/S3/S4)",
+      "candidateValueSource": "FORMAT-SPEC §5.1 S3 proposes complete S2 coverage, with no count, age or byte window; final product policy remains open",
+      "ratifiedBy": null,
+      "status": "proposed"
+    }
+  ],
+  "ratifiedQuantitiesNote": "Ratified v0.1 quantities live solely in FORMAT-SPEC §9.3 and are cited there by row ID (L1–L33); this table intentionally does not duplicate them."
+}

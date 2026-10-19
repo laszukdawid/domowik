@@ -1,0 +1,9 @@
+{
+ "defaultCeilingHeightMm": 2500,
+ "defaultWallHeightMm": 2500,
+ "elevationMm": 0,
+ "floorThicknessMm": 200,
+ "id": "019534c7-0000-7000-8000-000000000001",
+ "name": "Level 1",
+ "type": "level"
+}

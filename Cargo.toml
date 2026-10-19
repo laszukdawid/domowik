@@ -1,0 +1,141 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/domowik-format",
+    "crates/domowik-container",
+    "crates/domowik-assets",
+    "crates/domowik-models",
+    "crates/domowik-scene",
+    "crates/domowik-scene-wire",
+    "crates/domowik-document",
+    "crates/domowik-edit",
+    "crates/domowik-geometry",
+    "crates/domowik-cli",
+    "crates/domowik-devtools",
+    "crates/domowik-bench",
+]
+# Frontend platform packaging remains isolated from the reusable core workspace.
+exclude = ["frontend"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# Matches the channel pinned in rust-toolchain.toml. Keep the two in step; a
+# rust-version below the pinned channel silently permits code the pinned
+# toolchain would reject for contributors using a different one.
+rust-version = "1.98.0"
+authors = ["Domowik Contributors"]
+license = "Apache-2.0"
+# NO `repository` KEY ON PURPOSE.
+#
+# docs/NAMING.md records that no Git host namespace is reserved for this
+# project ("Candidate name not committed; to be chosen at first publication";
+# a direct fetch of github.com/domowik returned HTTP 404) and that reservation
+# is FORBIDDEN pending separately established authority. An earlier draft of
+# this manifest asserted `https://github.com/domowik/domowik`, which claims
+# exactly that unheld namespace. Publication identity is issue 0034's to
+# settle; until it does, this key stays absent rather than carrying a claim
+# the naming registry forbids.
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+# serde_json: two non-default features, for two unrelated reasons.
+#
+# `float_roundtrip`. serde_json's PARSER is not correctly rounded without it —
+# off by default because it is slower. A value whose shortest decimal form does
+# not re-parse exactly comes back one ULP away, so writing and reading is not
+# the identity, which FORMAT-SPEC §3.2 requires of a binary64 field and §9.6
+# leans on when it promises a deterministic reopen.
+#
+# WHAT IT DOES AND DOES NOT COST, measured, because the first version of this
+# comment overstated it:
+#
+#   - Plan-like coordinates are UNAFFECTED. 0 of 7,241 mismatches over grid and
+#     half-millimetre values across the coordinate domain — short decimals
+#     re-parse exactly under either parser.
+#   - The exposure is values carrying a full mantissa: anything ARITHMETIC
+#     produced and then stored, such as a snapped point or a split point.
+#     31,179 of 200,000 arbitrary bit patterns mismatch, but that rate belongs
+#     to that sample and is not a frequency over real documents.
+#   - The hop is ONE-TIME, not cumulative: all 31,179 settled on the second
+#     round trip. This is a broken identity, not a value that walks away.
+#
+# `unbounded_depth`. Only makes `Deserializer::disable_recursion_limit`
+# CALLABLE; it changes no default. Two readers call it, each after counting
+# nesting depth itself against FORMAT-SPEC §9.3 row L11, because serde_json's
+# own limit rejects at 128 where L11 ratifies 128 as parsing. Everywhere else
+# the library limit stays on.
+serde_json = { version = "1.0", features = ["float_roundtrip", "unbounded_depth"] }
+criterion = { version = "0.5", default-features = false }
+# uuid: entity identity. FORMAT-SPEC uses UUIDv7 (time-ordered) so ids sort by
+# creation, which keeps deterministic output stable without a separate ordinal.
+uuid = { version = "1", features = ["v7", "serde"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+tempfile = "3"
+# tiny-skia: the 2D rasteriser behind PNG export (issue 0017). A LIBRARY
+# rather than an internal renderer, because 0017 puts "a new internal
+# anti-aliased renderer" out of scope: correct anti-aliasing, path filling and
+# stroking are a large amount of subtle code with no Domowik-specific content.
+# `png-format` pulls the `png` encoder, which is what writes the file.
+# sha2: content-addressed asset identity (FORMAT-SPEC §6, ASSET-STRATEGY
+# §10.1). A reviewed implementation rather than a hand-written one — SHA-256 is
+# short enough to write and a wrong one fails silently on inputs no test
+# happens to cover, which is the worst property a content digest can have.
+sha2 = "0.10"
+# crc32fast: the ZIP entry checksum the issue-0028 fixture generator writes.
+# Already in the graph (flate2 depends on it) and already recorded as a runtime
+# crate in docs/RUST-DEPENDENCIES.md; naming it here adds an edge, not a crate.
+crc32fast = "1.5"
+# flate2: test-only here. The corpus gates inflate the two pinned DEFLATE
+# streams to prove they expand to the documents their packages declare. Already
+# in the graph via `zip`.
+flate2 = "1.1"
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
+# ttf-parser: glyph OUTLINES for room labels (BEHAVIOR-SPEC R5.3.3, issue
+# 0060). Deliberately not a shaping engine — it reads `cmap` and `glyf`, and
+# Domowik does the rest, because the alternative for text in a PNG is a second
+# glyph rasteriser. `default-features = false` with only `std` drops
+# opentype-layout, apple-layout, variable-fonts and glyph-names, which leaves
+# the crate with NO dependencies of its own.
+#
+# What it does NOT give us is stated where the label module refuses to render:
+# no bidi, no complex-script reordering, no GSUB/GPOS. A name outside the
+# supported repertoire raises a warning rather than being drawn wrongly.
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+
+# ===== Performance profile =====
+#
+# Performance is the stated reason this core is being rewritten (owner
+# direction, 2026-08-30), so the release profile is configured deliberately
+# rather than left at defaults.
+[profile.release]
+opt-level = 3
+# Cross-crate inlining matters here: the geometry filter path is a handful of
+# floating-point operations that MUST inline across the crate boundary to hit
+# single-digit nanoseconds. Without LTO the filter's whole advantage is eaten
+# by call overhead.
+lto = "fat"
+codegen-units = 1
+# `panic = "abort"` is deliberately NOT set. It would shrink and speed up the
+# binary, but the FFI boundary (ADR 0003) must transport panics rather than
+# abort the host process, and benchmarks must be able to catch them. Revisit
+# only with the FFI decision, never as a lone performance tweak.
+panic = "unwind"
+debug = false
+strip = "debuginfo"
+
+# Benchmarks are meaningless when compiled like debug code, and profiling a
+# binary with no symbols is guesswork. This profile inherits release settings
+# and adds back what measurement needs.
+[profile.bench]
+inherits = "release"
+debug = true
+strip = "none"
+
+# The Go tree measured its own cost partly in test time. Keep dev builds cheap
+# to iterate but let dependencies be optimised, so test runs are not dominated
+# by unoptimised serde.
+[profile.dev.package."*"]
+opt-level = 2

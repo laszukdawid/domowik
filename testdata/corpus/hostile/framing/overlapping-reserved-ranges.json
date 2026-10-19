@@ -1,0 +1,47 @@
+{
+ "a": {
+  "batchId": "01949023-0000-7000-8000-000000014004",
+  "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+  "counterBase": 60,
+  "frontier": {
+   "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 59
+  },
+  "operations": [
+   {
+    "operationId": "01949024-0000-7000-8000-000000014005",
+    "kind": "setFields",
+    "entityId": "019534c7-0000-7000-8000-000000000002",
+    "fields": {
+     "thicknessMm": 130
+    }
+   },
+   {
+    "operationId": "01949024-0000-7000-8000-00000001400a",
+    "kind": "setFields",
+    "entityId": "019534c7-0000-7000-8000-000000000002",
+    "fields": {
+     "thicknessMm": 135
+    }
+   }
+  ]
+ },
+ "b": {
+  "batchId": "01949025-0000-7000-8000-000000014006",
+  "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+  "counterBase": 61,
+  "frontier": {
+   "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 59
+  },
+  "operations": [
+   {
+    "operationId": "01949026-0000-7000-8000-000000014007",
+    "kind": "setFields",
+    "entityId": "019534c7-0000-7000-8000-000000000002",
+    "fields": {
+     "thicknessMm": 140
+    }
+   }
+  ]
+ },
+ "anomaly": "same actor reserves [60,61] and [61,61]: the ranges share counter 61, violating B3 disjointness => malformed-framing before replay. The two counterBases differ so FS 7.6 naming yields two distinct legal entry names, and both frontiers stop at 59 so neither batch claims observation of the other's interior counters (B5); the overlap is the only defect."
+}

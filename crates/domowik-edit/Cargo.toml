@@ -1,0 +1,16 @@
+[package]
+name = "domowik-edit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+domowik-document = { path = "../domowik-document" }
+domowik-format = { path = "../domowik-format" }
+domowik-geometry = { path = "../domowik-geometry" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

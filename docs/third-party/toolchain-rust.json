@@ -1,0 +1,155 @@
+{
+  "recordSchema": 1,
+  "component": "rust-lang.org/toolchain",
+  "version": "1.98.0",
+  "channelPin": "1.98.0",
+  "rustcVersionString": "1.98.0 (88d9e12ae 2026-08-18)",
+  "gitCommitHash": "88d9e12ae178fab0fb5cc050a94da85685d449ea",
+  "manifestDate": "2026-08-20",
+  "license": {
+    "spdxId": "MIT OR Apache-2.0",
+    "name": "Rust dual MIT / Apache-2.0 licence",
+    "url": "https://github.com/rust-lang/rust/blob/88d9e12ae178fab0fb5cc050a94da85685d449ea/COPYRIGHT"
+  },
+  "distributedComponent": "rust-std",
+  "artifacts": [
+    {
+      "component": "cargo",
+      "target": "aarch64-apple-darwin",
+      "distribution": "dev-only",
+      "filename": "cargo-1.98.0-aarch64-apple-darwin.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/cargo-1.98.0-aarch64-apple-darwin.tar.xz",
+      "sha256": "2c2a8bbf3cba4353c0ca2cf1ba8280603f3ca82ceebb538fee4a1a987147f743"
+    },
+    {
+      "component": "cargo",
+      "target": "aarch64-unknown-linux-gnu",
+      "distribution": "dev-only",
+      "filename": "cargo-1.98.0-aarch64-unknown-linux-gnu.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/cargo-1.98.0-aarch64-unknown-linux-gnu.tar.xz",
+      "sha256": "5784379d73ac881d15a9e67eed2882cd58c747c276221c23cdf9aff37e015ff6"
+    },
+    {
+      "component": "cargo",
+      "target": "x86_64-apple-darwin",
+      "distribution": "dev-only",
+      "filename": "cargo-1.98.0-x86_64-apple-darwin.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/cargo-1.98.0-x86_64-apple-darwin.tar.xz",
+      "sha256": "3526be8588e7f80cf0604ce184dd8af89798786e389d5deea4ae4ffe2f104265"
+    },
+    {
+      "component": "cargo",
+      "target": "x86_64-unknown-linux-gnu",
+      "distribution": "dev-only",
+      "filename": "cargo-1.98.0-x86_64-unknown-linux-gnu.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/cargo-1.98.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "2f512d170d3dd23e16ababcda32ee2e6d5172d861a7af1f504e0b1e270cafab9"
+    },
+    {
+      "component": "rust-src",
+      "target": "*",
+      "distribution": "dev-only",
+      "filename": "rust-src-1.98.0.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rust-src-1.98.0.tar.xz",
+      "sha256": "0e977492aed5ff137815bf9b4b796e8a85b80fb2367ed64e82d5c5839870f2bf"
+    },
+    {
+      "component": "rust-std",
+      "target": "aarch64-apple-darwin",
+      "distribution": "distributed",
+      "filename": "rust-std-1.98.0-aarch64-apple-darwin.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rust-std-1.98.0-aarch64-apple-darwin.tar.xz",
+      "sha256": "48c05269ed36fb5f0a8438065156891fe59fcb868d90cfed9b7209540d54b2ce"
+    },
+    {
+      "component": "rust-std",
+      "target": "aarch64-unknown-linux-gnu",
+      "distribution": "distributed",
+      "filename": "rust-std-1.98.0-aarch64-unknown-linux-gnu.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rust-std-1.98.0-aarch64-unknown-linux-gnu.tar.xz",
+      "sha256": "a36f7ac98af20ef0ba6368aace0345efabbebaef7962eba99f47190fd256162d"
+    },
+    {
+      "component": "rust-std",
+      "target": "x86_64-apple-darwin",
+      "distribution": "distributed",
+      "filename": "rust-std-1.98.0-x86_64-apple-darwin.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rust-std-1.98.0-x86_64-apple-darwin.tar.xz",
+      "sha256": "8923fa9d0e0407b8a492e59d568e7aceff75949e1eee2e3e1b60e174373890cb"
+    },
+    {
+      "component": "rust-std",
+      "target": "x86_64-unknown-linux-gnu",
+      "distribution": "distributed",
+      "filename": "rust-std-1.98.0-x86_64-unknown-linux-gnu.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rust-std-1.98.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "f5022e6c95a5ad23cca2513dc8281200f585fa188de6370aa37b128a43f876a3"
+    },
+    {
+      "component": "rust-std",
+      "target": "wasm32-unknown-unknown",
+      "distribution": "distributed",
+      "filename": "rust-std-1.98.0-wasm32-unknown-unknown.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rust-std-1.98.0-wasm32-unknown-unknown.tar.xz",
+      "sha256": "3bb537c09555b96020a38a3a8810c38908b194eff3c2cb6184a45dda5c6828de"
+    },
+    {
+      "component": "rust-std",
+      "target": "wasm32-wasip1",
+      "distribution": "distributed",
+      "filename": "rust-std-1.98.0-wasm32-wasip1.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rust-std-1.98.0-wasm32-wasip1.tar.xz",
+      "sha256": "07af7da4d9e943226c438cd5b60ba2b1f23a88c077eb09ccb227a385529c8b08"
+    },
+    {
+      "component": "rustc",
+      "target": "aarch64-apple-darwin",
+      "distribution": "dev-only",
+      "filename": "rustc-1.98.0-aarch64-apple-darwin.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rustc-1.98.0-aarch64-apple-darwin.tar.xz",
+      "sha256": "287edbc2e285b9c23ef7b085413b90cb8539909eda9c4b49f2a55ec0b52819d4"
+    },
+    {
+      "component": "rustc",
+      "target": "aarch64-unknown-linux-gnu",
+      "distribution": "dev-only",
+      "filename": "rustc-1.98.0-aarch64-unknown-linux-gnu.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rustc-1.98.0-aarch64-unknown-linux-gnu.tar.xz",
+      "sha256": "00590657f2356d7163ca5ef295283523974c340fa21bb94b420ce794f29b358c"
+    },
+    {
+      "component": "rustc",
+      "target": "x86_64-apple-darwin",
+      "distribution": "dev-only",
+      "filename": "rustc-1.98.0-x86_64-apple-darwin.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rustc-1.98.0-x86_64-apple-darwin.tar.xz",
+      "sha256": "c82d8f536955a9d6fc4465637fce5dcacf1d3913a98b5eb7edd9ead5a8b3f509"
+    },
+    {
+      "component": "rustc",
+      "target": "x86_64-unknown-linux-gnu",
+      "distribution": "dev-only",
+      "filename": "rustc-1.98.0-x86_64-unknown-linux-gnu.tar.xz",
+      "url": "https://static.rust-lang.org/dist/2026-08-20/rustc-1.98.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "0e37cb339f447fc44d6d781073bacacebfdc5612f2600e4c7e84c266f5f3aced"
+    }
+  ],
+  "supportedTargets": [
+    "aarch64-apple-darwin",
+    "aarch64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+    "wasm32-wasip1",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu"
+  ],
+  "added": "2026-09-12",
+  "reviewed": true,
+  "revisitTriggers": [
+    "any Rust toolchain version change, including a patch release",
+    "a new distributed target platform outside supportedTargets",
+    "a Rust security release affecting the compiler, the standard library, or compiler-builtins",
+    "a change to the Rust project's licence terms or distribution channel",
+    "rust-toolchain.toml drifting from the version recorded here"
+  ],
+  "notes": "WHAT IS DISTRIBUTED AND WHAT IS NOT. `rust-std` is the precompiled standard library (core, alloc, std and the crates they vendor, including compiler-builtins); it is STATICALLY LINKED into every Domowik binary and is therefore a distributed component with notice obligations. `rustc`, `cargo` and `rust-src` are development-time tools that are never shipped; they are recorded for reproducibility, as docs/THIRD-PARTY-POLICY.md asks.\n\nPROVENANCE OF THE HASHES. Captured 2026-09-12 by a read-only fetch of the official channel manifest https://static.rust-lang.org/dist/channel-rust-1.98.0.toml, authorised by root for that purpose, and transcribed by script rather than by hand. They are `xz_hash` values: they pin THIS RECORD to exact upstream artifacts. NOTHING HERE DOWNLOADS OR VERIFIES AN ARCHIVE AGAINST THEM. Before relying on them for supply-chain verification of a fetched toolchain, add an explicit download-and-hash step.\n\nWHAT IS VERIFIED FAIL-CLOSED on every run: the locally installed rustc version string matches `rustcVersionString`, rust-toolchain.toml's channel matches `channelPin`, and every entry in supportedTargets has a rust-std artifact row.\n\nA STATED GAP. The aggregate copyright notice for the standard library and its vendored components — the upstream COPYRIGHT file, which is where compiler-builtins' `Apache-2.0 WITH LLVM-exception` terms are recorded — is NOT committed to this repository. It ships inside the rust-src archive pinned above. Root's authorisation covered the manifest and its checksums, not downloading and unpacking archives, so this record names the gap instead of asserting a licence text nobody here has read. The wasm32-wasip1 and wasm32-unknown-unknown rust-std rows were added 2026-10-12 for the browser editor (issue 0088) from the same channel manifest's xz_hash values (dist/2026-08-20/channel-rust-1.98.0.toml); the aarch64-apple-darwin row read from that fetch matched the hash recorded above."
+}

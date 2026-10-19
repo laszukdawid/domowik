@@ -1,0 +1,44 @@
+[package]
+name = "domowik-devtools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Repository checks and synthetic fixture generation, not distributed product
+# code. The workspace's formatter, clippy and test suite cover these tools.
+
+[lib]
+name = "domowik_devtools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "domowik-jsoncheck"
+path = "src/bin/jsoncheck.rs"
+
+[[bin]]
+name = "domowik-corpusgen"
+path = "src/bin/corpusgen.rs"
+
+[dependencies]
+# The checks use existing workspace dependencies rather than introducing a
+# separate dependency graph for development tooling.
+serde_json = { workspace = true }
+serde = { workspace = true }
+# sha2 and crc32fast are already in the workspace graph and already recorded in
+# docs/RUST-DEPENDENCIES.md as runtime crates, so the corpus generator adds no
+# new third-party code. Both are content digests where a hand-written version
+# fails SILENTLY on inputs no test happens to cover, which is the worst property
+# a checksum can have -- the same reasoning that put sha2 in the workspace.
+sha2 = { workspace = true }
+crc32fast = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# The corpus gates read the committed .domo packages back and INFLATE the two
+# pinned DEFLATE streams, which is how the port proves those streams expand to
+# the documents their packages declare. Test-only: the generator never
+# compresses or decompresses.
+zip = { workspace = true }
+flate2 = { workspace = true }

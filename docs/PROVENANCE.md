@@ -1,0 +1,85 @@
+# Implementation and test-data provenance
+
+This records the external material relied on by the current implementation.
+It is not a development diary or a claim of legal clearance. Follow the
+[clean-room policy](CLEAN-ROOM-POLICY.md) and
+[third-party policy](THIRD-PARTY-POLICY.md) before relying on additional material.
+Dependency notices remain in [NOTICE](../NOTICE), the
+[Rust dependency inventory](RUST-DEPENDENCIES.md) and [third-party records](third-party/).
+
+## Robust predicates
+
+- **Publication:** Jonathan Richard Shewchuk, *Adaptive Precision Floating-Point
+  Arithmetic and Fast Robust Geometric Predicates*, Discrete & Computational
+  Geometry 18:305–363 (1997), also CMU-CS-96-140(R).
+- **Consulted artifact:** https://people.eecs.berkeley.edu/~jrs/papers/robustr.pdf,
+  consulted 2026-08-23. The front matter permits duplication and distribution
+  for noncommercial/educational purposes with its notice preserved. The paper
+  itself is not bundled here.
+- **Use:** the orientation filter's mathematical error bound
+  `(3+16ε)·ε·(|detleft|+|detright|)` and the filter/exact-fallback architecture,
+  from §3 and §§1–2, 5. This is an independent implementation; no source,
+  pseudocode transcription, expansion implementation or test vectors were taken.
+- **Reference hub:** https://www.cs.cmu.edu/~quake/robust.html was consulted
+  only to locate the paper and its implementation's public-domain statement.
+  The `predicates.c` implementation was deliberately not studied or adapted.
+
+The exact determinant path is original dyadic-integer arithmetic derived from
+the IEEE 754-2019 binary64 representation `±m · 2^e`, not Shewchuk's expansion
+arithmetic. Its implementation and numerical guarantees are documented in
+`crates/domowik-geometry/src/exact_det.rs` and `dyadic.rs`.
+
+## Attributed published test inputs
+
+Tinko Bartels, Vissarion Fisikopoulos and Martin Weiser, *Fast floating-point
+filters for robust predicates*, BIT Numerical Mathematics 63(2), article 31
+(2023), DOI [10.1007/s10543-023-00975-x](https://doi.org/10.1007/s10543-023-00975-x).
+The version of record is CC BY 4.0; the authors' preprint is
+[arXiv:2208.00497v1](https://arxiv.org/abs/2208.00497v1). Both were consulted
+2026-08-24; §2 supplies exactly these two transcribed coordinate triples:
+
+1. `(-0.01,-0.59), (0.01,0.57), (0,-0.01)`.
+2. `(2^-801,2^-801), (2^-800,2^-800), (2^-801,2^-800)`.
+
+No code, algorithm, figure or prose was adapted. Expected signs are independently
+derived over the stored binary64 values, rather than copied from the paper's
+real-arithmetic interpretation. Attribution and the transcription are also
+recorded beside the test in `crates/domowik-geometry/src/lib.rs`. All other
+geometry fixtures are original synthetic inputs or derive from Domowik's own
+specification. Classification of these numeric inputs for release inventory
+purposes remains subject to release-policy review; this record does not claim
+that a test-data classification settles distribution obligations.
+
+## Geometry algorithms
+
+| Algorithm | Reference and use |
+| --- | --- |
+| Monotone-chain convex hull | A. M. Andrew, *Another efficient algorithm for convex hulls in two dimensions* (1979); independently implemented with exact turn decisions and reduced degenerate output. |
+| Snap rounding | J. D. Hobby, *Practical segment intersection with finite precision output*, Computational Geometry 13 (1999), 199–214, §§2–4; independently implemented with binary-grid, half-open cells and exact segment/cell incidence. |
+| Point-in-ring and face tracing | Standard crossing-number and planar-subdivision rules; original implementation with exact boundary predicates, half-open ray crossings and winding propagation. |
+
+These describe mathematical references, not copied implementations or code
+licences. Domowik's original implementations are Apache-2.0. Their numerical
+contract is in [Numerical model](NUMERICAL-MODEL.md).
+
+## Public model formats
+
+OBJ/MTL parsing was independently implemented from Paul Bourke's public format
+documentation, https://paulbourke.net/dataformats/obj/ (consulted 2026-10-03).
+No example geometry or reference code was copied. GLB, accessors and static
+transforms use Khronos glTF 2.0.1 (2021-10-11),
+https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html. The specification's
+terms govern that document; no specification text or code is bundled.
+Texture-specific provenance is in [Model textures](third-party/model-textures.md).
+
+The decoder dependency `draco-core` 2.2.1 is Apache-2.0, checked against
+https://github.com/Filyus/draco-rust at
+`c6244f35ec1a3c22a69948b04907244e9b215981`. Its normal dependency is `bytemuck`,
+with `bytemuck_derive` 1.12.1 taken under Apache-2.0. No decoder source or C++
+library was copied into Domowik. The package omits its licence text; the pinned
+upstream licence and the repository's Apache-2.0 licence record the provenance,
+and NOTICE explicitly records the missing packaged text.
+
+Original mock models and documentation images are described by the
+[Welcome Home example](../examples/welcome-home/README.md). User-imported
+content is not bundled and is not relicensed by the application.

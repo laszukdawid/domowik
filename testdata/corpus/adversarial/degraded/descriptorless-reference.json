@@ -1,0 +1,10 @@
+{
+ "note": "Descriptorless well-formed reference: read-only degraded inspection with placeholder; distinct from malformed digest syntax which is hostile rejection.",
+ "expectedOutcome": {
+  "outcome": "degraded-read-only-inspection",
+  "clauses": [
+   "ASSET-STRATEGY \u00a710.6",
+   "BEHAVIOR-SPEC \u00a79.6"
+  ]
+ }
+}

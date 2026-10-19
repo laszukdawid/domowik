@@ -1,0 +1,31 @@
+# Shared GPU renderer for the editor's 3D view (issue 0101). Renderer-neutral
+# scene data comes from `domowik-scene`; this crate owns GPU resources only and
+# nothing here knows about documents, sessions or a platform presenter.
+
+[package]
+name = "domowik-renderer"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.98.0"
+license = "Apache-2.0"
+publish = false
+
+# ED-0109: `wgpu` 30.0.1 directly, minimal target-specific features. Metal is
+# the only native backend enabled; the browser uses WebGPU only (issue 0088,
+# ADR 0012), with no WebGL fallback.
+[dependencies]
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "metal"] }
+# Already in the graph through wgpu-hal's Metal backend, at the versions it
+# resolves; named here only to spell the raw texture type at the import seam.
+objc2 = "0.6.3"
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLTexture", "MTLResource", "MTLAllocation", "MTLTypes", "MTLPixelFormat", "MTLDevice"] }
+
+[[bench]]
+name = "renderer"
+harness = false

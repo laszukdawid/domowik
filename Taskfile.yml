@@ -1,0 +1,41 @@
+version: '3'
+
+tasks:
+  run:
+    desc: Build and run the domowik CLI
+    cmds:
+      - cargo run --locked --bin domowik -- {{.CLI_ARGS}}
+
+  run:gui:linux:
+    desc: Run the Domowik editor on Linux desktop
+    dir: frontend
+    cmds:
+      - flutter run -d linux
+
+  run:gui:web:
+    desc: Build the browser editor and serve it on http://127.0.0.1:8080 (issue 0088)
+    dir: frontend
+    cmds:
+      - ./scripts/build-web.sh
+      - 'echo "Open http://127.0.0.1:8080 (3D needs a browser with WebGPU). Ctrl+C stops the server."'
+      - python3 -m http.server 8080 --bind 127.0.0.1 -d build/web
+
+  run:gui:web-browser:
+    desc: Build and serve the Linux web editor and open isolated Chromium (Intel/Vulkan/X11)
+    dir: frontend
+    cmds:
+      - ./scripts/build-web.sh
+      - ./scripts/run-web-browser.sh
+
+  test:web:
+    desc: Browser editor tests in headless Chrome for Testing, then the release-build probe
+    dir: frontend
+    cmds:
+      - ./scripts/test-web.sh
+      - ./scripts/build-web.sh
+      - ./scripts/web-probe.sh
+
+  test:
+    desc: Run all Rust tests
+    cmds:
+      - cargo test --workspace --locked

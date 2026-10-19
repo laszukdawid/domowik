@@ -1,0 +1,16 @@
+{
+ "note": "declaring actor's frontier entry EXCEEDS its own reserved range end (86 > 85): frontier advances inside/past the batch inconsistently => malformed-framing",
+ "batchId": "01949034-0000-7000-8000-000000014014",
+ "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+ "counterBase": 85,
+ "frontier": {
+  "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 86
+ },
+ "operations": [
+  {
+   "operationId": "01949035-0000-7000-8000-000000014015",
+   "kind": "deleteEntity",
+   "entityId": "019534c7-0000-7000-8000-000000000002"
+  }
+ ]
+}

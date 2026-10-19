@@ -1,0 +1,23 @@
+{
+ "id": "019534c7-0000-7000-8000-000000000001",
+ "type": "level",
+ "name": "Level 1",
+ "elevationMm": 0,
+ "floorThicknessMm": 200,
+ "defaultWallHeightMm": 2500,
+ "defaultCeilingHeightMm": 2500,
+ "backgroundImages": [
+  {
+   "digest": "sha256:9ca758f319e76338ee864522157a8733f1ce25b9e101e637d69a8d240b832022",
+   "anchor": {
+    "translationMm": [
+     0,
+     0
+    ],
+    "scaleUniform": 10,
+    "rotationDeg": 90
+   },
+   "stackOrdinal": 0
+  }
+ ]
+}

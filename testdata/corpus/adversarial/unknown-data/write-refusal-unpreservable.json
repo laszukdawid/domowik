@@ -1,0 +1,13 @@
+{
+ "note": "U4/I2 companion: a partial-knowledge reader asked to rewrite a package containing asset-root members it cannot interpret MUST preserve them or refuse write-back entirely.",
+ "expectedOutcome": {
+  "outcome": "safe-write-refusal",
+  "diagnosticNames": [
+   "unpreservable optional construct"
+  ],
+  "clauses": [
+   "FORMAT-SPEC \u00a78 U2/U4",
+   "\u00a77.4 I2"
+  ]
+ }
+}

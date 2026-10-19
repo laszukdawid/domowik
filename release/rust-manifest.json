@@ -1,0 +1,144 @@
+{
+  "manifestSchema": 1,
+  "description": "Declarative distribution manifest for the Rust product (issue 0036). Generated documents go to releaseOutputDir, which is not committed, never into this file or docs/third-party/. Nothing here publishes, tags, uploads or reserves anything.",
+  "sourceDateEpoch": {
+    "policy": "require-env-or-git-commit",
+    "notes": "SOURCE_DATE_EPOCH when set and valid, otherwise the HEAD commit time. The wall clock is never read, because a document that differs every run cannot be diffed, and diffing is the only mechanism that has actually held for docs/RUST-DEPENDENCIES.md and NOTICE."
+  },
+  "sbomDir": "build/release/sbom",
+  "releaseOutputDir": "build/release",
+  "inputs": {
+    "toolchainRecord": "docs/third-party/toolchain-rust.json",
+    "assetsRecord": "docs/third-party/assets.json",
+    "toolsRecord": "docs/third-party/tools.json",
+    "notice": "NOTICE",
+    "dependencyInventory": "docs/RUST-DEPENDENCIES.md"
+  },
+  "embedScanSubtrees": [
+    "crates",
+    "frontend"
+  ],
+  "artifacts": [
+    {
+      "id": "domowik-cli",
+      "kind": "rust-binary",
+      "status": "built",
+      "description": "The command-line application, with release inventory coverage separate from the staged frontend bundle.",
+      "workspaceRoot": ".",
+      "rootPackage": "domowik-cli",
+      "binaryName": "domowik",
+      "binaryLayout": "cargo's own layout under the active target directory: <target-dir>/release/<binaryName> for a host build and <target-dir>/<triple>/release/<binaryName> for a cross build. The target directory is CARGO_TARGET_DIR when set, otherwise target/. It is derived rather than declared because a declared path drifts from cargo's layout silently, and CI and parallel worktrees both move the target directory.",
+      "embedSubtree": "crates/domowik-cli",
+      "targets": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "targetEvidence": ".github/workflows/ci.yml: the cross-build job builds x86_64/aarch64 linux-gnu for real, and the macos-15 job installs both darwin triples. These are the targets a binary is actually produced for, not an aspiration."
+    },
+    {
+      "id": "domowik-gui-macos",
+      "kind": "flutter-bundle",
+      "status": "staged",
+      "description": "The macOS bundle of the actively developed frontend. This locally runnable interface redistributes a Flutter engine, an AOT-compiled Dart runtime, plugin frameworks and a Material icon font, none of which cargo metadata can see. Declared so the obligation is visible, not to claim completed release coverage.",
+      "workspaceRoot": "frontend",
+      "rootPackage": "domowik-frontend-bridge",
+      "embedSubtree": "frontend",
+      "dartLock": "frontend/pubspec.lock",
+      "sdkTool": "flutter-sdk",
+      "bundlePath": "frontend/build/macos/Build/Products/Release/domowik_editor.app",
+      "bundleScan": {
+        "frameworks": "Contents/Frameworks",
+        "flutterAssets": "Contents/Frameworks/App.framework/Resources/flutter_assets"
+      },
+      "targets": [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin"
+      ],
+      "coverage": {
+        "implemented": [
+          "rust: the bridge crate's own resolved graph, from its OWN workspace (it is excluded from the root one, so root-workspace metadata does not describe it)",
+          "rust: the standard library, from the pinned toolchain record",
+          "dart: every package resolved in pubspec.lock, classified direct/transitive and sdk/hosted/path"
+        ],
+        "requiresBuiltBundle": [
+          "the Flutter engine framework and its version",
+          "plugin and platform frameworks actually embedded, with their digests",
+          "fonts and other flutter_assets entries shipped in the bundle"
+        ],
+        "notes": "Running without --bundle emits a document explicitly marked incomplete and exits non-zero when --release-grade is asked for. That is a staged gap with a named owner (issue 0024 / platform0024), not a refusal to cover the artifact kind."
+      }
+    },
+    {
+      "id": "domowik-gui-web",
+      "kind": "flutter-bundle",
+      "status": "staged",
+      "description": "The browser editor (issue 0088, ADR 0012): the Flutter web application with CanvasKit served from the bundle, and the Rust core compiled to wasm32-wasip1 (domowik_bridge.wasm). Built by frontend/scripts/build-web.sh into frontend/build/web. Its 3D renderer module is the separate domowik-gui-web-renderer artifact in the same bundle.",
+      "workspaceRoot": "frontend",
+      "rootPackage": "domowik-frontend-bridge",
+      "embedSubtree": "frontend",
+      "dartLock": "frontend/pubspec.lock",
+      "sdkTool": "flutter-sdk",
+      "bundlePath": "frontend/build/web",
+      "bundleScan": {
+        "frameworks": "canvaskit",
+        "flutterAssets": "assets"
+      },
+      "copiedAssets": [
+        {
+          "path": "frontend/assets/fonts/Roboto-Regular.ttf",
+          "copiedBy": "frontend/scripts/build-web-modules.sh"
+        }
+      ],
+      "targets": [
+        "wasm32-wasip1"
+      ],
+      "coverage": {
+        "implemented": [
+          "rust: the bridge crate's resolved graph for wasm32-wasip1, from its own workspace",
+          "rust: the standard library, from the pinned toolchain record",
+          "dart: every package resolved in pubspec.lock, classified direct/transitive and sdk/hosted/path"
+        ],
+        "requiresBuiltBundle": [
+          "the CanvasKit engine files and the compiled main.dart.js",
+          "fonts and other assets entries shipped in the bundle"
+        ],
+        "notes": "Staged like the macOS bundle: the Rust and Dart halves are audited here; the web engine files are listed from a built bundle and are not licence-resolved by the scan."
+      }
+    },
+    {
+      "id": "domowik-gui-web-renderer",
+      "kind": "flutter-bundle",
+      "status": "staged",
+      "description": "The browser editor's 3D renderer module (issue 0088, ADR 0012): the shared wgpu renderer on WebGPU for wasm32-unknown-unknown, with its wasm-bindgen JavaScript glue (domowik_renderer.js, domowik_renderer_bg.wasm), shipped in the same bundle as domowik-gui-web.",
+      "workspaceRoot": "frontend",
+      "rootPackage": "domowik-web-renderer",
+      "embedSubtree": "frontend/web-renderer",
+      "dartLock": "frontend/pubspec.lock",
+      "sdkTool": "flutter-sdk",
+      "bundlePath": "frontend/build/web",
+      "bundleScan": {
+        "frameworks": "canvaskit",
+        "flutterAssets": "assets"
+      },
+      "targets": [
+        "wasm32-unknown-unknown"
+      ],
+      "coverage": {
+        "implemented": [
+          "rust: the web renderer crate's resolved graph for wasm32-unknown-unknown, including wgpu's WebGPU backend and wasm-bindgen, from the frontend workspace",
+          "rust: the standard library, from the pinned toolchain record"
+        ],
+        "requiresBuiltBundle": [
+          "the generated wasm-bindgen glue, which is wasm-bindgen output under its MIT/Apache-2.0 terms"
+        ],
+        "notes": "Shares the domowik-gui-web bundle; listed separately because it is a second Rust graph on a second target."
+      }
+    }
+  ],
+  "bundledAssetPolicy": {
+    "record": "docs/third-party/assets.json",
+    "notes": "Every file compiled into an artifact by include_bytes!/include_str! must have a row in the assets record. scripts/release-validate.py scans for them and fails closed on an undeclared one. Before this scan nothing checked: the assets record is hand-maintained, so an undeclared embed changed no generated file and failed no stage."
+  }
+}

@@ -1,0 +1,41 @@
+name: domowik_editor
+description: >-
+  Domowik's actively developed Flutter editor using the shared Rust core
+  through a native bridge. Not published as a Dart package.
+publish_to: none
+version: 0.0.0
+
+environment:
+  sdk: ^3.11.4
+
+# NO third-party Dart package, matching the rest of the spike. `cupertino_icons`
+# came with the template and was removed: an icon font is not needed to prove a
+# native boundary, and every dependency needs a licence and notice record
+# (docs/THIRD-PARTY-POLICY.md).
+dependencies:
+  flutter:
+    sdk: flutter
+  domowik_bridge_plugin:
+    path: plugin
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  # The browser editor's fallback for ⌘ (lib/editor_fonts.dart, ADR 0012 §6):
+  # a Noto Sans Symbols 2 subset, OFL-1.1, recorded in
+  # docs/third-party/assets.json. Only the web build names the family, so
+  # desktop text never resolves to it. Its licence entry (package name, blank
+  # line, OFL text) joins the bundle's NOTICES.
+  #
+  # Roboto is deliberately NOT declared here: a native bundle that registers a
+  # family named Roboto changes Linux typography, whose default theme names
+  # Roboto. scripts/build-web-modules.sh serves it to the web build alone.
+  fonts:
+    - family: Noto Sans Symbols 2 Subset
+      fonts:
+        - asset: assets/fonts/NotoSansSymbols2-Subset.ttf
+  licenses:
+    - assets/fonts/NotoSansSymbols2-NOTICES.txt

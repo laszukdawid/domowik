@@ -1,0 +1,49 @@
+# A CLEAN Linux machine: runtime libraries only, no toolchain of any kind.
+#
+# WHY THIS EXISTS. The spike's residual list has carried "no clean-machine
+# install was tested" since the macOS application landed, and the relocated-copy
+# check does not answer it: moving a bundle around a machine that still has
+# Rust, Flutter, GTK development packages and a Dart SDK on it proves the
+# bundle does not depend on its PATH, not that it carries what it needs.
+#
+# There is deliberately no rust, no cargo, no flutter, no dart, no clang, no
+# cmake, no pkg-config and no -dev package here. If the bundle runs, it runs
+# because everything it needs is inside it or is an ordinary desktop runtime
+# library a user would already have.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+
+# GTK and GL at RUNTIME versions, not development ones. Xvfb and xauth because
+# the runner creates a real window and a GL context even for the headless
+# probes, and Mesa because there is no GPU.
+#
+# `libegl1` and `libgles2` are here because this image FOUND them missing, and
+# that is the whole argument for the image existing. Neither appears in `ldd`
+# output for the runner or for anything in the bundle: the Flutter engine
+# dlopens libEGL.so.1 at runtime, so no amount of reading the ELF headers
+# reveals the dependency. On a developer machine it is always present and the
+# gap is invisible. Here the first run died with "Couldn't open libEGL.so.1"
+# and aborted.
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      libgtk-3-0=3.24.38-2~deb12u3 \
+      libglib2.0-0=2.74.6-2+deb12u9 \
+      libgl1=1.6.0-1 \
+      libgl1-mesa-dri=22.3.6-1+deb12u2 \
+      libegl1=1.6.0-1 \
+      libgles2=1.6.0-1 \
+      xvfb=2:21.1.7-3+deb12u13 \
+      xauth=1:1.1.2-1 \
+ && rm -rf /var/lib/apt/lists/*
+
+# Proves the claim rather than trusting the package list: if any of these ever
+# appears in this image, the clean-machine test has stopped being one.
+RUN for tool in cargo rustc flutter dart clang cmake pkg-config; do \
+      if command -v "$tool" >/dev/null 2>&1; then \
+        echo "error: $tool is present; this is not a clean machine" >&2; \
+        exit 1; \
+      fi; \
+    done
+
+RUN useradd --create-home --shell /bin/bash runner
+USER runner
+WORKDIR /home/runner

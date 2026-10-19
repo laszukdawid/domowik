@@ -1,0 +1,38 @@
+[package]
+name = "domowik-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "domowik_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "domowik"
+path = "src/main.rs"
+
+[dependencies]
+domowik-assets = { path = "../domowik-assets" }
+domowik-format = { path = "../domowik-format" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+domowik-container = { path = "../domowik-container" }
+domowik-document = { path = "../domowik-document" }
+domowik-edit = { path = "../domowik-edit" }
+domowik-geometry = { path = "../domowik-geometry" }
+clap = { workspace = true }
+tiny-skia = { workspace = true }
+ttf-parser = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+[[bench]]
+name = "check"
+harness = false

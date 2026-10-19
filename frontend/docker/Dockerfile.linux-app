@@ -1,0 +1,96 @@
+# The Flutter LINUX APPLICATION slice of issue 0024.
+#
+# WHY A SECOND IMAGE, AND WHY linux/amd64. Flutter publishes NO stable Linux
+# arm64 archive -- `releases_linux.json` lists `dart_sdk_arch: x64` and nothing
+# else -- so the application slice cannot run on the native arm64 guest the ABI
+# slice uses. It runs as linux/amd64, which on an Apple Silicon host is
+# EMULATED.
+#
+# WHAT THAT COSTS, STATED SO IT IS NOT QUOTED WRONG LATER. Functional and
+# packaging results are valid: the ELF loader, the RPATH resolution, the GTK
+# runner and the bundle layout are all genuinely Linux's, and a bug in any of
+# them fails here exactly as it would on a Linux machine. TIMINGS ARE NOT. Any
+# number produced under emulation is a number about the emulator, and none is
+# recorded as a measurement.
+FROM rust:1.98.0-slim-bookworm@sha256:af0579d28b9a7ec5251aaafcb0c0a23dcde5c97065112aae0cc3abeda42d5394
+
+# Flutter's own Linux desktop requirements (clang, cmake, ninja, pkg-config,
+# libgtk-3-dev) plus what a HEADLESS run needs: Xvfb for a display and the Mesa
+# software rasteriser, because the runner creates a real GL context and there
+# is no GPU in here.
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      ca-certificates=20250419~deb12u1 \
+      curl=7.88.1-10+deb12u15 \
+      git=1:2.39.5-0+deb12u3 \
+      unzip=6.0-28+deb12u1 \
+      xz-utils=5.4.1-1+deb12u1 \
+      zip=3.0-13 \
+      clang=1:14.0-55.7~deb12u1 \
+      cmake=3.25.1-1 \
+      ninja-build=1.11.1-2~deb12u1 \
+      pkg-config=1.8.1-1 \
+      libgtk-3-dev=3.24.38-2~deb12u3 \
+      liblzma-dev=5.4.1-1+deb12u1 \
+      libstdc++-12-dev=12.2.0-14+deb12u1 \
+      xvfb=2:21.1.7-3+deb12u13 \
+      libgl1-mesa-dri=22.3.6-1+deb12u2 \
+      libglu1-mesa=9.0.2-1.1 \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN rustup component add rustfmt clippy
+RUN test "$(rustc --version)" = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+
+# Flutter 3.41.6 -- the SAME version as the macOS host SDK, so the two platform
+# runs are the same framework rather than two that happen to both be stable.
+# Pinned by the SHA-256 that the release manifest publishes, and verified
+# BEFORE the archive is unpacked.
+ARG FLUTTER_VERSION=3.41.6
+ARG FLUTTER_SHA256=503b3e6b7d352fca5d21b6474eca95ad544d8fc3b053782eab63a360c7fc7569
+RUN curl -fsSL -o /tmp/flutter.tar.xz \
+      "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
+ && echo "${FLUTTER_SHA256}  /tmp/flutter.tar.xz" | sha256sum -c - \
+ && tar -xJf /tmp/flutter.tar.xz -C /opt \
+ && rm /tmp/flutter.tar.xz
+
+# Flutter refuses to run as root, and running a desktop build as root would be
+# a bad habit to encode anyway. Everything the build writes -- the SDK's own
+# caches included -- has to be writable by this user.
+RUN useradd --create-home --shell /bin/bash builder \
+ && chown -R builder:builder /opt/flutter
+USER builder
+ENV PATH="/opt/flutter/bin:${PATH}"
+
+# Fetch the Linux engine artifacts at BUILD time rather than on first use, so
+# a run is not half network fetch, and assert the version while we are here.
+RUN git config --global --add safe.directory /opt/flutter \
+ && flutter --disable-analytics \
+ && flutter precache --linux --no-android --no-ios --no-web \
+ && test "$(flutter --version --machine | sed -n 's/.*"frameworkVersion": "\([^"]*\)".*/\1/p')" = "3.41.6"
+
+WORKDIR /work
+
+# `/build` is where a run copies the read-only source mount so the Flutter
+# build has somewhere writable. The container runs as `builder`, who cannot
+# create a directory at the filesystem root, so it is made here. Appended at
+# the end on purpose: putting it earlier would invalidate the Flutter layers
+# and re-download the SDK on every edit.
+USER root
+RUN mkdir -p /build && chown builder:builder /build
+
+# `file` and `readelf` (binutils) are what the packaging assertions are made
+# WITH: the probe checks the bundled core is a real ELF shared object and that
+# the runner RUNPATH is exactly $ORIGIN/lib. Neither is in the slim base.
+#
+# `xauth` is not optional either: `xvfb-run` fails outright with "xauth command
+# not found" rather than falling back, so every probe would be unrunnable.
+#
+# These three are a LATE layer on purpose. Adding them to the apt block above
+# would invalidate the Flutter layer that follows it and re-download the SDK.
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes \
+      file=1:5.44-3 \
+      binutils=2.40-2 \
+      xauth=1:1.1.2-1 \
+ && rm -rf /var/lib/apt/lists/*
+USER builder

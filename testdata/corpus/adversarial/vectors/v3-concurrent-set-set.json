@@ -1,0 +1,52 @@
+{
+ "vector": "V3",
+ "setup": "actors X and Y concurrently set endMm on entity 019534c7-0000-7000-8000-000000000002; neither observes the other",
+ "batches": {
+  "X": {
+   "batchId": "01948fc0-0000-7000-8000-00000000ee01",
+   "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+   "counterBase": 70,
+   "frontier": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 69
+   },
+   "operations": [
+    {
+     "operationId": "01948fc1-0000-7000-8000-00000000ee02",
+     "kind": "setFields",
+     "entityId": "019534c7-0000-7000-8000-000000000002",
+     "fields": {
+      "endMm": [
+       4000,
+       2500
+      ]
+     }
+    }
+   ]
+  },
+  "Y": {
+   "batchId": "01948fc2-0000-7000-8000-00000000ee03",
+   "actorId": "01948f80-0000-7000-8000-00000000bb00",
+   "counterBase": 20,
+   "frontier": {
+    "01948f80-0000-7000-8000-00000000bb00": 19
+   },
+   "operations": [
+    {
+     "operationId": "01948fc3-0000-7000-8000-00000000ee04",
+     "kind": "setFields",
+     "entityId": "019534c7-0000-7000-8000-000000000002",
+     "fields": {
+      "endMm": [
+       8000,
+       2500
+      ]
+     }
+    }
+   ]
+  }
+ },
+ "expectedProjection": {
+  "winner": "LWW1 greatest WRITE POSITION. X's frontier {X:69} gives causalPastSize 69; Y's frontier {Y:19} gives 19. Neither observes the other, so the two are concurrent, and the leading component already decides: 69 > 19 -> X wins. The pre-ED-0037 counter comparison 70 > 20 picked the same writer, so this vector's outcome is unchanged; only its reason is",
+  "loserValueDiscarded": true
+ }
+}

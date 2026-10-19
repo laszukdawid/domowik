@@ -1,0 +1,29 @@
+#!/bin/bash
+# Xcode 27's lipo accepts ONE architecture after -verify_arch and reads any
+# further ones as input files ("-verify_arch requires exactly one input
+# file"). Flutter 3.41.6 verifies universal frameworks as
+# `lipo <file> -verify_arch arm64 x86_64` and so cannot build a universal
+# macOS app with Xcode 27 (flutter/flutter#188461, issue 0097).
+#
+# This shim gives the multi-architecture form its documented meaning — exit 0
+# exactly when EVERY listed architecture is present — by verifying them one at
+# a time. Every other invocation is passed through unchanged. It is put on
+# PATH only by our own scripts; delete it once the pinned Flutter splits the
+# call itself.
+set -euo pipefail
+REAL=/usr/bin/lipo
+
+args=("$@")
+for i in "${!args[@]}"; do
+  if [ "${args[$i]}" = "-verify_arch" ]; then
+    before=("${args[@]:0:$i}")
+    archs=("${args[@]:$((i + 1))}")
+    if [ "${#archs[@]}" -gt 1 ] && [ "${#before[@]}" -eq 1 ]; then
+      for arch in "${archs[@]}"; do
+        "$REAL" "${before[0]}" -verify_arch "$arch" || exit 1
+      done
+      exit 0
+    fi
+  fi
+done
+exec "$REAL" "$@"

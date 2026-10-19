@@ -1,0 +1,4 @@
+{
+ "note": "ASSET-STRATEGY \u00a710.1: uppercase hex is an invalid identifier; hostile-input rejection, NOT missing-blob equivalence.",
+ "digest": "sha256:9A1F2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4E5F60718293A4B5C6D7E8F9"
+}

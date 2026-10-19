@@ -1,0 +1,13 @@
+[package]
+name = "domowik-scene-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Byte transport for a derived 3D scene between two WebAssembly modules (issue
+# 0088): the core encodes, the browser renderer decodes. Deliberately free of
+# the scene, geometry and GPU crates so that neither side pulls in the other's.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

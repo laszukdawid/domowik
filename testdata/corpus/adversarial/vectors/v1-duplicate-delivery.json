@@ -1,0 +1,72 @@
+{
+ "vector": "V1",
+ "delivered": [
+  {
+   "batchId": "01948fa0-0000-7000-8000-00000000cc01",
+   "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+   "counterBase": 50,
+   "frontier": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 49
+   },
+   "operations": [
+    {
+     "operationId": "01948fa1-0000-7000-8000-00000000cc02",
+     "kind": "createEntity",
+     "entityId": "019534c7-0000-7000-8000-000000000002",
+     "fields": {
+      "id": "019534c7-0000-7000-8000-000000000002",
+      "type": "wall",
+      "levelId": "019534c7-0000-7000-8000-000000000001",
+      "startMm": [
+       0,
+       2500
+      ],
+      "endMm": [
+       4000,
+       2500
+      ],
+      "thicknessMm": 120,
+      "heightMm": 2500
+     }
+    }
+   ]
+  },
+  {
+   "batchId": "01948fa0-0000-7000-8000-00000000cc01",
+   "actorId": "01948f5a-ca77-7a09-9e76-5ace11b12fd2",
+   "counterBase": 50,
+   "frontier": {
+    "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 49
+   },
+   "operations": [
+    {
+     "operationId": "01948fa1-0000-7000-8000-00000000cc02",
+     "kind": "createEntity",
+     "entityId": "019534c7-0000-7000-8000-000000000002",
+     "fields": {
+      "id": "019534c7-0000-7000-8000-000000000002",
+      "type": "wall",
+      "levelId": "019534c7-0000-7000-8000-000000000001",
+      "startMm": [
+       0,
+       2500
+      ],
+      "endMm": [
+       4000,
+       2500
+      ],
+      "thicknessMm": 120,
+      "heightMm": 2500
+     }
+    }
+   ]
+  }
+ ],
+ "expectedProjection": {
+  "state": "entity exists exactly once; identical to single delivery",
+  "frontier": {
+   "01948f5a-ca77-7a09-9e76-5ace11b12fd2": 50
+  },
+  "duplicateHandling": "I2 silent deterministic ignore"
+ }
+}

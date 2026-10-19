@@ -1,0 +1,29 @@
+[package]
+name = "domowik-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+# NOT distributed. This crate exists to measure the core (issue 0032); it is
+# not part of the product and nothing in `domowik-cli` depends on it.
+publish = false
+
+[dependencies]
+domowik-cli = { path = "../domowik-cli" }
+domowik-document = { path = "../domowik-document" }
+domowik-format = { path = "../domowik-format" }
+domowik-geometry = { path = "../domowik-geometry" }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "interaction"
+harness = false
+
+[[bench]]
+name = "builder"
+harness = false

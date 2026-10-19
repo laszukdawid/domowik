@@ -1,0 +1,8 @@
+{
+ "note": "Well-formed sha256 digest referenced by assetInstance but no descriptor and no blob anywhere (ASSET-STRATEGY \u00a710.6 dangling class).",
+ "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+ "expectedOutcome": {
+  "outcome": "degraded-read-only-inspection",
+  "detail": "required-missing treatment; fixed 1000 mm box placeholder; portable packing would fail completely; reference persists through saves unchanged"
+ }
+}

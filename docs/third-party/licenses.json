@@ -1,0 +1,30 @@
+{
+  "registrySchema": 1,
+  "allowedLicenses": [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "Zlib"
+  ],
+  "entries": [
+    {
+      "key": "domowik.dev/domowik",
+      "kind": "module",
+      "spdxLicense": "Apache-2.0",
+      "status": "reviewed",
+      "noticeRequired": false,
+      "sourceUrl": "https://domowik.dev/domowik",
+      "added": "2026-08-23",
+      "notes": "First-party main module; the project's own Apache-2.0 license applies.",
+      "reviewedAt": "2026-08-23",
+      "versionPin": "(devel)",
+      "revisitTriggers": [
+        "license text changes at sourceUrl",
+        "distribution model changes"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+ "note": "U3: foreign entry 'future/widget.bin' inside an otherwise valid '0.1' package. Future namespaces arrive only via a NEW schema identifier (V5), never under an old label.",
+ "foreignEntryName": "future/widget.bin",
+ "expectedOutcome": {
+  "outcome": "reject",
+  "category": "invalid-entry-name",
+  "detail": "closed namespace set of FS 7.3; hostile input, not preservable unknown"
+ }
+}

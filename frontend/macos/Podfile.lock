@@ -1,0 +1,22 @@
+PODS:
+  - domowik_bridge_plugin (0.0.0):
+    - FlutterMacOS
+  - FlutterMacOS (1.0.0)
+
+DEPENDENCIES:
+  - domowik_bridge_plugin (from `Flutter/ephemeral/.symlinks/plugins/domowik_bridge_plugin/macos`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+
+EXTERNAL SOURCES:
+  domowik_bridge_plugin:
+    :path: Flutter/ephemeral/.symlinks/plugins/domowik_bridge_plugin/macos
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+
+SPEC CHECKSUMS:
+  domowik_bridge_plugin: c98bbcc184e92217ee4c041e8b4ebddfe88a96bf
+  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
+
+PODFILE CHECKSUM: 48446b044e9387ca8efc3d20770f014ac29d2916
+
+COCOAPODS: 1.17.0

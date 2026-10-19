@@ -1,0 +1,423 @@
+name: ci
+
+# Manual only (ED-0118). Domowik is not production software: the gate is
+# ./scripts/verify.sh on a developer machine before merging, which runs the
+# same stages. Run this from the Actions tab ("Run workflow") when a hosted
+# Linux/macOS check is worth its minutes, e.g. before tagging a release.
+# Downloadable binaries are built by release.yml.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify (linux + flutter + rust core)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOMOWIK_REQUIRE_LINUX_EDITOR: '1'
+    steps:
+      # Issue 0061 acceptance: runner cost and wall-clock impact are RECORDED,
+      # per run, so the choice to pay for a macOS runner can be revisited
+      # against numbers rather than impressions. Captured before the toolchain
+      # steps because setup is most of what a macOS minute buys.
+      - name: Start the job clock
+        shell: bash
+        run: date +%s > "$RUNNER_TEMP/job-start.txt"
+
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      # No toolchain version here: rust-toolchain.toml pins it, and naming a
+      # version in both places lets them drift apart silently. rustup honours
+      # the file, so this installs exactly what the repository asks for.
+      - name: Set up Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt clippy
+          cargo --version && rustc --version
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0; same reviewed MIT pin as macOS
+        with:
+          channel: stable
+          flutter-version: 3.41.6
+          cache: false
+          pub-cache: false
+      - name: Install Linux editor prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libepoxy-dev xvfb xauth libgl1-mesa-dri
+          flutter config --enable-linux-desktop
+      - name: Confirm Linux editor prerequisites are present
+        run: |
+          bash scripts/ci/linux-editor-prerequisites-test.sh
+          bash scripts/check-linux-editor-prerequisites.sh
+          flutter --version
+          dart --version
+          pkg-config --modversion gtk+-3.0 epoxy
+      # NOTE: no cargo cache step. Every other action here is pinned to a SHA
+      # that already existed in this repository's history; adding actions/cache
+      # would mean pinning a SHA that has not been verified, and an unverified
+      # action pin is worse than a slower CI run. Add it in a change that can
+      # confirm the digest.
+      #
+      # Logged to RUNNER_TEMP, not the checkout — a log file left in the
+      # workspace would trip verify.sh's own "P13 clean tree" check. `shell:
+      # bash` gives `-eo pipefail` (the unspecified default shell is a
+      # different invocation per GitHub's docs), so a failing verify.sh still
+      # fails this step through `tee`.
+      # The exit status is written to a file as well as propagated. The job
+      # summary needs it: a verify.sh that dies WITHOUT printing its banner is
+      # indistinguishable from an interrupted run if the status is thrown away,
+      # which is exactly how run 34672441495's macOS failure got mislabelled.
+      # The CI reporting code has its own tests, and they run BEFORE the thing
+      # they report on. A summary renderer that is wrong is worse than no
+      # summary: it is a wrong answer with a green tick next to it.
+      - name: Test the CI reporting scripts
+        shell: bash
+        run: |
+          ./scripts/ci/verify-job-summary-test.sh
+          ./scripts/ci/shell-local-decl-check.py \
+            scripts/verify.sh scripts/check-macos-bundle.sh scripts/ci/*.sh
+          # Issue 0036. CI-only, not a verify.sh stage: it copies the tree
+          # fourteen times and runs cargo metadata on each, which is about
+          # ninety seconds to test the HARNESS rather than the product. It
+          # belongs here for the same reason the summary renderer's tests do,
+          # which is that a fail-closed gate nobody has watched reject anything
+          # is not evidence that it can reject anything.
+          ./scripts/ci/release-inventory-test.sh
+
+      - name: Verify
+        shell: bash
+        run: |
+          rc=0
+          ./scripts/verify.sh 2>&1 | tee "$RUNNER_TEMP/verify-log.txt" || rc=$?
+          echo "$rc" > "$RUNNER_TEMP/verify-exit.txt"
+          exit "$rc"
+
+      # The summary is rendered by scripts/ci/verify-job-summary.sh, not inline
+      # here: both jobs were maintaining their own copy of the same branching,
+      # and the branch that mattered was missing from both. The script has its
+      # own synthetic-log tests (run above).
+      - name: Job summary — verification result
+        if: always()
+        shell: bash
+        run: |
+          if [ -x ./scripts/ci/verify-job-summary.sh ]; then
+            ./scripts/ci/verify-job-summary.sh \
+              "$RUNNER_TEMP/verify-log.txt" "$RUNNER_TEMP/verify-exit.txt" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Verification summary"
+              echo
+              echo "**The checkout did not complete**, so no summary could be rendered."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Issue 0061 acceptance: wall clock recorded per run rather than measured
+      # once and remembered wrong.
+      #
+      # WHAT THIS IS NOT: a bill. The Actions timing endpoint reported zero
+      # billable milliseconds for this repository, so nothing here comes from a
+      # billing API. The rates below are GitHub's published per-minute LIST
+      # PRICES ("About billing for GitHub Actions", docs.github.com, retrieved
+      # 2026-09-12): Linux 2-core $0.006, Windows 2-core $0.010, macOS 3/4-core
+      # $0.062. That documentation does not state how a partial minute is
+      # rounded, so the minute count is an upper-bound estimate derived from
+      # elapsed time and is labelled as one. An earlier version of this step
+      # called it "billed minutes" and asserted a flat 10x macOS multiplier;
+      # both were claims this repository had no evidence for.
+      - name: Job summary — runner wall clock
+        if: always()
+        shell: bash
+        run: |
+          started=$(cat "$RUNNER_TEMP/job-start.txt" 2>/dev/null || true)
+          now=$(date +%s)
+          case "$RUNNER_OS" in
+            macOS) rate='$0.062' ;;
+            Windows) rate='$0.010' ;;
+            *) rate='$0.006' ;;
+          esac
+          {
+            echo "### Runner wall clock (cost estimated, not billed)"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| runner | \`$RUNNER_OS\` / \`$RUNNER_ARCH\` (image \`${ImageOS:-unknown}\`) |"
+            if [ -n "$started" ]; then
+              elapsed=$((now - started))
+              minutes=$(( (elapsed + 59) / 60 ))
+              echo "| elapsed (this job, to here) | $((elapsed / 60))m $((elapsed % 60))s |"
+              echo "| whole minutes, rounded up (ESTIMATE) | $minutes |"
+              echo "| published list rate for this runner class | $rate per minute |"
+            else
+              echo "| elapsed | unknown — the job clock step did not run |"
+            fi
+            echo
+            echo "Estimated from elapsed time, not read from a billing API: this repository's timing endpoint reports zero billable milliseconds, and GitHub's published documentation does not state how partial minutes are rounded. Rates retrieved 2026-09-12 and not re-checked since."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Runs the SAME ./scripts/verify.sh on a macOS runner so its Darwin/
+  # `flutter`-conditional stages — never reached on ubuntu-24.04 — actually
+  # execute (issue 0061). No forked macOS-only script variant.
+  verify-macos:
+    name: verify (macos + flutter)
+    runs-on: macos-15
+    # macos-15 (bare label) is Apple Silicon/arm64 per actions/runner-images'
+    # README table (confirmed 2026-09-07); flutter-action's `architecture`
+    # input defaults to `runner.arch`.
+    timeout-minutes: 45
+    steps:
+      # Issue 0061 acceptance: runner cost and wall-clock impact are RECORDED,
+      # per run, so the choice to pay for a macOS runner can be revisited
+      # against numbers rather than impressions. Captured before the toolchain
+      # steps because setup is most of what a macOS minute buys.
+      - name: Start the job clock
+        shell: bash
+        run: date +%s > "$RUNNER_TEMP/job-start.txt"
+
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      # Same pin/rationale as the verify job; macos-15 already ships
+      # rustup/cargo/rustc 1.98.0 matching rust-toolchain.toml (confirmed
+      # 2026-09-07).
+      #
+      # BOTH darwin targets, and this is not optional. The plugin's podspec
+      # build script maps each Xcode `ARCHS` entry to a Rust triple and hard-
+      # fails on a triple that is not installed, because a missing target would
+      # otherwise silently produce a non-universal framework. A macOS runner
+      # ships only its NATIVE target, so the first hosted run of this job —
+      # 34672441495 — died with "Rust target x86_64-apple-darwin is not
+      # installed (needed for arch x86_64)". It passes on a maintainer's laptop
+      # precisely because that laptop has both installed by hand; that
+      # divergence is the thing this job exists to remove.
+      - name: Set up Rust
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt clippy
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustup target list --installed
+          cargo --version && rustc --version
+
+      # subosito/flutter-action v2.23.0, commit
+      # 1a449444c387b1966244ae4d4f8c696479add0b2, MIT (verified against the
+      # tag's LICENSE). Dev-only tool: recorded per THIRD-PARTY-POLICY's
+      # toolchain-reproducibility guidance, not as a distributed dependency.
+      # flutter-version matches the toolchain issue 0057 verified.
+      #
+      # cache/pub-cache explicitly false — already the default, but either
+      # would execute this action's own unpinned `actions/cache@v5`; same
+      # call as "no cargo cache step" above.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: 3.41.6
+          cache: false
+          pub-cache: false
+
+      # Runner images keep only the last two Xcode majors and rotate patches
+      # between updates, so select the newest installed 26.x rather than a
+      # hardcoded patch. macos-15 offers up to 26.3 (confirmed 2026-09-07);
+      # issue 0057 verified locally against 26.6, not yet on this image — a
+      # real gap, not assumed equivalent.
+      - name: Select Xcode
+        run: |
+          XCODE_APP=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          test -n "$XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP"
+          xcodebuild -version
+
+      # verify.sh already ANNOUNCES a missing flutter/clang/dart as a skip
+      # (ED-0087 R3, correct for a developer machine) rather than failing.
+      # Here that announced-skip branch would just mean this job's own setup
+      # is broken, so fail loudly instead of letting it stand in for the
+      # coverage this job exists to provide.
+      - name: Confirm macOS GUI prerequisites are present
+        run: |
+          for tool in flutter dart clang pod xcodebuild; do
+            command -v "$tool" >/dev/null 2>&1 || {
+              echo "::error::required tool '$tool' not on PATH"
+              exit 1
+            }
+          done
+          flutter --version
+          dart --version
+          clang --version
+          pod --version
+          xcodebuild -version
+          rustc --version
+          cargo --version
+
+      # Same RUNNER_TEMP/shell:bash/exit-status contract as the verify job's
+      # step above.
+      # The CI reporting code has its own tests, and they run BEFORE the thing
+      # they report on. A summary renderer that is wrong is worse than no
+      # summary: it is a wrong answer with a green tick next to it.
+      - name: Test the CI reporting scripts
+        shell: bash
+        run: |
+          ./scripts/ci/verify-job-summary-test.sh
+          ./scripts/ci/shell-local-decl-check.py \
+            scripts/verify.sh scripts/check-macos-bundle.sh scripts/ci/*.sh
+          # Issue 0036. CI-only, not a verify.sh stage: it copies the tree
+          # fourteen times and runs cargo metadata on each, which is about
+          # ninety seconds to test the HARNESS rather than the product. It
+          # belongs here for the same reason the summary renderer's tests do,
+          # which is that a fail-closed gate nobody has watched reject anything
+          # is not evidence that it can reject anything.
+          ./scripts/ci/release-inventory-test.sh
+
+      - name: Verify
+        shell: bash
+        run: |
+          rc=0
+          ./scripts/verify.sh 2>&1 | tee "$RUNNER_TEMP/verify-log.txt" || rc=$?
+          echo "$rc" > "$RUNNER_TEMP/verify-exit.txt"
+          exit "$rc"
+
+      # The summary is rendered by scripts/ci/verify-job-summary.sh, not inline
+      # here: both jobs were maintaining their own copy of the same branching,
+      # and the branch that mattered was missing from both. The script has its
+      # own synthetic-log tests (run above).
+      - name: Job summary — verification result
+        if: always()
+        shell: bash
+        run: |
+          if [ -x ./scripts/ci/verify-job-summary.sh ]; then
+            ./scripts/ci/verify-job-summary.sh \
+              "$RUNNER_TEMP/verify-log.txt" "$RUNNER_TEMP/verify-exit.txt" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### Verification summary"
+              echo
+              echo "**The checkout did not complete**, so no summary could be rendered."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Issue 0061 acceptance: the packaging gate must be OBSERVED rejecting.
+      # verify.sh has asserted four things about the built bundle for weeks
+      # without any of them ever being seen to fail, which leaves "packaging is
+      # correct" and "the assertions are vacuous" indistinguishable. This breaks
+      # copies of the bundle it just built — one per assertion — and requires
+      # each to be rejected for its own reason.
+      - name: macOS packaging gate — negative proof
+        if: always()
+        shell: bash
+        run: |
+          APP=frontend/build/macos/Build/Products/Release/domowik_editor.app
+          verify_rc=$(cat "$RUNNER_TEMP/verify-exit.txt" 2>/dev/null || echo missing)
+          if [ ! -d "$APP" ]; then
+            # A passing verify.sh that left no bundle behind means the stage
+            # moved or stopped building one — the gate would then be silently
+            # untested from here on, so fail rather than skip.
+            if [ "$verify_rc" = 0 ]; then
+              echo "::error::verify.sh passed but built no bundle at $APP"
+              exit 1
+            fi
+            {
+              echo "### macOS packaging gate — negative proof"
+              echo
+              echo "**SKIPPED** — \`verify.sh\` exited \`$verify_rc\` and never produced a bundle to break, so the packaging gate was NOT exercised in this run."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          ./scripts/ci/macos-bundle-negative-proof.sh "$APP"
+
+      # Issue 0061 acceptance: wall clock recorded per run rather than measured
+      # once and remembered wrong.
+      #
+      # WHAT THIS IS NOT: a bill. The Actions timing endpoint reported zero
+      # billable milliseconds for this repository, so nothing here comes from a
+      # billing API. The rates below are GitHub's published per-minute LIST
+      # PRICES ("About billing for GitHub Actions", docs.github.com, retrieved
+      # 2026-09-12): Linux 2-core $0.006, Windows 2-core $0.010, macOS 3/4-core
+      # $0.062. That documentation does not state how a partial minute is
+      # rounded, so the minute count is an upper-bound estimate derived from
+      # elapsed time and is labelled as one. An earlier version of this step
+      # called it "billed minutes" and asserted a flat 10x macOS multiplier;
+      # both were claims this repository had no evidence for.
+      - name: Job summary — runner wall clock
+        if: always()
+        shell: bash
+        run: |
+          started=$(cat "$RUNNER_TEMP/job-start.txt" 2>/dev/null || true)
+          now=$(date +%s)
+          case "$RUNNER_OS" in
+            macOS) rate='$0.062' ;;
+            Windows) rate='$0.010' ;;
+            *) rate='$0.006' ;;
+          esac
+          {
+            echo "### Runner wall clock (cost estimated, not billed)"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| runner | \`$RUNNER_OS\` / \`$RUNNER_ARCH\` (image \`${ImageOS:-unknown}\`) |"
+            if [ -n "$started" ]; then
+              elapsed=$((now - started))
+              minutes=$(( (elapsed + 59) / 60 ))
+              echo "| elapsed (this job, to here) | $((elapsed / 60))m $((elapsed % 60))s |"
+              echo "| whole minutes, rounded up (ESTIMATE) | $minutes |"
+              echo "| published list rate for this runner class | $rate per minute |"
+            else
+              echo "| elapsed | unknown — the job clock step did not run |"
+            fi
+            echo
+            echo "Estimated from elapsed time, not read from a billing API: this repository's timing endpoint reports zero billable milliseconds, and GitHub's published documentation does not state how partial minutes are rounded. Rates retrieved 2026-09-12 and not re-checked since."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Cross-compilation coverage for the Rust core. This replaces the Go
+  # compile-only jobs, which targeted ./cmd/domowik -- now frozen reference.
+  #
+  # HONEST SCOPE: crates/domowik-cli/Cargo.toml declares `[[bin]] name =
+  # "domowik"` (confirmed 2026-09-07), so this job builds a real binary per
+  # target; inspection below is static only, never executed (aarch64 can't
+  # run on this x86_64 runner without emulation, which is not added here).
+  cross-build:
+    name: cross-build ${{ matrix.target }} (compile-only)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Set up Rust with target
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup target add ${{ matrix.target }}
+      - name: Install cross linker
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      - name: Build workspace for target
+        run: cargo build --workspace --locked --release --target ${{ matrix.target }}
+
+      # Static inspection only — file type, byte count, sha256 — matching
+      # what the frozen Go jobs did. Never executed: the aarch64 artifact
+      # cannot run on this x86_64 runner, and no emulation is added to try.
+      - name: Inspect built artifact
+        run: |
+          BIN="target/${{ matrix.target }}/release/domowik"
+          test -s "$BIN"
+          file "$BIN"
+          echo "bytes: $(wc -c < "$BIN")"
+          sha256sum "$BIN"
+          {
+            echo "### cross-build artifact (${{ matrix.target }}, not executed)"
+            echo '```'
+            file "$BIN"
+            echo "bytes: $(wc -c < "$BIN")"
+            sha256sum "$BIN"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
