@@ -56,11 +56,33 @@ roadmap, specifications and relevant architecture decisions aligned with the
 current product. Public documentation describes the current state, not internal
 issue administration or agent-session history.
 
-Run `./scripts/verify.sh` from the repository root. Rust, Python and applicable
-Flutter/native tools must be on PATH. It checks formatting, builds, clippy,
-tests, benchmark compilation, corpus integrity, inventories, notices, release
-validation and applicable editor/platform probes. Benchmark timings are
-host-dependent and are not the pass/fail gate.
+Choose verification proportional to the change:
+
+- **Documentation-only changes:** check the diff, formatting and affected
+  links. Do not run the full suite unless changing normative requirements
+  or executable examples that need broader validation.
+- **Small, localized changes:** run relevant formatting, linting and tests
+  for the affected component. For simple Taskfile or launcher edits, check
+  syntax and command/environment resolution; use a smoke test where practical.
+  Minor features still require appropriate regression coverage.
+- **Significant or high-risk changes:** run `./scripts/verify.sh` from the
+  repository root. These include changes to document semantics, geometry,
+  persistence or formats, FFI contracts, GPU resource lifecycles, dependencies,
+  release packaging, verification tooling, or behavior spanning components.
+- Run the full suite when explicitly requested. If impact is uncertain,
+  investigate the affected paths first; ask before starting an expensive
+  full run when its necessity remains unclear.
+
+Report which checks ran, their results, and any relevant checks not run.
+Targeted checks do not establish full repository verification.
+Do not run the full suite solely because an unrelated working-tree change
+exists, and never discard existing work to make verification pass.
+
+For full verification, Rust, Python and applicable Flutter/native tools must
+be on PATH. The script checks formatting, builds, clippy, tests, benchmark
+compilation, corpus integrity, inventories, notices, release validation and
+applicable editor/platform probes. Benchmark timings are host-dependent and
+are not the pass/fail gate.
 
 Only `=== VERIFICATION PASSED ===` establishes full success. Failure prints
 `=== VERIFICATION FAILED ===` and its stage. Report skips and failures honestly;
