@@ -83,3 +83,15 @@ and NOTICE explicitly records the missing packaged text.
 Original mock models and documentation images are described by the
 [Welcome Home example](../examples/welcome-home/README.md). User-imported
 content is not bundled and is not relicensed by the application.
+
+The [Four-level house example](../examples/four-level-house/README.md) is an
+original synthetic layout with invented dimensions, authored through Domowik's
+CLI and native C ABI. Its generators, editable plan, eight new box-built models
+and per-level PNG/SVG exports are Apache-2.0 project content. It reuses the nine
+original Welcome Home models and its box builder, not external catalog data.
+The new objects are rugs, desks, low cabinets and illustrative stairs, hatch
+covers, ladder and stairwell marker; they do not define native slab openings.
+No external plan, model, image or test vector was consulted or adapted. It adds
+no dependencies or third-party assets. Its two documentation screenshots show
+the actual Linux editor; export/editor fonts and platform scaffolding retain
+the project's existing notices. Capture details are in [Documentation images](images/README.md).

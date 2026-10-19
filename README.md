@@ -29,6 +29,10 @@ launch the [desktop or browser editor](docs/GETTING-STARTED.md), then choose
 Try moving the sofa, changing a wall, or adding a window, then undo your edits.
 The example and its original models are Apache-2.0, with no asset downloads.
 
+For a multi-storey plan, try the [Four-level house](examples/four-level-house/README.md):
+ground-floor living spaces, three upstairs bedrooms, a bathroom on each living
+floor, a small crawlspace and an attic.
+
 ## Status
 
 **Experimental development software; no public release is claimed.** Plans

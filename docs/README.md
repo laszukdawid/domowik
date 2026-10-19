@@ -24,6 +24,10 @@ plans; see [compatibility and limitations](COMPATIBILITY.md).
 
 - **Explore a plan:** open the [Welcome Home example](../examples/welcome-home/README.md)
   to see a furnished plan in 2D and 3D. Its original mock models are included.
+- **Explore multiple floors:** open the [Four-level house](../examples/four-level-house/README.md),
+  with ground-floor living spaces, three upstairs bedrooms, two bathrooms,
+  a small crawlspace and an attic. Furniture and illustrative stair/hatch models
+  are embedded.
 - **Use the editor or CLI:** follow [Getting started](GETTING-STARTED.md) for
   build prerequisites and short first-run instructions.
 - **Edit a plan:** the [user guide](USER-GUIDE.md) covers walls, openings,

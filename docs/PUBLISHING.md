@@ -34,8 +34,10 @@ repository-relative links that point outside `docs/`, such as `../examples/`,
 to GitHub source/raw URLs. This keeps the same source
 Markdown useful both in a checkout and on the website. Main navigation and
 internal guide links work without JavaScript; **View this page on GitHub**
-is also available if JavaScript is disabled. The example itself remains in
-`examples/welcome-home/`, with its original models embedded in the download.
+is also available if JavaScript is disabled. The examples remain in
+`examples/welcome-home/` (with its original models embedded in the download)
+and `examples/four-level-house/` (a furnished multi-storey plan with illustrative
+stairs and hatches). Both downloads embed their models.
 
 After changing the site, check the homepage, a guide, the decisions index,
 images, demo links and a narrow viewport. Inspect the managed Pages build in

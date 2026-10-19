@@ -112,13 +112,21 @@ The executable is `build/linux/x64/release/bundle/domowik_editor` on x64.
 Keep the entire bundle together: its `lib/` and `data/` directories are required.
 This is a local development artifact, not a release-grade distribution.
 
-## Open the included example
+## Open the included examples
 
 Download [Welcome Home](../examples/welcome-home/welcome-home.domo?raw=true),
 or use `examples/welcome-home/welcome-home.domo` from your checkout. In the
 editor choose **Open**, select it, then **2D + 3D**. Its original mock furniture
 is embedded, with no asset setup. See [the example guide](../examples/welcome-home/README.md)
 for things to try and regeneration instructions.
+
+For multiple storeys, download the
+[Four-level house](../examples/four-level-house/four-level-house.domo?raw=true).
+It has a common room, dining space, kitchen and bathroom on the ground floor,
+three bedrooms and another bathroom upstairs, plus a small crawlspace and an
+attic. Open it and select **Ground floor** in **Floor**; switch levels to see
+the rest. Furniture, rugs, plants and illustrative stair/hatch models are
+embedded; see its [layout and limitations](../examples/four-level-house/README.md).
 
 ## Run the macOS desktop editor
 
