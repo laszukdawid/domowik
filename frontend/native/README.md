@@ -99,6 +99,10 @@ clears dirty only after success; opening does not restore a GUI undo stack.
 The plan-local model library embeds placed content by digest. Model decoding,
 texturing and preview limits are described in [Compatibility](../../docs/COMPATIBILITY.md).
 No external-cache or remote-retrieval resolver is configured by the editor.
+The additive `thumbnail` asset request derives angled library art from an
+embedded digest or a bounded file within a selected library directory. It is
+read-only: unlike placement, it neither embeds content nor attaches directories.
+See the C header for ownership, threading, close/drain and failure guarantees.
 Required degraded content permits inspection but refuses mutation and normal
 saving; optional missing content retains diagnosed placeholders.
 

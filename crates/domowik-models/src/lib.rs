@@ -1,4 +1,4 @@
-//! Bounded, derived top-down model previews. See BEHAVIOR-SPEC §10.2 and
+//! Bounded, derived model previews. See BEHAVIOR-SPEC §10.1/§10.2 and
 //! docs/PROVENANCE.md for public-format provenance.
 //!
 //! Input is opaque user content, not authoritative plan geometry. No filesystem,
@@ -40,7 +40,17 @@ pub struct Preview {
 /// archive entries and one million vertices/triangles. Errors name unsupported
 /// content or the exceeded budget; model bytes are never modified.
 pub fn preview(bytes: &[u8]) -> Result<Preview, String> {
-    render(&decode(bytes)?)
+    render(&decode(bytes)?, false)
+}
+
+/// A 256-pixel transparent, aspect-preserving angled library thumbnail.
+/// Uses the same input/decode/raster-work limits and ownership as [`preview`].
+/// The fixed orthographic camera looks down toward the origin from +X/+Y/+Z;
+/// all model extents fit inside an eight-pixel margin. This is approximate
+/// display geometry, never an authoritative footprint or physical measurement.
+/// Deterministic for the same bytes; no I/O, state, callbacks or cancellation.
+pub fn thumbnail(bytes: &[u8]) -> Result<Preview, String> {
+    render(&decode(bytes)?, true)
 }
 
 /// Initial object size in millimetres, measured from decoded scene geometry.
@@ -277,7 +287,7 @@ pub fn mesh_with_budget(bytes: &[u8], budget: usize) -> Result<ModelMesh, String
     })
 }
 
-fn render(triangles: &[Triangle]) -> Result<Preview, String> {
+fn render(triangles: &[Triangle], angled: bool) -> Result<Preview, String> {
     if triangles.is_empty() {
         return Err("Model contains no supported triangle surfaces".into());
     }
@@ -298,6 +308,35 @@ fn render(triangles: &[Triangle]) -> Result<Preview, String> {
     if extent[0] <= 0.0 || extent[2] <= 0.0 {
         return Err("Model has no horizontal extent".into());
     }
+    // An orthonormal camera basis. Keep coordinates centered before projection
+    // so a model's large translation cannot dominate thumbnail precision.
+    let center = std::array::from_fn::<_, 3, _>(|k| (min[k] + max[k]) * 0.5);
+    let project = |v: [f64; 3]| {
+        let [x, y, z] = std::array::from_fn::<_, 3, _>(|k| v[k] - center[k]);
+        [
+            (x - z) / 2f64.sqrt(),
+            (x + z - 2.0 * y) / 6f64.sqrt(),
+            (x + y + z) / 3f64.sqrt(),
+        ]
+    };
+    let mut camera_min = [f64::INFINITY; 2];
+    let mut camera_max = [f64::NEG_INFINITY; 2];
+    if angled {
+        for p in triangles.iter().flat_map(|t| t.points).map(project) {
+            for k in 0..2 {
+                camera_min[k] = camera_min[k].min(p[k]);
+                camera_max[k] = camera_max[k].max(p[k]);
+            }
+        }
+    }
+    let camera_extent = [camera_max[0] - camera_min[0], camera_max[1] - camera_min[1]];
+    if angled && camera_extent[0].max(camera_extent[1]) <= 0.0 {
+        return Err("Model has no visible thumbnail extent".into());
+    }
+    let scale = (SIZE - 17) as f64 / camera_extent[0].max(camera_extent[1]);
+    if angled && (!scale.is_finite() || scale <= 0.0) {
+        return Err("Model thumbnail scale exceeds the numerical range".into());
+    }
     let mut pixels = vec![0u8; SIZE * SIZE * 4];
     let mut depth = vec![f64::NEG_INFINITY; SIZE * SIZE];
     let mut work = 0usize;
@@ -306,11 +345,22 @@ fn render(triangles: &[Triangle]) -> Result<Preview, String> {
             continue;
         }
         let p = t.points.map(|v| {
-            [
-                (v[0] - min[0]) / extent[0] * (SIZE - 1) as f64,
-                (v[2] - min[2]) / extent[2] * (SIZE - 1) as f64,
-                v[1],
-            ]
+            if angled {
+                let p = project(v);
+                [
+                    (p[0] - camera_min[0] - camera_extent[0] * 0.5) * scale
+                        + (SIZE - 1) as f64 * 0.5,
+                    (p[1] - camera_min[1] - camera_extent[1] * 0.5) * scale
+                        + (SIZE - 1) as f64 * 0.5,
+                    p[2],
+                ]
+            } else {
+                [
+                    (v[0] - min[0]) / extent[0] * (SIZE - 1) as f64,
+                    (v[2] - min[2]) / extent[2] * (SIZE - 1) as f64,
+                    v[1],
+                ]
+            }
         });
         let edge = |a: [f64; 3], b: [f64; 3], x: f64, y: f64| {
             (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0])
@@ -403,7 +453,12 @@ fn render(triangles: &[Triangle]) -> Result<Preview, String> {
         .filter(|p| p[3] != 0)
         .count();
     if covered_pixels == 0 {
-        return Err("Model has no visible top-down surfaces".into());
+        return Err(if angled {
+            "Model has no visible thumbnail surfaces"
+        } else {
+            "Model has no visible top-down surfaces"
+        }
+        .into());
     }
     let mut image =
         tiny_skia::Pixmap::new(SIZE as u32, SIZE as u32).ok_or("Preview allocation failed")?;

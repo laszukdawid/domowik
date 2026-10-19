@@ -221,6 +221,14 @@ content lazily. Already embedded models remain available if the source
 directory is removed. Directory paths are local machine locations, not portable
 download links.
 
+Use **List view** or **Grid view** beside the search field to browse by picture.
+List rows show a small thumbnail before the name; grid cards show a larger one.
+The choice is remembered on this device. Changing views keeps your search and
+selection. Thumbnails are approximate angled views, loaded only as needed;
+an unavailable preview does not prevent selecting the model. Browsing previews
+does not import models or modify the plan. Select a model, then choose
+**Place in plan** to begin placement.
+
 Reusable library locations are remembered on this device. Plan-attached paths
 can be edited or replaced.
 

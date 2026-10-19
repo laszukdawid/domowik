@@ -1159,6 +1159,36 @@ class _PlanPageState extends State<PlanPage>
       builder: (_) => AssetLibraryDialog(
         directories: _libraryDirectories,
         embedded: _embeddedModels,
+        initialView: _userConfig.assetLibraryView,
+        onViewChanged: (view) async {
+          try {
+            await _userConfig.saveAssetLibraryView(view);
+          } catch (e) {
+            if (mounted)
+              setState(
+                () => _setStatus(
+                  'Could not remember asset view: $e',
+                  isError: true,
+                ),
+              );
+          }
+        },
+        onPreview: (model) async {
+          final core = _bridge;
+          if (!mounted || core == null || _handle != handle) {
+            throw StateError('The plan is no longer open');
+          }
+          final result =
+              await core.assetsInBackground(handle, {
+                    'kind': 'thumbnail',
+                    if (model.file != null) 'file': model.file,
+                    if (model.file != null && model.sourceDirectory != null)
+                      'sourceDirectory': model.sourceDirectory,
+                    if (model.file == null) 'digest': model.digest,
+                  })
+                  as Map<String, Object?>;
+          return Uint8List.fromList((result['png'] as List).cast<int>());
+        },
         onUpload: _modelUploads ? () => _uploadModel(handle) : null,
         onUploadDirectory: modelDirectoryImportAvailable
             ? () => _uploadModelDirectory(handle)

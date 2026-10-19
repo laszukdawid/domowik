@@ -4322,7 +4322,8 @@ section 9.
   catalog. Browsing recursively enumerates regular GLB, OBJ and ZIP files,
   case-insensitively, without following symlinks. ZIP files are opaque model
   bundles; neither their contents nor another application's catalogs are parsed.
-- Browsing copies no model bytes. Placement reads the chosen file with the
+- Directory discovery copies no model bytes into the plan. Placement reads the
+  chosen file with the
   per-blob limit, hashes its exact bytes, embeds it and creates one instance in
   one undoable batch. Identical bytes share a blob. Saved placed instances work
   without their source directory. Library locations persist as optional
@@ -4350,6 +4351,20 @@ section 9.
   query shows all entries, including models without source metadata. Filtering
   is local view state, never a file read, rescan, plan operation or source-file
   mutation. No matches is distinct from an empty library.
+- **Visual library browsing:** the user can switch between a list (thumbnail
+  before each name) and a grid (larger thumbnail and name). List is the default;
+  the choice is remembered in local user/device preferences, not the plan.
+  Switching views preserves the query and selection. Selecting a model still
+  requires the explicit Place in plan action. Visible entries request cached,
+  aspect-preserving angled thumbnails on demand; discovery never decodes the
+  whole library. Thumbnail reads use the existing bounded model decoder and
+  per-blob limit, validate directory containment, and never import content,
+  attach a directory, dirty the plan, or create history. Embedded models need
+  no source files. Desktop decoding runs away from the UI thread; the browser
+  yields before its single-threaded decode. Work is serialized, queued work for
+  entries no longer displayed is dropped, and the bounded dialog cache is
+  discarded on rescan/close. Loading and unavailable previews have explicit
+  placeholders; a preview failure never prevents selecting the model.
 - Native code supplies transformed corners and click interaction geometry.
   Footprints rank after existing wall/opening candidates and among themselves
   by stable UUID. Only active-level instances may be selected or edited;
@@ -4358,7 +4373,7 @@ section 9.
   and embedded bytes are package metadata and are retained across undo.
 - A failed placement changes neither instances nor embedded content. Unknown
   attribution/license fields are preserved; importing user content does not
-  assign Domowik's license to it. No decoder or network retrieval is implied.
+  assign Domowik's license to it. No network retrieval is implied.
 
 ### 10.4 Model dimensions and resizing (issue 0082)
 
@@ -4526,6 +4541,8 @@ create a plan operation or dirty the plan. Placing a model from a global
 library validates its selected source location and embeds its bytes as before.
 
 Version-1 JSON config has `version: 1` and `assetDirectories: [absolute path,...]`.
+Optional `assetLibraryView: "list"|"grid"` remembers visual library presentation;
+omission defaults to list. It has no effect on document persistence or history.
 Unknown preferences survive updates. Reads/writes are limited to 1 MiB and 64
 unique locations; invalid/future files are reported and never silently replaced.
 Updates write and flush a same-directory candidate, then rename it over the

@@ -9,6 +9,49 @@ fn pixel(image: &tiny_skia::Pixmap, x: usize, y: usize) -> &[u8] {
 }
 
 #[test]
+fn library_thumbnail_is_angled_padded_deterministic_and_keeps_original_extents() {
+    // Original vertical facade: invisible from above, recognizable at an angle.
+    let wall = b"v 0 0 0\nv 4 0 0\nv 4 2 1\nv 0 2 1\nf 1 2 3 4\n";
+    let p = domowik_models::thumbnail(wall).unwrap();
+    assert_eq!(p.model_extents, [4., 2., 1.]);
+    assert_eq!(p.triangles, 2);
+    assert!(p.covered_pixels > 1000);
+    assert_eq!(p.png, domowik_models::thumbnail(wall).unwrap().png);
+    assert_ne!(p.png, preview(wall).unwrap().png);
+    let image = tiny_skia::Pixmap::decode_png(&p.png).unwrap();
+    for x in 0..256 {
+        for y in [0, 7, 248, 255] {
+            assert_eq!(pixel(&image, x, y)[3], 0);
+            assert_eq!(pixel(&image, y, x)[3], 0);
+        }
+    }
+    let glb = domowik_models::thumbnail(&original_glb()).unwrap();
+    assert_eq!(glb.model_extents, [4., 0., 6.]);
+    assert!(glb.covered_pixels > 0);
+    assert!(domowik_models::thumbnail(b"not a model").is_err());
+}
+
+#[test]
+fn library_thumbnail_preserves_aspect_ratio_and_shows_vertical_surfaces() {
+    // A tall narrow prism. Its thumbnail must not be stretched to a square.
+    let prism = b"v 0 0 0\nv 1 0 0\nv 1 10 0\nv 0 10 0\nv 0 0 1\nv 1 0 1\nv 1 10 1\nv 0 10 1\nf 1 2 3 4\nf 5 6 7 8\nf 1 5 8 4\nf 2 6 7 3\nf 4 3 7 8\n";
+    let p = domowik_models::thumbnail(prism).unwrap();
+    let image = tiny_skia::Pixmap::decode_png(&p.png).unwrap();
+    let occupied: Vec<_> = (0..256)
+        .flat_map(|y| (0..256).map(move |x| (x, y)))
+        .filter(|&(x, y)| pixel(&image, x, y)[3] != 0)
+        .collect();
+    let width =
+        occupied.iter().map(|p| p.0).max().unwrap() - occupied.iter().map(|p| p.0).min().unwrap();
+    let height =
+        occupied.iter().map(|p| p.1).max().unwrap() - occupied.iter().map(|p| p.1).min().unwrap();
+    assert!(height > width * 4, "{width} by {height}");
+    let vertical = b"v 0 0 1\nv 1 0 0\nv 1 2 0\nv 0 2 1\nf 1 2 3 4\n";
+    assert!(preview(vertical).is_err());
+    assert!(domowik_models::thumbnail(vertical).unwrap().covered_pixels > 0);
+}
+
+#[test]
 fn a_concave_original_obj_renders_its_shape_not_its_bounding_rectangle() {
     let mesh = b"v 0 1 0\nv 3 1 0\nv 3 1 1\nv 1 1 1\nv 1 1 3\nv 0 1 3\nf 3 4 5 6 1 2\n";
     let p = preview(mesh).unwrap();

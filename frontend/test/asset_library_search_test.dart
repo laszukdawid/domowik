@@ -93,7 +93,17 @@ void main() {
       );
       await tester.enterText(search, '');
       await tester.pumpAndSettle();
-      expect(find.byType(ListTile), findsNWidgets(_models.length));
+      expect(find.byType(ListTile), findsAtLeastNWidgets(1));
+      // Rows are now lazy thumbnail subscribers, not a prebuilt whole library.
+      await tester.scrollUntilVisible(
+        find.text('Old chair'),
+        100,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('asset-list')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Old chair'), findsOneWidget);
       expect(find.text('Embedded in this plan'), findsNWidgets(2));
       expect(tester.takeException(), isNull);

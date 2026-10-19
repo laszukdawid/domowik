@@ -150,6 +150,17 @@ int32_t domowik_plan_execute(uint64_t handle, const uint8_t *req,
  * undo, and released with the plan handle. list additionally carries
  * "clipboardCount", ADDITIVE without an ABI revision, like document_revision.
  * Adding these JSON fields/kinds does not change the C function signature. */
+/* thumbnail {digest} or {file,sourceDirectory?} returns the same PNG/triangle/
+ * modelExtents shape as preview, using a fixed angled aspect-preserving camera.
+ * File roots are canonicalized from the supplied selected library directory
+ * and/or attached plan directories; out-of-root files are refused. Reads and
+ * decode are bounded by the existing per-blob/model budgets and run outside
+ * the session lock while retaining the close/drain lease. Read-only: no import,
+ * directory attachment, dirty/history/revision or metadata changes, even on
+ * failure. No cancellation, callbacks, network or external model resources.
+ * Embedded thumbnails work on all core hosts; file requests require filesystem
+ * access. Synchronous call; native UI callers use a worker and serialize work.
+ * Ownership/errors/panic transport match other asset requests. */
 int32_t domowik_plan_assets(uint64_t handle, const uint8_t *req,
                            uint64_t req_len, domowik_buf *out);
 

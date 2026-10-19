@@ -15,6 +15,7 @@ later phase does not imply that earlier exit criteria are complete.
   acceptance, bulk wall height/thickness editing, undo/redo and plan file workflows.
   Plans open on the first listed floor by default and remember the device's last
   active-floor choice, including for older files without document identity.
+  The asset library offers list/grid browsing with on-demand model thumbnails.
 - **3D view:** experimental views derive scene data from the same plan. Linux
   uses a native OpenGL presenter; macOS and the browser use the shared `wgpu`
   renderer via Metal and WebGPU respectively.

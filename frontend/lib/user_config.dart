@@ -8,6 +8,9 @@ export 'platform/config_storage.dart' show ConfigStorage;
 /// Orientation of the divider: vertical places 2D left and 3D right.
 enum SplitOrientation { vertical, horizontal }
 
+/// Visual presentation of the model chooser; never document state.
+enum AssetLibraryView { list, grid }
+
 /// Local user/device preferences. Unknown JSON keys survive updates. Reads are
 /// bounded and unsupported/corrupt files are never silently overwritten.
 class UserConfigStore {
@@ -36,6 +39,9 @@ class UserConfigStore {
       _data['splitOrientation'] == 'horizontal'
       ? SplitOrientation.horizontal
       : SplitOrientation.vertical;
+  AssetLibraryView get assetLibraryView => _data['assetLibraryView'] == 'grid'
+      ? AssetLibraryView.grid
+      : AssetLibraryView.list;
   List<String> get assetDirectories =>
       List.unmodifiable((_data['assetDirectories'] as List).cast<String>());
 
@@ -76,6 +82,11 @@ class UserConfigStore {
         throw const FormatException('Invalid configured asset directories');
       }
       final split = data['splitOrientation'];
+      if (data.containsKey('assetLibraryView') &&
+          data['assetLibraryView'] != 'list' &&
+          data['assetLibraryView'] != 'grid') {
+        throw const FormatException('Invalid asset library view');
+      }
       if (data.containsKey('unitSystem') &&
           data['unitSystem'] != 'metric' &&
           data['unitSystem'] != 'imperial') {
@@ -136,6 +147,9 @@ class UserConfigStore {
 
   Future<void> saveSplitOrientation(SplitOrientation orientation) =>
       _save(() => {..._data, 'splitOrientation': orientation.name});
+
+  Future<void> saveAssetLibraryView(AssetLibraryView view) =>
+      _save(() => {..._data, 'assetLibraryView': view.name});
 
   /// Save the dialog's choices together; failed persistence applies neither.
   Future<void> savePreferences({

@@ -9,6 +9,16 @@ fn embedded_formats_and_draco_uvs_render_quadrants_and_survive_lod() {
             let (j, bin) = support::fixture(format, draco);
             let bytes = support::pack(&j, &bin);
             let preview = domowik_models::preview(&bytes).unwrap();
+            let angled = domowik_models::thumbnail(&bytes).unwrap();
+            let thumbnail = tiny_skia::Pixmap::decode_png(&angled.png).unwrap();
+            for channel in 0..3 {
+                assert!(thumbnail
+                    .data()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|p| p[3] != 0 && p[channel] > 180 && p[(channel + 1) % 3] < 50));
+            }
             let png = tiny_skia::Pixmap::decode_png(&preview.png).unwrap();
             for (x, y, channel) in [(32, 32, 0), (220, 32, 1), (32, 220, 2)] {
                 let pixel = &png.data()[(y * 256 + x) * 4..][..4];

@@ -3,9 +3,12 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import 'measurement_units.dart';
+import 'asset_thumbnails.dart';
+import 'user_config.dart';
 import 'platform/asset_scan.dart';
 import 'platform/host.dart';
 
@@ -97,6 +100,9 @@ class AssetLibraryDialog extends StatefulWidget {
     this.onUpload,
     this.onUploadDirectory,
     this.directoriesAvailable = hostHasFilesystem,
+    this.onPreview,
+    this.initialView = AssetLibraryView.list,
+    this.onViewChanged,
   });
   final List<String> directories;
   final List<LibraryModel> embedded;
@@ -113,6 +119,12 @@ class AssetLibraryDialog extends StatefulWidget {
 
   /// Whether directory libraries can be attached on this host.
   final bool directoriesAvailable;
+
+  /// Read-only derived PNG generation. The dialog schedules only displayed
+  /// entries and never imports a file just to show it.
+  final Future<Uint8List> Function(LibraryModel)? onPreview;
+  final AssetLibraryView initialView;
+  final ValueChanged<AssetLibraryView>? onViewChanged;
 
   @override
   State<AssetLibraryDialog> createState() => _AssetLibraryDialogState();
@@ -134,6 +146,8 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
   late List<LibraryModel> _embedded = widget.embedded;
   static const _files = MethodChannel('invalid.domowik-spike/files');
   int _scanGeneration = 0;
+  AssetThumbnailCache _thumbnails = AssetThumbnailCache();
+  late AssetLibraryView _view = widget.initialView;
 
   @override
   void initState() {
@@ -145,6 +159,8 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
   Future<void> _scan(List<String> directories) async {
     final generation = ++_scanGeneration;
     setState(() {
+      _thumbnails.dispose();
+      _thumbnails = AssetThumbnailCache();
       _loading = true;
       _directories = List.of(directories);
     });
@@ -160,6 +176,7 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
 
   @override
   void dispose() {
+    _thumbnails.dispose();
     for (final c in [_directory, _search]) {
       c.dispose();
     }
@@ -184,8 +201,11 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
     return AlertDialog(
       title: const Text('Plan asset library'),
       content: SizedBox(
-        width: 620,
-        height: 470,
+        width: 760,
+        height: math.min(
+          560,
+          math.max(240, MediaQuery.sizeOf(context).height - 240),
+        ),
         child: Column(
           children: [
             const Text(
@@ -307,13 +327,41 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
                   ),
                 ],
               ),
-            TextField(
-              key: const ValueKey('asset-search'),
-              controller: _search,
-              decoration: const InputDecoration(
-                labelText: 'Search by name or path',
-              ),
-              onChanged: (_) => setState(() {}),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('asset-search'),
+                    controller: _search,
+                    decoration: const InputDecoration(
+                      labelText: 'Search by name or path',
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SegmentedButton<AssetLibraryView>(
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(
+                      value: AssetLibraryView.list,
+                      icon: Icon(Icons.view_list),
+                      tooltip: 'List view',
+                    ),
+                    ButtonSegment(
+                      value: AssetLibraryView.grid,
+                      icon: Icon(Icons.grid_view),
+                      tooltip: 'Grid view',
+                    ),
+                  ],
+                  selected: {_view},
+                  onSelectionChanged: (views) {
+                    final view = views.single;
+                    setState(() => _view = view);
+                    widget.onViewChanged?.call(view);
+                  },
+                ),
+              ],
             ),
             if (_diagnostics.isNotEmpty)
               Padding(
@@ -338,7 +386,27 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
                             : 'No models yet. Upload a model to get started.',
                       ),
                     )
+                  : _view == AssetLibraryView.grid
+                  ? LayoutBuilder(
+                      builder: (_, constraints) => GridView.builder(
+                        key: const ValueKey('asset-grid'),
+                        scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 220,
+                          mainAxisExtent: math.min(
+                            190,
+                            math.max(80, constraints.maxHeight),
+                          ),
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemCount: models.length,
+                        itemBuilder: (_, i) => _gridTile(models[i]),
+                      ),
+                    )
                   : ListView.builder(
+                      key: const ValueKey('asset-list'),
+                      scrollCacheExtent: const ScrollCacheExtent.pixels(0),
                       itemCount: models.length,
                       itemBuilder: (_, i) {
                         final m = models[i];
@@ -349,8 +417,15 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
                         return ListTile(
                           key: ValueKey<String>(m.file ?? m.digest!),
                           dense: true,
-                          leading: const Icon(Icons.chair_outlined),
-                          title: Text(m.name),
+                          leading: SizedBox.square(
+                            dimension: 48,
+                            child: _thumbnail(m),
+                          ),
+                          title: Text(
+                            m.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                           subtitle: Tooltip(
                             message: source,
                             child: Text(
@@ -381,6 +456,56 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
           child: const Text('Place in plan'),
         ),
       ],
+    );
+  }
+
+  Widget _thumbnail(LibraryModel model) => AssetThumbnail(
+    cache: _thumbnails,
+    assetKey: model.file ?? model.digest!,
+    name: model.name,
+    load: widget.onPreview == null ? null : () => widget.onPreview!(model),
+  );
+
+  Widget _gridTile(LibraryModel model) {
+    final selected = identical(model, _selected);
+    final colors = Theme.of(context).colorScheme;
+    final source =
+        model.file ?? model.sourceDescription ?? 'Embedded in this plan';
+    return Semantics(
+      selected: selected,
+      child: Card(
+        key: ValueKey<String>(model.file ?? model.digest!),
+        color: selected ? colors.secondaryContainer : null,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+            color: selected ? colors.primary : colors.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => setState(() => _selected = model),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _thumbnail(model)),
+                const SizedBox(height: 6),
+                Tooltip(
+                  message: '${model.name}\n$source',
+                  child: Text(
+                    model.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

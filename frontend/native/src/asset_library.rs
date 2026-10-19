@@ -215,6 +215,12 @@ enum Request {
     Preview {
         digest: String,
     },
+    #[serde(rename_all = "camelCase")]
+    Thumbnail {
+        digest: Option<String>,
+        file: Option<String>,
+        source_directory: Option<String>,
+    },
     Size {
         digest: String,
     },
@@ -622,7 +628,7 @@ fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
             }
         }
         Request::List => return list(plan),
-        Request::Preview { .. } | Request::Size { .. } => {
+        Request::Preview { .. } | Request::Size { .. } | Request::Thumbnail { .. } => {
             return Err("Model decoding must run outside the plan lock".into())
         }
         Request::Scene { .. } | Request::Mesh { .. } => {
@@ -1220,6 +1226,64 @@ pub unsafe extern "C" fn domowik_plan_assets(
             Ok(r) => r,
             Err(e) => return fail(&plan, status::MALFORMED_REQUEST, e.to_string()),
         };
+        if let Request::Thumbnail {
+            digest,
+            file,
+            source_directory,
+        } = request
+        {
+            // Read-only: no ensure_file/import/commit or metadata updates. The
+            // lease lasts through bounded I/O and decoding, but neither holds
+            // the session lock. A configured root is borrowed for this request,
+            // not attached to the plan just because someone browsed it.
+            let limit = domowik_container::Limits::MAX_ENTRY_BYTES.min(64 * 1024 * 1024);
+            let bytes = match (digest, file) {
+                (Some(digest), None) if source_directory.is_none() => {
+                    let locked = plan.lock().unwrap_or_else(|e| e.into_inner());
+                    locked
+                        .file
+                        .as_ref()
+                        .and_then(|f| f.assets.get(&digest))
+                        .filter(|b| b.len() as u64 <= limit)
+                        .cloned()
+                        .ok_or_else(|| {
+                            "Model bytes are unavailable or exceed the 64 MiB preview limit"
+                                .to_owned()
+                        })
+                }
+                (None, Some(file)) => {
+                    let mut roots = {
+                        let locked = plan.lock().unwrap_or_else(|e| e.into_inner());
+                        directories(&locked)
+                    };
+                    if let Some(root) = source_directory {
+                        roots.push(root);
+                    }
+                    (|| {
+                        let path = std::fs::canonicalize(file).map_err(|e| e.to_string())?;
+                        model_media_type(&path)?;
+                        if !roots
+                            .iter()
+                            .filter_map(|p| std::fs::canonicalize(p).ok())
+                            .any(|root| root.is_dir() && path.starts_with(root))
+                        {
+                            return Err(
+                                "Model must belong to a selected library directory".to_owned()
+                            );
+                        }
+                        read_model(&path, limit)
+                    })()
+                }
+                _ => Err("Choose exactly one embedded model or library file".to_owned()),
+            };
+            let result = bytes
+                .and_then(|bytes| domowik_models::thumbnail(&bytes))
+                .and_then(|preview| serde_json::to_vec(&preview).map_err(|e| e.to_string()));
+            return match result {
+                Ok(bytes) => release(bytes, out),
+                Err(e) => fail(&plan, status::REJECTED, e),
+            };
+        }
         if let Request::Mesh { ref digest } = request {
             let mesh = {
                 let locked = plan.lock().unwrap_or_else(|e| e.into_inner());
@@ -1472,6 +1536,102 @@ mod tests {
         let (plan, _lease) = resolve(handle).unwrap();
         let level = plan.lock().unwrap().session().document().levels[0].id;
         (handle, level)
+    }
+
+    #[test]
+    fn library_thumbnails_read_files_or_embedded_bytes_without_import_or_mutation() {
+        let root = std::env::temp_dir().join(format!("domowik-thumbnails-{}", Uuid::now_v7()));
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("original.obj");
+        let model = b"v 0 0 0\nv 2 0 0\nv 0 1 2\nf 1 2 3\n";
+        std::fs::write(&file, model).unwrap();
+        let (h, _) = create();
+        let before = state(h);
+        let library = request(h, json!({"kind":"list"})).unwrap();
+        let preview = request(
+            h,
+            json!({"kind":"thumbnail","file":file,"sourceDirectory":root}),
+        )
+        .unwrap();
+        assert!(preview["coveredPixels"].as_u64().unwrap() > 0);
+        assert_eq!(preview["triangles"], 1);
+        assert_eq!(state(h), before);
+        assert_eq!(request(h, json!({"kind":"list"})).unwrap(), library);
+        assert_eq!(std::fs::read(&file).unwrap(), model);
+
+        request(h, json!({"kind":"attach","directory":root})).unwrap();
+        let attached_state = state(h);
+        assert_eq!(
+            request(h, json!({"kind":"thumbnail","file":file})).unwrap(),
+            preview
+        );
+        assert_eq!(state(h), attached_state);
+        assert!(request(h, json!({"kind":"list"})).unwrap()["models"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+
+        let digest = import(h, "original.obj", model).unwrap()["digest"].clone();
+        std::fs::remove_file(&file).unwrap();
+        let before = state(h);
+        let library = request(h, json!({"kind":"list"})).unwrap();
+        let embedded = request(h, json!({"kind":"thumbnail","digest":digest})).unwrap();
+        assert_eq!(embedded, preview);
+        assert_eq!(state(h), before);
+        assert_eq!(request(h, json!({"kind":"list"})).unwrap(), library);
+        assert_eq!(domowik_plan_close(h), status::OK);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn library_thumbnail_refusals_and_symlink_escape_do_not_mutate_the_plan() {
+        let root =
+            std::env::temp_dir().join(format!("domowik-thumbnail-refusal-{}", Uuid::now_v7()));
+        let library = root.join("library");
+        std::fs::create_dir_all(&library).unwrap();
+        let outside = root.join("outside.obj");
+        std::fs::write(&outside, b"v 0 0 0\nv 2 0 0\nv 0 1 2\nf 1 2 3\n").unwrap();
+        let malformed = library.join("broken.obj");
+        std::fs::write(&malformed, b"not a model").unwrap();
+        let oversized = library.join("oversized.obj");
+        std::fs::File::create(&oversized)
+            .unwrap()
+            .set_len(64 * 1024 * 1024 + 1)
+            .unwrap();
+        let (h, _) = create();
+        let before = state(h);
+        for req in [
+            json!({"kind":"thumbnail"}),
+            json!({"kind":"thumbnail","file":outside,"digest":"sha256:missing","sourceDirectory":library}),
+            json!({"kind":"thumbnail","file":outside,"sourceDirectory":library}),
+            json!({"kind":"thumbnail","file":outside}),
+            json!({"kind":"thumbnail","file":malformed,"sourceDirectory":library}),
+            json!({"kind":"thumbnail","file":oversized,"sourceDirectory":library}),
+            json!({"kind":"thumbnail","digest":"sha256:missing"}),
+        ] {
+            assert_eq!(request(h, req), Err(status::REJECTED));
+        }
+        #[cfg(unix)]
+        {
+            let link = library.join("escape.obj");
+            std::os::unix::fs::symlink(&outside, &link).unwrap();
+            assert_eq!(
+                request(
+                    h,
+                    json!({"kind":"thumbnail","file":link,"sourceDirectory":library})
+                ),
+                Err(status::REJECTED)
+            );
+        }
+        assert_eq!(state(h), before);
+        let (plan, _lease) = resolve(h).unwrap();
+        assert!(
+            plan.lock().unwrap().file.is_none(),
+            "Browsing must not create package metadata"
+        );
+        drop(_lease);
+        assert_eq!(domowik_plan_close(h), status::OK);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     fn marquee_ids(handle: u64, level: Uuid, a: [f64; 2], b: [f64; 2]) -> Vec<Value> {

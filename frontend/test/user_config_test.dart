@@ -8,6 +8,27 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+    'asset library view defaults to list and survives unrelated preference saves',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'domowik-library-view-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final file = File('${root.path}/config.json');
+      final store = UserConfigStore(FileConfigStorage(file));
+      expect(store.assetLibraryView, AssetLibraryView.list);
+      await store.saveAssetLibraryView(AssetLibraryView.grid);
+      await store.saveDirectories(['/library']);
+      final restarted = UserConfigStore(FileConfigStorage(file));
+      await restarted.load();
+      expect(restarted.assetLibraryView, AssetLibraryView.grid);
+      await restarted.saveAssetLibraryView(AssetLibraryView.list);
+      await store.load();
+      expect(store.assetLibraryView, AssetLibraryView.list);
+      expect(store.assetDirectories, ['/library']);
+    },
+  );
+  test(
     'split defaults and saved choices preserve libraries and unknown keys',
     () async {
       final root = await Directory.systemTemp.createTemp('domowik-split-');
@@ -83,6 +104,7 @@ void main() {
       '{"version":1,"splitOrientation":"diagonal"}',
       '{"version":1,"unitSystem":"unknown"}',
       '{"version":1,"unitSystem":null}',
+      '{"version":1,"assetLibraryView":"tiles"}',
     ]) {
       await file.writeAsString(content);
       final store = UserConfigStore(FileConfigStorage(file));

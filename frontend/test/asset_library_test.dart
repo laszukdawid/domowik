@@ -205,6 +205,13 @@ void main() {
       await tap(find.byKey(const ValueKey('attach-asset-directory')));
       await io();
       expect(find.text('original sofa'), findsOneWidget);
+      expect(find.bySemanticsLabel('Preview of original sofa'), findsOneWidget);
+      await tap(find.byTooltip('Grid view'));
+      expect(find.byKey(const ValueKey('asset-grid')), findsOneWidget);
+      expect(
+        jsonDecode(configFile.readAsStringSync())['assetLibraryView'],
+        'grid',
+      );
       expect(configFile.existsSync(), isTrue);
       expect(
         find.textContaining('Unsaved'),
@@ -700,7 +707,19 @@ void main() {
       expect(scene().assets.single.elevationMm, 1500);
       await tap(find.byKey(const ValueKey('asset-library')));
       await io();
-      expect(find.textContaining('original sofa.obj'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Tooltip &&
+              (w.message?.contains('original sofa.obj') ?? false),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.bySemanticsLabel('Preview of original sofa'),
+        findsOneWidget,
+        reason: 'embedded thumbnails survive missing source files',
+      );
       expect(find.textContaining('Cannot read'), findsOneWidget);
       await tap(find.text('Close'));
       await tester.pumpWidget(const SizedBox.shrink());
@@ -729,6 +748,13 @@ void main() {
             .directories,
         [libraryPath],
         reason: 'global library survives application restart',
+      );
+      expect(
+        tester
+            .widget<AssetLibraryDialog>(find.byType(AssetLibraryDialog))
+            .initialView,
+        AssetLibraryView.grid,
+        reason: 'visual library preference survives application restart',
       );
       await tap(find.text('Close'));
     },
