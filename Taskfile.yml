@@ -7,8 +7,12 @@ tasks:
       - cargo run --locked --bin domowik -- {{.CLI_ARGS}}
 
   run:gui:linux:
-    desc: Run the Domowik editor on Linux desktop
+    desc: Run the Domowik editor on Linux desktop with NVIDIA PRIME offloading
     dir: frontend
+    env:
+      GDK_BACKEND: x11
+      __NV_PRIME_RENDER_OFFLOAD: '1'
+      __GLX_VENDOR_LIBRARY_NAME: nvidia
     cmds:
       - flutter run -d linux
 
