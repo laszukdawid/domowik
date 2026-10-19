@@ -74,7 +74,7 @@ bool get _firstFrameProbeRequested =>
 /// A mismatch is fatal on purpose. The header says a caller reading a
 /// different number must not proceed, and an app that proceeded anyway would
 /// be interpreting one struct layout as another.
-const int expectedAbi = 16;
+const int expectedAbi = 17;
 
 void main(List<String> arguments) {
   // Native builds may be launched as a headless probe; see platform/entry.dart.
@@ -2242,6 +2242,24 @@ class _PlanPageState extends State<PlanPage>
         'openingId': opening.id,
         ...changes,
       }, 'edit opening');
+      return true;
+    });
+  }
+
+  /// R7.1.7: one explicit group command, independent of selection primary.
+  Future<void> _editWallsProperties(List<Wall> walls) async {
+    await _fileAction(() async {
+      final changes = await WallPropertiesDialog.showMultiple(
+        context,
+        walls,
+        units: _userConfig.unitSystem,
+      );
+      if (!mounted || changes == null || changes.isEmpty) return false;
+      _gesture({
+        'kind': 'setWalls',
+        'wallIds': walls.map((wall) => wall.id).toList(),
+        ...changes.toJson(),
+      }, 'edit walls');
       return true;
     });
   }
@@ -4966,6 +4984,12 @@ class _PlanPageState extends State<PlanPage>
     final theme = Theme.of(context);
     final flags = _levelView.visibility;
     final selected = _walls.where((wall) => wall.id == _selected).firstOrNull;
+    final selectedWalls = _walls
+        .where((wall) => _selection.ids.contains(wall.id))
+        .toList();
+    final bulkWalls =
+        selectedWalls.length > 1 &&
+        selectedWalls.length == _selection.ids.length;
     final selectedOpening = _derived.openings
         .where((o) => o.id == _selected)
         .firstOrNull;
@@ -5113,7 +5137,7 @@ class _PlanPageState extends State<PlanPage>
       padding: const EdgeInsets.all(16),
       children: [
         _counter('Selected', '${_selection.ids.length}'),
-        if (_selection.ids.isNotEmpty && _selected == null) ...[
+        if (!bulkWalls && _selection.ids.isNotEmpty && _selected == null) ...[
           const Text('No primary selected'),
           Text(
             'Click an object to make it the primary before editing or deleting.',
@@ -5121,7 +5145,15 @@ class _PlanPageState extends State<PlanPage>
           ),
           const SizedBox(height: 8),
         ],
-        if (_joins.containsKey(_selected)) ...[
+        if (bulkWalls) ...[
+          Text('${selectedWalls.length} walls selected'),
+          OutlinedButton.icon(
+            key: const ValueKey('edit-walls-dimensions'),
+            onPressed: () => _editWallsProperties(selectedWalls),
+            icon: const Icon(Icons.tune, size: 18),
+            label: const Text('Edit height and thickness'),
+          ),
+        ] else if (_joins.containsKey(_selected)) ...[
           const Text('Joined corner'),
           Text(
             '${_joins[_selected]!.length} connected wall ends',

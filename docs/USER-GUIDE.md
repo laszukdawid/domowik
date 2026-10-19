@@ -92,8 +92,9 @@ The editor's in-app hints detect the platform. Use these primary shortcuts:
 **Select** is the default tool and never draws walls; choose **Walls** to draw.
 Click repeatedly at the same spot to cycle overlapping objects. Drag any
 selected member to move selected walls and furniture together, with one Undo
-to restore the group. Inspector edits and Delete still act on the **primary
-object**. Removing the primary does not silently promote another object.
+to restore the group. A walls-only selection supports bulk height/thickness
+editing (below); other inspector edits and Delete act on the **primary object**.
+Removing the primary does not silently promote another object.
 The marquee selects intersecting active-level walls, resolved furniture
 footprint envelopes and degraded asset instances together; a rectangle over several
 objects selects them all. Degraded placeholders cannot move as a group. An
@@ -116,6 +117,20 @@ Plan +Y points upward. **Preferences → Measurement units** selects **Metric**
 rulers in feet). Save applies the choice to all plans on this device and
 remembers it across restarts. Cancel discards changes. Angles stay in degrees;
 switching units does not change stored geometry, grid/snapping or undo history.
+
+## Change several walls' height or thickness
+
+1. In **Select**, Shift-click walls to add them, or drag a selection rectangle.
+   Select only walls on the active floor, not furniture or openings.
+2. In **Selection**, choose **Edit height and thickness**.
+3. Enter the desired height and/or thickness, then **Apply**. A field shows
+   **Mixed** when the selected walls differ. Leave a field blank to preserve
+   each wall's existing value for that property.
+
+The change applies to all selected walls in one undo step. Lengths, endpoints,
+unselected walls and floor defaults stay unchanged. Invalid changes, including
+making a wall too short or thin for a hosted door/window, are rejected as a whole.
+**Cancel** or Escape discards the form without editing the plan.
 
 ## In a web browser
 

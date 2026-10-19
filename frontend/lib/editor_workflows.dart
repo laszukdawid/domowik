@@ -28,7 +28,8 @@ class EditorWorkflows {
   String get selectionHint =>
       'Click again to cycle overlapping objects. Hold Shift or '
       '$primaryModifier and click to toggle selection. '
-      'Edits act only on the primary object.';
+      'Select multiple walls to edit their height and thickness together; '
+      'other property edits and deletion act on the primary object.';
 
   String get marqueeHint =>
       'Hold Shift or $primaryModifier and drag from empty space to add '

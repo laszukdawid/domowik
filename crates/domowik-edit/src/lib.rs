@@ -1590,6 +1590,51 @@ pub fn set_wall_operations(
     Ok(edit)
 }
 
+/// Sets selected walls' thickness and/or height in millimetres (R7.1.7).
+///
+/// IDs are deduplicated and sorted. Unknown/non-wall targets, mixed levels and
+/// non-finite or nonpositive dimensions fail the whole builder. Omitted or
+/// unchanged values emit no operations. Axes, joins and hosted openings are
+/// untouched; no contact resolution is performed. Commit the returned operations
+/// together: session admission validates all final dimensions and hosted opening
+/// constraints atomically. Borrows the document without mutation; owns its output
+/// and retains no references or shared state.
+pub fn set_walls_operations(
+    doc: &Document,
+    ids: &[Uuid],
+    thickness_mm: Option<f64>,
+    height_mm: Option<f64>,
+) -> std::result::Result<Vec<Operation>, String> {
+    for (name, value) in [("thicknessMm", thickness_mm), ("heightMm", height_mm)] {
+        if value.is_some_and(|v| !v.is_finite() || v <= 0.0) {
+            return Err(format!("{name} must be finite and positive"));
+        }
+    }
+    let ids: std::collections::BTreeSet<_> = ids.iter().copied().collect();
+    let mut level = None;
+    // One lookup index avoids rescanning every document wall for every target.
+    let walls: std::collections::HashMap<_, _> = doc.walls.iter().map(|w| (w.id, w)).collect();
+    let mut operations = Vec::new();
+    for id in ids {
+        let wall = walls
+            .get(&id)
+            .ok_or_else(|| format!("no wall {id} to edit"))?;
+        if level.is_some_and(|previous| previous != wall.level_id) {
+            return Err("bulk wall editing must stay on one level".into());
+        }
+        level = Some(wall.level_id);
+        for (name, value, current) in [
+            ("thicknessMm", thickness_mm, wall.thickness_mm),
+            ("heightMm", height_mm, wall.height_mm),
+        ] {
+            if let Some(value) = value.filter(|v| *v != current) {
+                operations.push(set_field(id, name, serde_json::json!(value)));
+            }
+        }
+    }
+    Ok(operations)
+}
+
 /// Translates a same-level selection in millimetres (R7.1 owner amendment,
 /// issue 0107). IDs are deduplicated and sorted for deterministic effect order.
 /// Each selected wall and its attached nodes move once; contacts are resolved
@@ -2102,6 +2147,102 @@ mod level_tests {
             resolve_wall_height(&doc, id, None).expect("default"),
             2700.0
         );
+    }
+
+    #[test]
+    fn bulk_wall_dimensions_are_deterministic_deduplicated_and_sparse() {
+        let (mut doc, level) = one_level();
+        let mut a = Wall::new(
+            level,
+            Point::new(0.0, 0.0),
+            Point::new(3000.0, 0.0),
+            120.0,
+            2500.0,
+        );
+        a.id = Uuid::from_u128(1);
+        let mut b = Wall::new(
+            level,
+            Point::new(0.0, 1000.0),
+            Point::new(3000.0, 1000.0),
+            200.0,
+            2700.0,
+        );
+        b.id = Uuid::from_u128(2);
+        doc.walls.extend([a.clone(), b.clone()]);
+        let ids = [b.id, a.id, b.id];
+        let ops = set_walls_operations(&doc, &ids, Some(200.0), Some(2700.0)).unwrap();
+        let reordered =
+            set_walls_operations(&doc, &[a.id, b.id], Some(200.0), Some(2700.0)).unwrap();
+        // Operation identities are fresh; effect ordering is deterministic.
+        assert_eq!(
+            ops.iter()
+                .map(|op| (op.entity_id, &op.kind))
+                .collect::<Vec<_>>(),
+            reordered
+                .iter()
+                .map(|op| (op.entity_id, &op.kind))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(ops.len(), 2, "already matching wall emits nothing");
+        let mut after = doc.clone();
+        for op in &ops {
+            apply_preview(&mut after, op);
+        }
+        let mut expected = doc.clone();
+        expected.walls[0].thickness_mm = 200.0;
+        expected.walls[0].height_mm = 2700.0;
+        assert_eq!(
+            serde_json::to_value(&after).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
+        assert!(
+            set_walls_operations(&after, &ids, Some(200.0), Some(2700.0))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(set_walls_operations(&doc, &ids, None, None)
+            .unwrap()
+            .is_empty());
+        let height_only = set_walls_operations(&doc, &ids, None, Some(2800.0)).unwrap();
+        assert_eq!(height_only.len(), 2);
+        assert_eq!(
+            height_only
+                .iter()
+                .map(|op| op.entity_id)
+                .collect::<Vec<_>>(),
+            [a.id, b.id]
+        );
+        let thickness_only = set_walls_operations(&doc, &ids, Some(180.0), None).unwrap();
+        assert_eq!(thickness_only.len(), 2);
+    }
+
+    #[test]
+    fn bulk_wall_dimensions_refuse_invalid_values_and_targets() {
+        let (mut doc, level) = one_level();
+        let a = Wall::new(
+            level,
+            Point::new(0.0, 0.0),
+            Point::new(3000.0, 0.0),
+            120.0,
+            2500.0,
+        );
+        doc.walls.push(a.clone());
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(set_walls_operations(&doc, &[a.id], Some(bad), None).is_err());
+            assert!(set_walls_operations(&doc, &[a.id], None, Some(bad)).is_err());
+        }
+        for invalid in [Uuid::nil(), level] {
+            assert!(set_walls_operations(&doc, &[a.id, invalid], None, Some(2700.0)).is_err());
+        }
+        let other = Wall::new(
+            Uuid::from_u128(99),
+            Point::new(0.0, 1000.0),
+            Point::new(3000.0, 1000.0),
+            120.0,
+            2500.0,
+        );
+        doc.walls.push(other.clone());
+        assert!(set_walls_operations(&doc, &[a.id, other.id], None, Some(2700.0)).is_err());
     }
 
     #[test]

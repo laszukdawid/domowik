@@ -20,7 +20,7 @@ See [Getting started](../../docs/GETTING-STARTED.md),
 ## ABI summary (internal, not a stable product contract)
 
 ```c
-int32_t domowik_abi_version(void); /* 16 */
+int32_t domowik_abi_version(void); /* 17 */
 int32_t domowik_plan_create(uint64_t* out_handle);
 int32_t domowik_plan_create_default(uint64_t* out_handle);
 int32_t domowik_plan_execute(uint64_t, const uint8_t*, uint64_t, domowik_buf*);

@@ -3150,7 +3150,8 @@ application source or behavior. No document-format change.
   implementations must never silently reassign it. Commands act on their
   commanded target unless a normative rule explicitly defines a multi-entity
   command. The owner amendment above defines plain selected-group translation;
-  inspector edits and deletions still target the PRIMARY item.
+  R7.1.7 defines bulk wall measurements; other inspector edits and deletions
+  still target the PRIMARY item.
 - **R7.1.2 State class.** Selection, hover, and cycle index are local
   transient state: never persisted, never in the operation log, never
   restored by undo/redo, cleared on level switch (section 7.4 table).
@@ -3208,6 +3209,22 @@ application source or behavior. No document-format change.
   batch (contact, zero length, opening constraints) leaves the document, both
   history stacks, and selection unchanged. The form seeds from the current
   authoritative snapshot and emits zero operations when nothing changed.
+- **R7.1.7 Bulk wall measurements (original owner-requested decision).** For
+  a selection of two or more walls, with no other entity types selected, the
+  editor exposes one form for their height and thickness, even when primary is
+  unset. A common value is shown when all selected walls agree; otherwise the
+  field is blank with a `Mixed` hint. Blank fields leave that property unchanged
+  on every wall. Entered values replace that property on every selected wall;
+  length, endpoints, joins, styles, other entities and level defaults are not
+  edited. Values are finite and strictly positive. All targets must exist and
+  belong to one level; unknown, non-wall or cross-level targets refuse the whole
+  command. Duplicate IDs are applied once in stable ID order. Only actual changes
+  emit operations, in ONE atomic batch and undo step. Core admission revalidates
+  every hosted opening against the final wall dimensions. Any refusal leaves the
+  document, undo/redo stacks and selection unchanged. Cancel, dismissal and an
+  unchanged form emit no operations. Selection and primary remain unchanged by
+  apply, undo and redo. This is an original product choice from the owner's
+  bulk-edit request; no external application material or format change.
 
 ### 7.2 Click, tap, cycling, modifiers
 
@@ -3640,9 +3657,9 @@ restores an equivalent document projection, not byte-identical history
   accepted operation batch: each accepted chain segment (per-segment
   batching preserved verbatim from R3.1.1), each completed drag, each
   confirmed numeric edit, and every other command defined by a normative
-  section, including its incidental-resolution effects (R3.4.4). No group
-  commands exist in v0.1 (R7.1.1); should a later normative section define
-  one, it is ONE entry like any accepted batch. EXEMPTIONS: (a)
+  section, including its incidental-resolution effects (R3.4.4). The explicit
+  group translation and bulk wall measurement commands (R7.1) each create ONE
+  entry like any accepted batch. EXEMPTIONS: (a)
   compensation/restoring batches emitted by executed undos and redos
   (R8.1.2) are stack-mechanics operations — they create NO new undo-stack
   entries themselves; (b) accepted external/replayed batches create NO

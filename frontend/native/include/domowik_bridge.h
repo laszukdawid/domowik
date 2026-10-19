@@ -70,7 +70,7 @@ typedef struct {
   uint64_t token;
 } domowik_buf;
 
-/* The ABI revision, currently 16. A caller reading a different number must
+/* The ABI revision, currently 17. A caller reading a different number must
  * not proceed.
  *
  * 10 is NOT backward-compatible, unlike every export- or field-only bump
@@ -229,7 +229,15 @@ int32_t domowik_plan_snapshot(uint64_t handle, domowik_buf *out);
  * A caller assembling operations by hand gets none of that and quietly
  * produces a different document.
  *
- * Requests are JSON: addWall, moveWall, setWall, deleteWall, reverseWall,
+ * ABI 17 adds setWalls {wallIds, thicknessMm?, heightMm?}: selected same-level
+ * walls only, one atomic batch. Unknown/non-wall/cross-level IDs reject the whole
+ * request. Duplicate IDs apply once in stable ID order; omitted or unchanged
+ * fields emit no operations. An unchanged request returns an EMPTY owned buffer
+ * without changing history. Hosted openings are revalidated on the final state;
+ * a refusal changes neither document nor history. No length or axis edit.
+ * Ownership, threading and errors are the same as other gestures.
+ *
+ * Requests are JSON: addWall, moveWall, setWall, setWalls, deleteWall, reverseWall,
  * addOpening, moveOpening, deleteOpening, deleteLevel, setLevel. */
 int32_t domowik_plan_edit(uint64_t handle, const uint8_t *req, uint64_t req_len,
                           domowik_buf *out);

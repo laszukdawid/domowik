@@ -176,7 +176,9 @@ pub mod status {
 /// [`domowik_plan_scene_frame`]. Additive, and the number moves for **9**'s
 /// reason; the `wasm32-wasip1` build also exports `domowik_web_alloc` and
 /// `domowik_web_free`.
-const ABI_VERSION: i32 = 16;
+/// **17** adds `setWalls`: one atomic height/thickness edit of same-level walls.
+/// Older libraries reject the new gesture; version checking catches that at load.
+const ABI_VERSION: i32 = 17;
 
 /// An owned byte buffer handed to the caller.
 ///
@@ -1604,6 +1606,7 @@ pub unsafe extern "C" fn domowik_plan_snapshot(handle: u64, out: *mut DomowikBuf
 /// {"kind":"setWall","wallId":"…","thicknessMm":150}
 /// {"kind":"setWall","wallId":"…","lengthMm":3000,"heightMm":2700}
 ///                                    // lengthMm keeps start, moves end
+/// {"kind":"setWalls","wallIds":["…","…"],"heightMm":2700,"thicknessMm":200}
 /// {"kind":"deleteWall","wallId":"…"}
 /// {"kind":"reverseWall","wallId":"…"}
 /// {"kind":"orderLevels","levelIds":["…","…"]}     // top of the list first
@@ -1682,6 +1685,7 @@ pub unsafe extern "C" fn domowik_plan_edit(
             && matches!(
                 request,
                 EditRequest::SetLevel { .. }
+                    | EditRequest::SetWalls { .. }
                     | EditRequest::SetOpening { .. }
                     // Issue 0115: a reorder that finds the list already in
                     // this order commits nothing either.
@@ -1882,6 +1886,14 @@ enum EditRequest {
         /// construction: this gesture has no start/end fields.
         #[serde(default)]
         length_mm: Option<f64>,
+        #[serde(default)]
+        thickness_mm: Option<f64>,
+        #[serde(default)]
+        height_mm: Option<f64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    SetWalls {
+        wall_ids: Vec<Uuid>,
         #[serde(default)]
         thickness_mm: Option<f64>,
         #[serde(default)]
@@ -2097,6 +2109,11 @@ fn build_edit(doc: &Document, request: &EditRequest) -> Result<Vec<Operation>, S
                 .map(|edit| edit.operations)
                 .map_err(|error| error.to_string())
         }
+        EditRequest::SetWalls {
+            wall_ids,
+            thickness_mm,
+            height_mm,
+        } => domowik_edit::set_walls_operations(doc, wall_ids, *thickness_mm, *height_mm),
         EditRequest::DeleteWall { wall_id } => {
             Ok(domowik_edit::remove_wall_operations(doc, *wall_id).operations)
         }
@@ -4194,6 +4211,83 @@ mod tests {
             before,
             "one undo restores length, thickness and height together"
         );
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn bulk_wall_dimensions_commit_undo_redo_and_refuse_atomically() {
+        let (h, level) = plan_with_a_room();
+        let walls = snapshot_json(h)["walls"].as_array().unwrap().clone();
+        let ids = serde_json::json!([walls[1]["id"], walls[0]["id"], walls[1]["id"]]);
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({
+                    "kind":"setWall", "wallId":walls[1]["id"], "heightMm":2800.0
+                })
+            )
+            .0,
+            status::OK
+        );
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({
+                    "kind":"addOpening", "hostWallId":walls[0]["id"], "opening":"door",
+                    "u":0.5, "widthMm":900.0, "heightMm":2100.0
+                })
+            )
+            .0,
+            status::OK
+        );
+        let before = snapshot_json(h);
+        let base = state_of(h)["undo_depth"].as_u64().unwrap();
+        let request = serde_json::json!({"kind":"setWalls", "wallIds":ids,
+            "thicknessMm":250.0, "heightMm":3000.0});
+        assert_eq!(edit_json(h, request.clone()).0, status::OK);
+        assert_eq!(state_of(h)["undo_depth"], base + 1);
+        let after = snapshot_json(h);
+        let mut expected = before.clone();
+        for wall in expected["walls"].as_array_mut().unwrap() {
+            if ids.as_array().unwrap().contains(&wall["id"]) {
+                wall["heightMm"] = serde_json::json!(3000.0);
+                wall["thicknessMm"] = serde_json::json!(250.0);
+            }
+        }
+        assert_eq!(after, expected, "only selected wall dimensions change");
+        let state = state_of(h);
+        let (code, body) = edit_json(h, request);
+        assert_eq!(code, status::OK);
+        assert!(body.is_empty(), "unchanged bulk form has no batch");
+        assert_eq!(state_of(h), state);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), before);
+        let state = state_of(h);
+        for request in [
+            serde_json::json!({"kind":"setWalls", "wallIds":ids, "heightMm":2000.0, "thicknessMm":250.0}),
+            serde_json::json!({"kind":"setWalls", "wallIds":ids, "thicknessMm":100.0}),
+            serde_json::json!({"kind":"setWalls", "wallIds":ids, "heightMm":0.0}),
+            serde_json::json!({"kind":"setWalls", "wallIds":[walls[0]["id"], Uuid::nil()], "heightMm":3000.0}),
+            serde_json::json!({"kind":"setWalls", "wallIds":[walls[0]["id"], level], "heightMm":3000.0}),
+        ] {
+            assert_eq!(edit_json(h, request).0, status::REJECTED);
+            assert_eq!(snapshot_json(h), before, "no partial updates on refusal");
+            assert_eq!(state_of(h), state, "both history stacks survive refusal");
+        }
+        // A no-change command must preserve an existing redo entry as well.
+        assert_eq!(
+            edit_json(h, serde_json::json!({"kind":"setWalls", "wallIds":ids})).0,
+            status::OK
+        );
+        assert_eq!(state_of(h), state);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_redo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), after);
         assert_eq!(domowik_plan_close(h), status::OK);
     }
 

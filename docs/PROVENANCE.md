@@ -17,6 +17,14 @@ Tests use original synthetic levels and temporary plans. No external publication
 application source, artwork or test vectors were consulted or adapted; no new
 notice obligations arise.
 
+## Bulk wall measurements
+
+Bulk height/thickness editing is an original product choice from the owner's
+request, specified in BEHAVIOR-SPEC R7.1.7. Implementation uses Domowik's existing
+field operations and atomic admission. Tests use original synthetic walls and
+openings, not personal plans. No external publication, application source,
+artwork or test data was consulted or adapted; no dependencies or notices added.
+
 ## Robust predicates
 
 - **Publication:** Jonathan Richard Shewchuk, *Adaptive Precision Floating-Point

@@ -734,6 +734,149 @@ void main() {
     expect(dirty(), isFalse);
   });
 
+  testWidgets('Ctrl-clicking thirteen walls edits every selected wall height', (
+    tester,
+  ) async {
+    await start(tester);
+    final ids = await openWalls(tester, [
+      for (var i = 0; i < 14; i++)
+        (Offset(-1000, i * 500.0), Offset(1000, i * 500.0)),
+    ]);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    for (var i = 0; i < 13; i++) {
+      await clickAt(
+        tester,
+        screenPoint(tester, Offset.zero + Offset(0, i * 500.0)),
+        PointerDeviceKind.mouse,
+      );
+    }
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(painter(tester).selectedIds, ids.take(13).toSet());
+    expect(painter(tester).selected, ids[12]);
+    final before = painter(tester).walls.toList();
+    final edit = find.byKey(const ValueKey('edit-walls-dimensions'));
+    expect(edit, findsOneWidget);
+    expect(find.byKey(const ValueKey('edit-wall-dimensions')), findsNothing);
+    await tester.ensureVisible(edit);
+    await tap(tester, edit);
+    expect(find.text('Edit 13 walls'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('wall-heightMm-field')),
+      '2700',
+    );
+    await tester.pumpAndSettle();
+    await tap(tester, find.byKey(const ValueKey('wall-properties-apply')));
+    for (final original in before) {
+      final after = painter(
+        tester,
+      ).walls.firstWhere((w) => w.id == original.id);
+      expect(
+        after.heightMm,
+        original.id == ids.last ? original.heightMm : 2700,
+      );
+      expect(after.thicknessMm, original.thicknessMm);
+      expect(after.start, original.start);
+      expect(after.end, original.end);
+    }
+    expect(painter(tester).selectedIds, ids.take(13).toSet());
+    expect(painter(tester).selected, ids[12]);
+    historyButton(tester, 'Undo').onPressed!();
+    await tester.pumpAndSettle();
+    for (final original in before) {
+      expect(
+        painter(tester).walls.firstWhere((w) => w.id == original.id).heightMm,
+        original.heightMm,
+      );
+    }
+  });
+
+  for (final unsetPrimary in [false, true]) {
+    testWidgets(
+      'bulk wall dimensions apply and undo together (no primary: $unsetPrimary)',
+      (tester) async {
+        await start(tester);
+        final ids = await openWalls(tester, [
+          (const Offset(-1000, 0), const Offset(1000, 0)),
+          (const Offset(-1000, 1000), const Offset(1000, 1000)),
+          (const Offset(-1000, 2000), const Offset(1000, 2000)),
+        ]);
+        await selectBoth(tester);
+        if (unsetPrimary) {
+          // Add then toggle off a third wall: the two survivors have no primary.
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+          for (var i = 0; i < 2; i++) {
+            await clickAt(
+              tester,
+              screenPoint(tester, const Offset(0, 2000)),
+              PointerDeviceKind.mouse,
+            );
+          }
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+          await tester.pumpAndSettle();
+          expect(painter(tester).selected, isNull);
+          expect(find.text('No primary selected'), findsNothing);
+        }
+        final primary = painter(tester).selected;
+        final before = painter(tester).walls.toList();
+        final edit = find.byKey(const ValueKey('edit-walls-dimensions'));
+        expect(edit, findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('edit-wall-dimensions')),
+          findsNothing,
+        );
+        await tester.ensureVisible(edit);
+        await tap(tester, edit);
+        await tester.enterText(
+          find.byKey(const ValueKey('wall-heightMm-field')),
+          '2900',
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('wall-thicknessMm-field')),
+          '180',
+        );
+        await tester.pumpAndSettle();
+        await tap(tester, find.byKey(const ValueKey('wall-properties-apply')));
+        for (final original in before) {
+          final after = painter(
+            tester,
+          ).walls.firstWhere((w) => w.id == original.id);
+          expect(after.start, original.start);
+          expect(after.end, original.end);
+          expect(
+            after.heightMm,
+            original.id == ids[2] ? original.heightMm : 2900,
+          );
+          expect(
+            after.thicknessMm,
+            original.id == ids[2] ? original.thicknessMm : 180,
+          );
+        }
+        expect(painter(tester).selectedIds, {ids[0], ids[1]});
+        expect(painter(tester).selected, primary);
+        historyButton(tester, 'Undo').onPressed!();
+        await tester.pumpAndSettle();
+        for (final original in before) {
+          final after = painter(
+            tester,
+          ).walls.firstWhere((w) => w.id == original.id);
+          expect(after.heightMm, original.heightMm);
+          expect(after.thicknessMm, original.thicknessMm);
+        }
+        expect(painter(tester).selectedIds, {ids[0], ids[1]});
+        expect(painter(tester).selected, primary);
+        historyButton(tester, 'Redo').onPressed!();
+        await tester.pumpAndSettle();
+        expect(
+          painter(tester).walls.where((w) => w.heightMm == 2900),
+          hasLength(2),
+        );
+        expect(painter(tester).selectedIds, {ids[0], ids[1]});
+        expect(painter(tester).selected, primary);
+      },
+    );
+  }
+
   testWidgets(
     'primary drag preserves other selections and cancellation restores pre-press',
     (tester) async {
