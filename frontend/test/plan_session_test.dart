@@ -53,6 +53,37 @@ void main() {
   );
 
   test(
+    'floor memory keys keep document IDs and distinguish legacy files',
+    () async {
+      session.create();
+      expect(
+        session.levelPreferencesKey('document-id', ['B', 'A']),
+        'document-id',
+      );
+      expect(session.levelPreferencesKey(null, ['A']), isNull);
+      final path = '${scratch.path}/legacy.domo';
+      await session.save(PlanPathTarget(path));
+      final key = session.levelPreferencesKey(null, ['A']);
+      expect(key, 'legacy-path:${Uri.file(path)}');
+      expect(session.levelPreferencesKey(null, ['A', 'B']), key);
+      await session.save(PlanPathTarget('${scratch.path}/copy.domo'));
+      expect(session.levelPreferencesKey(null, ['A']), isNot(key));
+    },
+  );
+
+  test('legacy browser files use name and level IDs, not name alone', () async {
+    final browser = PlanSession(_BytesCore(bridge));
+    addTearDown(browser.dispose);
+    browser.create();
+    await browser.save(PlanByteTarget('legacy.domo', (_) async => true));
+    final key = browser.levelPreferencesKey(null, ['B', 'A']);
+    expect(browser.levelPreferencesKey(null, ['A', 'B']), key);
+    expect(browser.levelPreferencesKey(null, ['C']), isNot(key));
+    await browser.save(PlanByteTarget('other.domo', (_) async => true));
+    expect(browser.levelPreferencesKey(null, ['A', 'B']), isNot(key));
+  });
+
+  test(
     'failed replacement/save preserve handle, path and original bytes',
     () async {
       session.create();
@@ -229,4 +260,11 @@ void main() {
       opened.dispose();
     }
   });
+}
+
+class _BytesCore extends FfiCore {
+  _BytesCore(super.bridge);
+
+  @override
+  bool get supportsPaths => false;
 }

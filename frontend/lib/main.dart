@@ -380,7 +380,11 @@ class _PlanPageState extends State<PlanPage>
       _observeSelectionHover,
     );
     _fileDialogs.setCloseHandler(
-      () => _fileWorkflow.run(_fileWorkflow.confirmLeaving),
+      () => _fileWorkflow.run(() async {
+        if (!await _fileWorkflow.confirmLeaving()) return false;
+        await _userConfig.flush();
+        return true;
+      }),
     );
     _open();
     if (hostEnvironment('DOMOWIK_3D_PROBE') == '1') {
@@ -1953,12 +1957,16 @@ class _PlanPageState extends State<PlanPage>
         if (_resetLevelView) {
           // Issue 0117: the reopen default is the device-remembered level for
           // this document identity when it still exists, not always the
-          // lowest-elevation level; LevelViewState.reset falls back whenever
+          // first listed level; LevelViewState.reset falls back whenever
           // there is no remembered value to match. The flags and every other
           // view preference still reset per BEHAVIOR-SPEC §2.6.
           _levelView.reset(
             levels,
-            rememberedActive: _userConfig.lastActiveLevels[documentId],
+            rememberedActive:
+                _userConfig.lastActiveLevels[_session?.levelPreferencesKey(
+                  documentId,
+                  levels.map((l) => l.id),
+                )],
           );
           _resetLevelView = false;
         } else {
@@ -2095,7 +2103,11 @@ class _PlanPageState extends State<PlanPage>
   }
 
   void _activateLevel(String id) {
-    if (id == _levelId || !_levels.any((level) => level.id == id)) return;
+    if (!_levels.any((level) => level.id == id)) return;
+    if (id == _levelId) {
+      _rememberActiveLevel(id);
+      return;
+    }
     _cancelAssetPose();
     _cancelDrag();
     setState(() {
@@ -2113,9 +2125,11 @@ class _PlanPageState extends State<PlanPage>
   }
 
   void _rememberActiveLevel(String id) {
-    final documentId = _documentId;
-    if (documentId == null) return; // pre-identity: not keyable (§2.6)
-    _userConfig.saveLastActiveLevel(documentId, id).catchError((Object _) {});
+    final key = _session?.levelPreferencesKey(
+      _documentId,
+      _levels.map((level) => level.id),
+    );
+    _userConfig.saveLastActiveLevel(key, id).catchError((Object _) {});
   }
 
   void _setLevelVisibility(String id, LevelVisibility visibility) {
@@ -2366,6 +2380,10 @@ class _PlanPageState extends State<PlanPage>
     try {
       final result = await session.save(target);
       if (!mounted) return false;
+      // A legacy plan's Save As changes its local file key, not its format.
+      if (result.succeeded && _documentId == null && _levelId != null) {
+        _rememberActiveLevel(_levelId!);
+      }
       setState(() {
         if (result.succeeded) {
           _dirty = false;

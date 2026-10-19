@@ -25,13 +25,17 @@ const files = MethodChannel('invalid.domowik-spike/files');
 /// fake async, where real file reads never settle.
 class SharedConfigStorage implements ConfigStorage {
   final List<int> bytes = [];
+  Completer<void>? pendingWrite;
   @override
   Future<List<int>?> read(int limit) async =>
       bytes.isEmpty ? null : (bytes.take(limit + 1).toList());
   @override
-  Future<void> write(String text) async => bytes
-    ..clear()
-    ..addAll(utf8.encode(text));
+  Future<void> write(String text) async {
+    await pendingWrite?.future;
+    bytes
+      ..clear()
+      ..addAll(utf8.encode(text));
+  }
 }
 
 void main() {
@@ -256,6 +260,7 @@ void main() {
   Future<({List<String> levels, List<List<String>> walls})> openLevelScene(
     WidgetTester tester, {
     bool overlappingActiveWalls = false,
+    bool upperFirst = false,
   }) async {
     String id(int value) =>
         '01960000-0000-7000-8000-${value.toString().padLeft(12, '0')}';
@@ -291,6 +296,7 @@ void main() {
         'floorThicknessMm': 200.0,
         'defaultWallHeightMm': 2500.0,
         'defaultCeilingHeightMm': 2500.0,
+        if (upperFirst) 'displayOrder': i,
       });
       final ids = <String>[];
       for (var j = 0; j < segments[i].length; j++) {
@@ -334,7 +340,10 @@ void main() {
     }
     dialog = (_) async => path;
     await tap(tester, find.byTooltip('Open plan'));
-    expect(painter(tester).walls.map((wall) => wall.id), wallIds[2]);
+    expect(
+      painter(tester).walls.map((wall) => wall.id),
+      wallIds[upperFirst ? 0 : 2],
+    );
     expect(dirty(), isFalse);
     await tap(tester, find.byKey(const ValueKey('inspector-floor-tab')));
     return (levels: levels, walls: wallIds);
@@ -570,7 +579,7 @@ void main() {
   );
 
   testWidgets(
-    'save keeps local level flags but reopen resets all specified view defaults',
+    'save keeps local flags; reopen remembers active floor but resets other view defaults',
     (tester) async {
       await start(tester);
       final scene = await openLevelScene(tester);
@@ -596,9 +605,9 @@ void main() {
       await tap(tester, find.byTooltip('New plan'));
       expect(painter(tester).showGrid, isTrue);
       await tap(tester, find.byTooltip('Open plan'));
-      expect(painter(tester).walls.map((wall) => wall.id), scene.walls[2]);
+      expect(painter(tester).walls.map((wall) => wall.id), scene.walls[1]);
       expect(painter(tester).backgroundLevels.map((level) => level.levelId), [
-        lowerB,
+        lowerA,
         upper,
       ]);
       expect(
@@ -1940,6 +1949,29 @@ void main() {
     expect(await closing, isTrue);
   });
 
+  testWidgets('normal close waits for the last active floor to persist', (
+    tester,
+  ) async {
+    final storage = SharedConfigStorage();
+    await start(tester, configStore: UserConfigStore(storage));
+    final scene = await openLevelScene(tester);
+    storage.pendingWrite = Completer<void>();
+    await floorAction(tester, find.text('Upper'));
+    var completed = false;
+    final closing = nativeClose(tester).then((approved) {
+      completed = true;
+      return approved;
+    });
+    await tester.pumpAndSettle();
+    expect(completed, isFalse);
+    storage.pendingWrite!.complete();
+    await tester.pumpAndSettle();
+    expect(await closing, isTrue);
+    final restarted = UserConfigStore(storage);
+    await restarted.load();
+    expect(restarted.lastActiveLevels.values.single, scene.levels[0]);
+  });
+
   testWidgets('pending file dialog blocks edits and overlapping native close', (
     tester,
   ) async {
@@ -2111,6 +2143,46 @@ void main() {
   });
 
   // ---- per-device remembered active level (issue 0117) ----
+
+  testWidgets(
+    'legacy files open on the first listed floor and remember choices across restart',
+    (tester) async {
+      final storage = SharedConfigStorage();
+      await start(tester, configStore: UserConfigStore(storage));
+      final scene = await openLevelScene(tester, upperFirst: true);
+      final path = '${scratch.path}/levels.domo';
+      final original = File(path).readAsBytesSync();
+      // Choosing even the already-active default records it without an edit.
+      await floorAction(tester, find.text('Upper'));
+      final hinted = UserConfigStore(storage);
+      await hinted.load();
+      expect(hinted.lastActiveLevels.keys.single, startsWith('legacy-path:'));
+      expect(hinted.lastActiveLevels.values.single, scene.levels[0]);
+      await floorAction(tester, find.text('Lower B'));
+      expect(dirty(), isFalse);
+      expect(historyButton(tester, 'Undo').onPressed, isNull);
+      expect(File(path).readAsBytesSync(), original);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await start(tester, configStore: UserConfigStore(storage));
+      dialog = (_) async => path;
+      await tap(tester, find.byTooltip('Open plan'));
+      expect(painter(tester).walls.map((wall) => wall.id), scene.walls[1]);
+      expect(
+        painter(tester).backgroundLevels.every((level) => level.ghosted),
+        isTrue,
+      );
+      expect(dirty(), isFalse);
+
+      // A different legacy file has its own preference, even with identical levels.
+      final copy = '${scratch.path}/other.domo';
+      File(copy).writeAsBytesSync(original);
+      dialog = (_) async => copy;
+      await tap(tester, find.byTooltip('Open plan'));
+      expect(painter(tester).walls.map((wall) => wall.id), scene.walls[0]);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('reopening lands on the level this device last activated', (
     tester,

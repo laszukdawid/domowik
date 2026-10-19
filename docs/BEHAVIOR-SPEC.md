@@ -284,8 +284,8 @@ when those sections become normative and must not be assumed here.
   ordinal with the stable-ID tie-break; levels without one follow in the
   derived order. With nothing stored, the order is derived: ascending
   elevation with the stable-ID tie-break.
-- The derived order remains authoritative for everything that is NOT the
-  level-list presentation: paint tiers, the 3-D scene, diagnostics and warning
+- The derived order remains authoritative outside the level-list presentation
+  and first-open fallback (section 2.6): paint tiers, the 3-D scene, diagnostics and warning
   ordering, deletion's active fallback, Add Storey's next elevation, and
   default (unsuccessful-targeted) level addressing, each of which derives
   from ascending elevation with the stable-ID tie-break regardless of any
@@ -387,8 +387,9 @@ example, with active A, visible B and hidden C, adding D via Add Storey makes
 D active, A ghosted, B visible and C hidden. Undo removes D and activates the
 lowest surviving level (A in this example); redo restores D as ghosted and
 does not reactivate it. B and C keep their flags throughout. Activating A
-while it is already active is a no-op. Reopening instead applies section 2.6
-and discards all these local preferences.
+while it is already active changes no session view state, but records that
+choice for reopening. Reopening applies section 2.6: active-floor memory is
+retained, while the other local view settings reset.
 
 ### 2.5 Background images
 
@@ -412,22 +413,32 @@ and discards all these local preferences.
 
 Every open applies:
 
-- active level: the device's remembered level for this document identity
-  (issue 0117), when the document carries a `documentId` (issue 0116), the
-  device has recorded an activation for it, and that level still exists in
-  the document. Otherwise, lowest elevation among all levels, ties broken by
-  lowest stable UUID. A document without a `documentId` is never keyed, and
-  only a new-plan entry point mints identity (section 2.2), so a
-  first-opened old plan always uses the fallback;
+- active level: the device's remembered level for this plan, when a choice
+  has been recorded and the level still exists. Otherwise, the first floor
+  in the level-list presentation (section 2.2), including stored list order;
 - all other levels: visible and ghosted;
 - view: fit with margin if the document has drawable content, otherwise the
   empty-document default view of section 1.3;
 - display unit millimetres; grid and rulers visible.
 
-The remembered level is the document's `documentId` paired with the id of
-the level last activated through the level controls of section 2.4 while
-that document was open, stored per device alongside the other local
-preferences and refreshed on every activation. It is device-local view
+The remembered level pairs a local plan key with the id of the level last
+chosen through the level controls of section 2.4, including choosing the
+already-active floor. The key is `documentId` when present. For older plans
+without identity, desktop uses the absolute normalized file URI; browsers,
+which expose no path, use the file name paired with sorted stable level IDs.
+A renamed or moved legacy desktop file therefore starts with the list default;
+legacy browser files share memory only when both name and level IDs match,
+and changing their level set changes the key. Saving a legacy plan also records
+the current active floor under its resulting file key, including Save As.
+An unnamed legacy plan has no key. Only new-plan entry points mint document
+identity (section 2.2); viewing an older plan never changes its bytes or format.
+Memory is stored per device alongside the other local preferences and refreshed
+on each effective choice. Consecutive identical choices need not rewrite storage;
+queued choices and other preference updates persist in invocation order, so the
+final choice wins. Failed storage never rejects floor activation or overwrites
+corrupt/unsupported config. Normal desktop close waits for queued writes to
+settle before approval; forced termination is not a persistence guarantee.
+It is device-local view
 state and never observable in the document, its log, any CLI output or any
 undo record: activating a level still emits nothing (section 2.4), the
 content of the storage is not part of the format, and no CLI command reads
@@ -438,7 +449,9 @@ session, not the stored value. The store is the editor's existing platform
 config store and holds at most the most-recently touched limit of
 documents' remembered levels; identity of other devices' storage is not
 this state's business (no sync), and every other view preference in this
-section always resets as stated.
+section always resets as stated. The list-first default and legacy-file keys
+are original owner-requested product decisions; no external application material
+or format change is involved.
 
 ### 2.7 Duplicating a level
 

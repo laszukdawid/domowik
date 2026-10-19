@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:domowik_editor/platform/config_storage_native.dart';
@@ -129,6 +130,59 @@ void main() {
 
   group('remembered active levels (issue 0117)', () {
     test(
+      'rapid activations and preference saves preserve the final choice',
+      () async {
+        final storage = _DelayedStorage();
+        final store = UserConfigStore(storage);
+        await store.saveLastActiveLevel('plan', 'A');
+        storage.delay = Completer<void>();
+        final writes = [
+          store.saveLastActiveLevel('plan', 'B'),
+          store.saveLastActiveLevel('plan', 'A'),
+          store.saveLastActiveLevel('other', 'C'),
+          store.savePreferences(
+            splitOrientation: SplitOrientation.horizontal,
+            unitSystem: UnitSystem.imperial,
+          ),
+        ];
+        // Let the first write reach storage while subsequent updates queue.
+        await Future<void>.delayed(Duration.zero);
+        storage.delay!.complete();
+        await Future.wait(writes);
+        final restarted = UserConfigStore(storage);
+        await restarted.load();
+        expect(restarted.lastActiveLevels, {'plan': 'A', 'other': 'C'});
+        expect(restarted.unitSystem, UnitSystem.imperial);
+        expect(restarted.splitOrientation, SplitOrientation.horizontal);
+      },
+    );
+
+    test('eviction retains recency across restart', () async {
+      final storage = _DelayedStorage();
+      final store = UserConfigStore(storage);
+      for (var i = 0; i < UserConfigStore.maxLastActiveLevels; i++) {
+        await store.saveLastActiveLevel('plan-$i', 'A');
+      }
+      final restarted = UserConfigStore(storage);
+      await restarted.load();
+      await restarted.saveLastActiveLevel('new', 'B');
+      expect(restarted.lastActiveLevels['plan-0'], isNull);
+      expect(restarted.lastActiveLevels['plan-63'], 'A');
+    });
+
+    test('failed hint writes do not block later saves', () async {
+      final storage = _DelayedStorage()..fail = true;
+      final store = UserConfigStore(storage);
+      await expectLater(
+        store.saveLastActiveLevel('plan', 'A'),
+        throwsStateError,
+      );
+      storage.fail = false;
+      await store.saveLastActiveLevel('plan', 'B');
+      expect(store.lastActiveLevels, {'plan': 'B'});
+    });
+
+    test(
       'invalid entries are dropped, never block saving, and unknown keys survive',
       () async {
         final root = await Directory.systemTemp.createTemp('domowik-hint-');
@@ -226,4 +280,20 @@ void main() {
       // the elevation default (BEHAVIOR-SPEC §2.6).
     });
   });
+}
+
+class _DelayedStorage implements ConfigStorage {
+  List<int>? bytes;
+  Completer<void>? delay;
+  bool fail = false;
+
+  @override
+  Future<List<int>?> read(int limit) async => bytes;
+
+  @override
+  Future<void> write(String text) async {
+    await delay?.future;
+    if (fail) throw StateError('write failed');
+    bytes = utf8.encode(text);
+  }
 }

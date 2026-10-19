@@ -21,13 +21,14 @@ class UserConfigStore {
   static const int maxBytes = 1024 * 1024;
 
   /// The most documents' remembered active levels kept at once (issue 0117).
-  /// The cap bounds the `documentId`-to-`levelId` map no matter how often the
+  /// The cap bounds the plan-key-to-level-ID map no matter how often the
   /// user switches between plans; once full, the least recently touched
   /// document's hint is dropped.
   static const int maxLastActiveLevels = 64;
   Map<String, Object?> _data = {'version': 1, 'assetDirectories': <String>[]};
   Map<String, String> _lastActiveLevels = const {};
   bool _writable = true;
+  Future<void>? _pendingSave;
   UnitSystem get unitSystem => _data['unitSystem'] == 'imperial'
       ? UnitSystem.imperial
       : UnitSystem.metric;
@@ -38,8 +39,8 @@ class UserConfigStore {
   List<String> get assetDirectories =>
       List.unmodifiable((_data['assetDirectories'] as List).cast<String>());
 
-  /// The last active level per document identity (issue 0117), keyed by the
-  /// payload's `documentId` and never editable by any document command — it
+  /// The last active level per document identity or legacy-file key, never
+  /// editable by any document command — it
   /// is device-local state that emerges nowhere in the document. Unmodifiable
   /// in insertion order, which is most-recent-update last.
   Map<String, String> get lastActiveLevels =>
@@ -48,6 +49,10 @@ class UserConfigStore {
   /// The platform's per-user store: a file on desktop, browser storage on
   /// the web (issue 0088).
   static UserConfigStore standard() => UserConfigStore(standardConfigStorage());
+
+  /// Wait for already queued writes before a normal application close. Callers
+  /// of each saver receive its errors; a failed optional hint never blocks exit.
+  Future<void> flush() => _pendingSave ?? Future<void>.value();
 
   Future<void> load() async {
     final source = storage;
@@ -99,8 +104,11 @@ class UserConfigStore {
           if (valid.length == maxLastActiveLevels) break;
         }
       }
-      if (valid.isNotEmpty) data['lastActiveLevels'] = valid;
-      _lastActiveLevels = valid;
+      final oldestFirst = Map<String, String>.fromEntries(
+        valid.entries.toList().reversed,
+      );
+      if (oldestFirst.isNotEmpty) data['lastActiveLevels'] = oldestFirst;
+      _lastActiveLevels = oldestFirst;
       _data = {...data, 'assetDirectories': dirs};
     } catch (_) {
       _writable = false;
@@ -123,27 +131,27 @@ class UserConfigStore {
       throw const FormatException(
         'At most 64 global asset directories are supported',
       );
-    await _save({..._data, 'version': 1, 'assetDirectories': unique});
+    await _save(() => {..._data, 'version': 1, 'assetDirectories': unique});
   }
 
   Future<void> saveSplitOrientation(SplitOrientation orientation) =>
-      _save({..._data, 'splitOrientation': orientation.name});
+      _save(() => {..._data, 'splitOrientation': orientation.name});
 
   /// Save the dialog's choices together; failed persistence applies neither.
   Future<void> savePreferences({
     required SplitOrientation splitOrientation,
     required UnitSystem unitSystem,
-  }) => _save({
-    ..._data,
-    'splitOrientation': splitOrientation.name,
-    'unitSystem': unitSystem.name,
-  });
+  }) => _save(
+    () => {
+      ..._data,
+      'splitOrientation': splitOrientation.name,
+      'unitSystem': unitSystem.name,
+    },
+  );
 
-  /// Remembers one document's last active level (issue 0117). A `null`
-  /// documentId — the pre-identity shape — records nothing: without a stable
-  /// key, a remembered value could not be attributed to a plan, and only
-  /// new-plan entry points mint identity (BEHAVIOR-SPEC §2.2, FORMAT-SPEC
-  /// §5.1 S0). Saving the same value again skips the write, so the hint must
+  /// Remembers one document's last active level. The key is its document ID
+  /// or the editor's local legacy-file key; null records nothing.
+  /// Saving the same value again skips the write, so the hint must
   /// not churn the config file on every activation.
   ///
   /// Overwriting an entry moves it to the last (most recent) position; at
@@ -151,23 +159,48 @@ class UserConfigStore {
   /// document's hint is dropped. This may throw exactly as the other savers
   /// do when the stored document is unwritable; the editor treats a failed
   /// hint as device-local and never fails the activation that triggered it.
-  Future<void> saveLastActiveLevel(String? documentId, String levelId) async {
-    if (documentId == null ||
-        documentId.isEmpty ||
-        levelId.isEmpty ||
-        _lastActiveLevels[documentId] == levelId) {
+  Future<void> saveLastActiveLevel(String? documentKey, String levelId) async {
+    if (documentKey == null || documentKey.isEmpty || levelId.isEmpty) {
       return;
     }
-    final next = Map<String, String>.of(_lastActiveLevels)
-      ..remove(documentId)
-      ..[documentId] = levelId;
-    while (next.length > maxLastActiveLevels) {
-      next.remove(next.keys.first);
-    }
-    await _save({..._data, 'lastActiveLevels': next});
+    await _save(() {
+      if (_lastActiveLevels[documentKey] == levelId) return null;
+      final next = Map<String, String>.of(_lastActiveLevels)
+        ..remove(documentKey)
+        ..[documentKey] = levelId;
+      while (next.length > maxLastActiveLevels) {
+        next.remove(next.keys.first);
+      }
+      return {..._data, 'lastActiveLevels': next};
+    });
   }
 
-  Future<void> _save(Map<String, Object?> data) async {
+  // Build each update only after previous writes settle. Otherwise rapid
+  // A -> B -> A activation or a simultaneous preference save loses updates.
+  Future<void> _save(Map<String, Object?>? Function() update) {
+    Future<void> writeUpdate() async {
+      final data = update();
+      if (data != null) await _write(data);
+    }
+
+    final previous = _pendingSave;
+    final result = previous == null
+        ? writeUpdate()
+        : previous.then((_) => writeUpdate());
+    late final Future<void> settled;
+    void clearPending() {
+      if (identical(_pendingSave, settled)) _pendingSave = null;
+    }
+
+    settled = result.then<void>(
+      (_) => clearPending(),
+      onError: (Object _) => clearPending(),
+    );
+    _pendingSave = settled;
+    return result;
+  }
+
+  Future<void> _write(Map<String, Object?> data) async {
     if (!_writable) {
       throw const FormatException(
         'Repair the existing user config before saving preferences',

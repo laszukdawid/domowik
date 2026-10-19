@@ -174,13 +174,18 @@ void main() {
         // Ordinals ride along untouched through reset's canonical sort.
         final s = LevelViewState()..reset([ordered(b, 0), ordered(a, 1), c]);
         expect(s.panelLevels, [ordered(b, 0), ordered(a, 1), c]);
+        expect(
+          s.activeId,
+          'B',
+          reason: 'first listed floor is the open default',
+        );
         // The canonical elevation-derived ORDER is UNTOUCHED (compare by id:
         // the stored LevelInfos still carry their ordinals) — this getter is
         // presentation-only.
         expect(s.levels.map((l) => l.id), ['A', 'B', 'C']);
         expect(
           s.paintOrder.map((l) => l.id),
-          ['B', 'C', 'A'],
+          ['A', 'C', 'B'],
           reason:
               'tiers keep the elevation order even though the panel does not',
         );
@@ -193,6 +198,18 @@ void main() {
         ordered(a, 0),
         ordered(b, 0),
       ], reason: 'same ordinal: stable-ID tie-break, not elevation');
+    });
+
+    test('remembered level wins over list order; stale hints use the list', () {
+      final levels = [ordered(c, 0), ordered(b, 1), a];
+      final s = LevelViewState()..reset(levels, rememberedActive: 'B');
+      expect(s.activeId, 'B');
+      s.reset(levels, rememberedActive: 'deleted');
+      expect(s.activeId, 'C');
+      expect(s.visibility['C'], LevelVisibility.visible);
+      // Deletion within a session still uses the elevation fallback.
+      s.reconcile([ordered(b, 1), a]);
+      expect(s.activeId, 'A');
     });
 
     test('the exposed list is immutable', () {

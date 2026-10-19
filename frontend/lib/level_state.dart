@@ -93,8 +93,8 @@ class LevelViewState {
   ///
   /// The two orders coexist deliberately: [levels] keeps the
   /// elevation-derived order every other consumer relies on (Add Storey's
-  /// next-elevation math, deletion fallback, inactive defaults), and only
-  /// the panel reads this. A document where the two agree — none-so-far or
+  /// next-elevation math, deletion fallback, inactive defaults). The panel
+  /// and reopen fallback read this. A document where the two agree — none-so-far or
   /// list == elevation order — returns the same levels.
   List<LevelInfo> get panelLevels {
     final ordered = <LevelInfo>[];
@@ -161,8 +161,8 @@ class LevelViewState {
 
   /// Deterministic reopen (R2.6): active is the device-remembered level
   /// (BEHAVIOR-SPEC §2.6, issue 0117) when [rememberedActive] names one that
-  /// still exists, otherwise the lowest-elevation level (stable-ID
-  /// tie-break, the pre-0117 default); every other level starts ghosted. A
+  /// still exists, otherwise the first level in [panelLevels]; every other
+  /// level starts ghosted. A
   /// remembered id that matches no incoming level — a document without
   /// identity, a device memory for another plan, or a level since deleted —
   /// is ignored, not an error: the stored hint stops matching a nonexistent
@@ -175,7 +175,7 @@ class LevelViewState {
         ? rememberedActive
         : null;
     _levels = sorted;
-    _activeId = sorted.isEmpty ? null : (remembered ?? sorted.first.id);
+    _activeId = sorted.isEmpty ? null : (remembered ?? panelLevels.first.id);
     _flags
       ..clear()
       ..addEntries(

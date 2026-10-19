@@ -54,10 +54,13 @@ the floors' elevations. The CLI's `domowik order-levels PLAN "Upper" "Lower"`
 (from the top of the list first) stores the same order and is preserved when
 the editor reopens the plan.
 
-Reopening a plan activates the floor you last worked on — on this device,
-recorded for that plan in its stored preferences — when it still exists;
-otherwise the lowest floor is selected, as it is for plans saved before
-per-floor memory existed. Everything else about the view resets on open:
+On first open, the first floor at the top of the list is active. Choose a
+floor in **Floor** to make it active. Reopening restores your last choice on
+this device, without needing to save the plan; if that floor no longer exists,
+the first listed floor is selected. Older plans are remembered too, by file
+location on desktop, or file name and floor IDs in a browser. Moving or renaming
+an older desktop file resets its memory; **Save as** keeps the current floor
+for the new location. Everything else about the view resets on open:
 visibility tiers, camera fit, grid and rulers all return to their defaults.
 Warnings are separate from operation errors; use their item controls to locate
 the affected objects. A warning is not automatically a rejected edit.

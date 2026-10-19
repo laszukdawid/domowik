@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'core/domowik_core.dart';
@@ -87,6 +88,21 @@ class PlanSession {
   /// The plan's file: a path on desktop, a file name in the browser, or null
   /// while it has never been opened from or saved to one.
   String? get path => _name;
+
+  /// Device-local floor memory uses the document identity when available.
+  /// Legacy desktop plans use their absolute file URI. Browsers expose no
+  /// path, so legacy byte files use their name plus sorted stable level IDs
+  /// to distinguish unrelated files with the same name. No identity is minted
+  /// or written into the plan. Unsaved legacy plans have no persistent key.
+  String? levelPreferencesKey(String? documentId, Iterable<String> levelIds) {
+    if (documentId != null) return documentId;
+    final name = _name;
+    if (name == null) return null;
+    if (core.supportsPaths) {
+      return 'legacy-path:${Uri.base.resolveUri(Uri.file(name)).normalizePath()}';
+    }
+    return 'legacy-bytes:${jsonEncode([name, levelIds.toList()..sort()])}';
+  }
 
   /// Where a plain Save writes: the plan's own file, overwritable without
   /// asking again. On a filesystem build that is its path, including a plan

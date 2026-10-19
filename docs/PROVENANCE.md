@@ -7,6 +7,16 @@ It is not a development diary or a claim of legal clearance. Follow the
 Dependency notices remain in [NOTICE](../NOTICE), the
 [Rust dependency inventory](RUST-DEPENDENCIES.md) and [third-party records](third-party/).
 
+## Active floor on reopen
+
+The first-listed default, per-device last-active-floor memory for legacy files,
+and ordered preference writes are original owner-requested product choices in
+BEHAVIOR-SPEC section 2.6. Implementation uses the existing local config store;
+no plan-format change, new dependency or distributed content is involved.
+Tests use original synthetic levels and temporary plans. No external publication,
+application source, artwork or test vectors were consulted or adapted; no new
+notice obligations arise.
+
 ## Robust predicates
 
 - **Publication:** Jonathan Richard Shewchuk, *Adaptive Precision Floating-Point

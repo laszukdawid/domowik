@@ -12,6 +12,8 @@ later phase does not imply that earlier exit criteria are complete.
 - **2D editor:** the Flutter editor runs on Linux and macOS desktop and in a
   browser. It supports walls, openings, levels, room labels, selection,
   furniture, undo/redo and plan file workflows.
+  Plans open on the first listed floor by default and remember the device's last
+  active-floor choice, including for older files without document identity.
 - **3D view:** experimental views derive scene data from the same plan. Linux
   uses a native OpenGL presenter; macOS and the browser use the shared `wgpu`
   renderer via Metal and WebGPU respectively.
