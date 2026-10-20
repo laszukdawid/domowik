@@ -79,7 +79,7 @@ enum Command {
         /// End Y
         y2: f64,
         /// Wall thickness in mm
-        #[arg(long, default_value_t = 120.0)]
+        #[arg(long, default_value_t = domowik_commands::edit::DEFAULT_WALL_THICKNESS_MM)]
         thickness: f64,
         /// Wall height in mm (defaults to the target level's wall height)
         #[arg(long)]

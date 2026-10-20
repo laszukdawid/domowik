@@ -22,12 +22,15 @@ pub mod png;
 pub mod refs;
 pub mod svg;
 
+use domowik_commands::edit;
+use domowik_commands::levels::{display_levels, level_list, numbered_records};
+
 use domowik_container::{read_package, write_package, ContainerError, Limits, Package};
 use domowik_document::log::Delivery;
 use domowik_document::operation::{Batch, Operation, OperationKind};
 use domowik_document::session::CommandError;
-use domowik_edit::{FieldEdit, RoomFields};
-use domowik_format::{Document, Entity, Opening, OpeningKind, Point, RoomRecord, Wall};
+use domowik_edit::FieldEdit;
+use domowik_format::{Document, OpeningKind, Point, RoomRecord};
 use domowik_geometry::polygon::Polygon;
 use domowik_geometry::rooms::{self, RoomStatus};
 use domowik_geometry::walls::{self, JoinSpec, WallSolid};
@@ -115,6 +118,15 @@ impl CliError {
 impl From<ContainerError> for CliError {
     fn from(e: ContainerError) -> Self {
         Self::Failure(e.to_string())
+    }
+}
+
+impl From<domowik_commands::CommandError> for CliError {
+    fn from(e: domowik_commands::CommandError) -> Self {
+        match e.kind {
+            domowik_commands::ErrorKind::Usage => Self::Usage(e.message),
+            _ => Self::Failure(e.message),
+        }
     }
 }
 
@@ -220,30 +232,8 @@ pub fn cmd_new(path: &Path, force: bool) -> Result<String> {
 /// reimplemented here.
 pub fn cmd_remove_level(path: &Path, name: &str) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let matches: Vec<&domowik_format::Level> = plan
-        .document()
-        .levels
-        .iter()
-        .filter(|l| l.name == name)
-        .collect();
-    let id = match matches.as_slice() {
-        [] => {
-            return Err(CliError::Failure(format!(
-                "no level named {name:?} in {}; available: {}",
-                path.display(),
-                level_list(plan.document())
-            )));
-        }
-        [only] => only.id,
-        many => {
-            return Err(CliError::Failure(format!(
-                "{} levels are named {name:?} in {}; rename one first to pick unambiguously",
-                many.len(),
-                path.display()
-            )));
-        }
-    };
-    plan.commit_and_save(vec![Operation::delete(id)])?;
+    edit::remove_level(&mut plan, name, &label(path))?;
+    plan.save()?;
     let mut msg = format!("Removed level {name:?}.");
     append_warnings(&mut msg, plan.document());
     Ok(msg)
@@ -264,115 +254,39 @@ pub fn cmd_add_wall(
     level_name: Option<&str>,
 ) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let level_id = resolve_level(plan.document(), level_name, path)?;
-    let height_mm = domowik_edit::resolve_wall_height(plan.document(), level_id, height_mm.into())?;
-
-    let wall = Wall::new(
-        level_id,
+    let added = edit::add_wall(
+        &mut plan,
         Point::new(x1, y1),
         Point::new(x2, y2),
         thickness_mm,
-        height_mm,
-    );
-    let wall_id = wall.id;
-    let length = wall.length_mm();
-
-    let edit = add_wall_operations(plan.document(), level_id, wall)?;
-    let (splits, joins) = (edit.splits, edit.joins);
-    plan.commit_and_save(edit.operations)?;
+        height_mm.into(),
+        level_name,
+        &label(path),
+    )?;
+    plan.save()?;
 
     let mut msg = format!(
-        "Added wall {wall_id} ({length:.0} mm) to {}.",
+        "Added wall {} ({:.0} mm) to {}.",
+        added.wall_id,
+        added.length_mm,
         path.display()
     );
     // The new wall's number and short ID AFTER the commit: a later command
     // can name it by either, and the short ID survives renumbering.
-    if plan.document().wall(wall_id).is_some() {
-        msg.push_str(&format!(
-            " It is {}.",
-            refs::wall_label(plan.document(), wall_id)
-        ));
+    if let Some(wall_label) = &added.label {
+        msg.push_str(&format!(" It is {wall_label}."));
     }
-    if splits > 0 {
-        msg.push_str(&format!(" Split {splits} wall(s) at the contact."));
+    if added.splits > 0 {
+        msg.push_str(&format!(" Split {} wall(s) at the contact.", added.splits));
     }
-    if joins > 0 {
-        msg.push_str(&format!(" Joined at {joins} corner(s)."));
+    if added.joins > 0 {
+        msg.push_str(&format!(" Joined at {} corner(s).", added.joins));
     }
     append_warnings(&mut msg, plan.document());
     Ok(msg)
 }
 
-/// Where an opening's centre goes along its host wall.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Placement {
-    /// A fraction of the wall's length from its start, the persisted `u`.
-    Fraction(f64),
-    /// Millimetres along the wall from its start, converted to `u` against
-    /// the host's current length.
-    OffsetMm(f64),
-}
-
-/// How a door or window opens (BEHAVIOR-SPEC R4.0.4); every field optional,
-/// absent ones left as they are (or at the creation default).
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Orientation {
-    /// Which end of the host axis the leaf is hinged at.
-    pub hinge: Option<domowik_format::Hinge>,
-    /// The half-plane the leaf swings into: `Left` is the host's +n̂ side,
-    /// on the left walking from the wall's start to its end.
-    pub opens_toward: Option<domowik_format::Side>,
-    /// Swing in degrees, 0..=180.
-    pub swing_deg: Option<f64>,
-    pub mechanism: Option<domowik_format::OpeningMechanism>,
-}
-
-impl Orientation {
-    fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
-    /// The field edits for `set-opening`, in the format's own names.
-    fn operations(&self, id: Uuid) -> Vec<Operation> {
-        let mut ops = Vec::new();
-        let json = |v: &dyn erased::Ser| v.to_json();
-        if let Some(h) = self.hinge {
-            ops.push(set_field(id, "hinge", json(&h)));
-        }
-        if let Some(s) = self.opens_toward {
-            ops.push(set_field(id, "opensToward", json(&s)));
-        }
-        if let Some(d) = self.swing_deg {
-            ops.push(set_field(id, "swingDeg", serde_json::json!(d)));
-        }
-        if let Some(m) = self.mechanism {
-            ops.push(set_field(id, "mechanism", json(&m)));
-        }
-        ops
-    }
-}
-
-/// Serialisation of the small enums above, without naming each type.
-mod erased {
-    pub trait Ser {
-        fn to_json(&self) -> serde_json::Value;
-    }
-    impl<T: serde::Serialize> Ser for T {
-        fn to_json(&self) -> serde_json::Value {
-            serde_json::to_value(self).expect("unit enum serialises")
-        }
-    }
-}
-
-/// `u` for `placement` on a wall of `length_mm`. A zero-length wall is
-/// refused by the core's fit check anyway; `u` is reported as 0 for it.
-fn placement_u(placement: Placement, length_mm: f64) -> f64 {
-    match placement {
-        Placement::Fraction(u) => u,
-        Placement::OffsetMm(mm) if length_mm > 0.0 => mm / length_mm,
-        Placement::OffsetMm(_) => 0.0,
-    }
-}
+pub use domowik_commands::edit::{Orientation, Placement};
 
 /// Adds a door or window to a wall.
 ///
@@ -391,62 +305,31 @@ pub fn cmd_add_opening(
     orientation: Orientation,
 ) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let host = refs::resolve_wall(plan.document(), wall, path)?;
-    let (wall_id, wall_len, thickness) = (host.id, host.length_mm(), host.thickness_mm);
-    let wall_label = refs::wall_label(plan.document(), wall_id);
-    let placement = placement.unwrap_or_else(|| match refs::parse_point(wall) {
-        Some(p) => Placement::OffsetMm(refs::project(host, p).0),
-        None => Placement::Fraction(0.5),
-    });
-    let u = placement_u(placement, wall_len);
-
-    // The opening cuts the full thickness of its host by default (R4.0.4
-    // caps `depthMm` at the host's thickness). A niche shallower than the
-    // wall is a later `set-opening` edit, not a creation default.
-    let mut opening = match kind {
-        OpeningKind::Door => Opening::door(wall_id, u, width_mm, height_mm, thickness),
-        OpeningKind::Window => Opening::window(wall_id, u, width_mm, height_mm, sill_mm, thickness),
-    };
-    if let Some(m) = orientation.mechanism {
-        if !m.accepts(kind) {
-            return Err(CliError::Usage(format!(
-                "mechanism {} does not apply to a {}",
-                erased::Ser::to_json(&m),
-                if kind == OpeningKind::Door {
-                    "door"
-                } else {
-                    "window"
-                }
-            )));
-        }
-        opening.mechanism = Some(m);
-    }
-    if let Some(h) = orientation.hinge {
-        opening.hinge = h;
-    }
-    if let Some(s) = orientation.opens_toward {
-        opening.opens_toward = s;
-    }
-    if let Some(d) = orientation.swing_deg {
-        opening.swing_deg = d;
-    }
-    let opening_id = opening.id;
-    plan.commit_and_save(vec![Operation::create(Entity::Opening(opening))])?;
-
-    let doc = plan.document();
-    let label = doc
-        .openings
-        .iter()
-        .find(|o| o.id == opening_id)
-        .map(|o| refs::opening_label(doc, o))
-        .unwrap_or_default();
+    let added = edit::add_opening(
+        &mut plan,
+        wall,
+        edit::NewOpening {
+            kind,
+            placement,
+            width_mm,
+            height_mm,
+            sill_mm,
+            orientation,
+        },
+        &label(path),
+    )?;
+    plan.save()?;
     let mut msg = format!(
-        "Added {} {opening_id} ({label}) to wall {wall_label} ({wall_len:.0} mm), centred {:.0} mm from its start.",
+        "Added {} {} ({}) to wall {} ({:.0} mm), centred {:.0} mm from its start.",
         match kind {
             OpeningKind::Door => "door",
             OpeningKind::Window => "window",
         },
-        u * wall_len
+        added.opening_id,
+        added.label,
+        added.wall_label,
+        added.wall_length_mm,
+        added.centre_offset_mm
     );
     append_warnings(&mut msg, plan.document());
     Ok(msg)
@@ -454,17 +337,15 @@ pub fn cmd_add_opening(
 
 pub fn cmd_remove_wall(path: &Path, wall: &str) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let wall_id = refs::resolve_wall(plan.document(), wall, path)?.id;
-    let wall_index = refs::wall_label(plan.document(), wall_id);
-
-    let edit = remove_wall_operations(plan.document(), wall_id);
-    let hosted = edit.cascaded_openings;
-    plan.commit_and_save(edit.operations)?;
-
-    let mut msg = if hosted == 0 {
-        format!("Removed wall {wall_index}.")
+    let removed = edit::remove_wall(&mut plan, wall, &label(path))?;
+    plan.save()?;
+    let mut msg = if removed.cascaded_openings == 0 {
+        format!("Removed wall {}.", removed.label)
     } else {
-        format!("Removed wall {wall_index} and {hosted} opening(s) it hosted.")
+        format!(
+            "Removed wall {} and {} opening(s) it hosted.",
+            removed.label, removed.cascaded_openings
+        )
     };
     append_warnings(&mut msg, plan.document());
     Ok(msg)
@@ -474,10 +355,9 @@ pub fn cmd_remove_wall(path: &Path, wall: &str) -> Result<String> {
 /// accepts.
 pub fn cmd_remove_opening(path: &Path, opening: &str) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let found = refs::resolve_opening(plan.document(), opening, path)?;
-    let (id, opening_index) = (found.id, refs::opening_label(plan.document(), found));
-    plan.commit_and_save(vec![Operation::delete(id)])?;
-    let mut msg = format!("Removed opening {opening_index}.");
+    let removed = edit::remove_opening(&mut plan, opening, &label(path))?;
+    plan.save()?;
+    let mut msg = format!("Removed opening {}.", removed.label);
     append_warnings(&mut msg, plan.document());
     Ok(msg)
 }
@@ -726,49 +606,30 @@ fn level_solids(doc: &Document, level_id: Uuid) -> (Vec<WallSolid>, Vec<JoinSpec
 /// deleted. Refused when that endpoint is not joined.
 pub fn cmd_detach(path: &Path, wall: &str, end: bool) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let wall = refs::resolve_wall(plan.document(), wall, path)?.id;
-    let wall_index = refs::wall_label(plan.document(), wall);
-    let role = if end {
-        domowik_format::Role::End
-    } else {
-        domowik_format::Role::Start
-    };
-    let join = member_join(plan.document(), wall, role)
-        .ok_or_else(|| {
-            CliError::Failure(format!(
-                "wall {wall_index}'s {} is not joined",
-                if end { "end" } else { "start" }
-            ))
-        })?
-        .id;
-    let edit = detach_operations(plan.document(), join, wall, role)
-        .map_err(|e| CliError::Failure(e.to_string()))?;
-    let deleted = edit.operations.iter().any(|op| {
-        matches!(
-            op.kind,
-            domowik_document::operation::OperationKind::DeleteEntity
+    let detached = edit::detach(&mut plan, wall, end, &label(path))?;
+    plan.save()?;
+    Ok(if detached.join_deleted {
+        format!(
+            "Detached wall {}; its join had one member left and was deleted.",
+            detached.label
         )
-    });
-    plan.commit_and_save(edit.operations)?;
-    Ok(if deleted {
-        format!("Detached wall {wall_index}; its join had one member left and was deleted.")
     } else {
-        format!("Detached wall {wall_index} from its join.")
+        format!("Detached wall {} from its join.", detached.label)
     })
 }
 
 /// Reverses a wall by its `info` number.
 pub fn cmd_reverse_wall(path: &Path, wall: &str) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let wall = refs::resolve_wall(plan.document(), wall, path)?;
-    let wall_index = refs::wall_label(plan.document(), wall.id);
-    let edit = reverse_wall_operations(plan.document(), wall.id);
-    let remapped = edit.moved_with;
-    plan.commit_and_save(edit.operations)?;
-    let mut msg = if remapped == 0 {
-        format!("Reversed wall {wall_index}.")
+    let reversed = edit::reverse_wall(&mut plan, wall, &label(path))?;
+    plan.save()?;
+    let mut msg = if reversed.remapped_openings == 0 {
+        format!("Reversed wall {}.", reversed.label)
     } else {
-        format!("Reversed wall {wall_index} and remapped {remapped} opening(s).")
+        format!(
+            "Reversed wall {} and remapped {} opening(s).",
+            reversed.label, reversed.remapped_openings
+        )
     };
     append_warnings(&mut msg, plan.document());
     Ok(msg)
@@ -790,28 +651,32 @@ pub fn cmd_set_wall(
                 .to_owned(),
         ));
     }
-
     let mut plan = Plan::open(path)?;
-    let wall_id = refs::resolve_wall(plan.document(), wall, path)?.id;
-    let wall_index = refs::wall_label(plan.document(), wall_id);
-
-    let edit = set_wall_operations(
-        plan.document(),
-        wall_id,
+    let updated = edit::set_wall(
+        &mut plan,
+        wall,
         start.map(|(x, y)| Point::new(x, y)),
         end.map(|(x, y)| Point::new(x, y)),
         thickness_mm,
         height_mm,
+        &label(path),
     )?;
-    let (moved_with, new_joins) = (edit.moved_with, edit.joins);
-    plan.commit_and_save(edit.operations)?;
-
-    let mut msg = format!("Updated wall {wall_index}.");
-    if moved_with > 0 {
-        msg.push_str(&format!(" Moved {moved_with} joined endpoint(s) with it."));
+    if updated.batch_id.is_none() {
+        // Every requested value was already the wall's: nothing is written,
+        // as for `set-level` and `room set`.
+        return Ok(format!("Wall {} is unchanged.", updated.label));
     }
-    if new_joins > 0 {
-        msg.push_str(&format!(" Joined at {new_joins} new corner(s)."));
+    plan.save()?;
+
+    let mut msg = format!("Updated wall {}.", updated.label);
+    if updated.moved_with > 0 {
+        msg.push_str(&format!(
+            " Moved {} joined endpoint(s) with it.",
+            updated.moved_with
+        ));
+    }
+    if updated.joins > 0 {
+        msg.push_str(&format!(" Joined at {} new corner(s).", updated.joins));
     }
     append_warnings(&mut msg, plan.document());
     Ok(msg)
@@ -829,12 +694,16 @@ pub fn cmd_set_opening(
     sill_mm: Option<f64>,
     orientation: Orientation,
 ) -> Result<String> {
-    if placement.is_none()
-        && width_mm.is_none()
-        && height_mm.is_none()
-        && sill_mm.is_none()
-        && orientation.is_empty()
-    {
+    let changes = edit::OpeningChanges {
+        placement,
+        width_mm,
+        height_mm,
+        sill_mm,
+        orientation,
+    };
+    // Checked before opening the file, as before: a usage error must not
+    // depend on whether the plan exists.
+    if changes == edit::OpeningChanges::default() {
         return Err(CliError::Usage(
             "nothing to change; pass at least one of --at, --offset, --width, --height, --sill, \
              --hinge, --opens-toward, --swing, --mechanism"
@@ -842,27 +711,12 @@ pub fn cmd_set_opening(
         ));
     }
     let mut plan = Plan::open(path)?;
-    let found = refs::resolve_opening(plan.document(), opening, path)?;
-    let (id, opening_index) = (found.id, refs::opening_label(plan.document(), found));
-    let host_len = plan
-        .document()
-        .wall(found.host_wall_id)
-        .map_or(0.0, |w| w.length_mm());
-    let at = placement.map(|p| placement_u(p, host_len));
-
-    let mut ops = orientation.operations(id);
-    for (name, value) in [
-        ("u", at),
-        ("widthMm", width_mm),
-        ("heightMm", height_mm),
-        ("sillMm", sill_mm),
-    ] {
-        if let Some(v) = value {
-            ops.push(set_field(id, name, serde_json::json!(v)));
-        }
+    let updated = edit::set_opening(&mut plan, opening, changes, &label(path))?;
+    if updated.batch_id.is_none() {
+        return Ok(format!("Opening {} is unchanged.", updated.label));
     }
-    plan.commit_and_save(ops)?;
-    let mut msg = format!("Updated opening {opening_index}.");
+    plan.save()?;
+    let mut msg = format!("Updated opening {}.", updated.label);
     append_warnings(&mut msg, plan.document());
     Ok(msg)
 }
@@ -870,15 +724,8 @@ pub fn cmd_set_opening(
 /// Adds a level.
 pub fn cmd_add_level(path: &Path, name: &str, elevation_mm: f64) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    if plan.document().levels.iter().any(|l| l.name == name) {
-        return Err(CliError::Failure(format!(
-            "{} already has a level named {name:?}",
-            path.display()
-        )));
-    }
-    let mut level = domowik_format::Level::new(name);
-    level.elevation_mm = elevation_mm;
-    plan.commit_and_save(vec![Operation::create(Entity::Level(level))])?;
+    edit::add_level(&mut plan, name, elevation_mm, &path.display().to_string())?;
+    plan.save()?;
     let mut msg = format!("Added level {name:?} at {elevation_mm:.0} mm.");
     append_warnings(&mut msg, plan.document());
     Ok(msg)
@@ -910,46 +757,17 @@ pub fn cmd_set_level_fields(
     name: &str,
     fields: &domowik_edit::LevelFields,
 ) -> Result<String> {
-    if fields.name.is_none()
-        && fields.elevation_mm.is_none()
-        && fields.floor_thickness_mm.is_none()
-        && fields.default_wall_height_mm.is_none()
-        && fields.default_ceiling_height_mm.is_none()
-    {
+    if edit::level_fields_empty(fields) {
         return Err(CliError::Usage(
             "nothing to change; pass --rename, --elevation, --floor-thickness, --wall-height or --ceiling-height".to_owned(),
         ));
     }
     let mut plan = Plan::open(path)?;
-    if plan
-        .document()
-        .levels
-        .iter()
-        .filter(|level| level.name == name)
-        .count()
-        > 1
-    {
-        return Err(CliError::Failure(format!("multiple levels are named {name:?}; select and rename the intended level in the editor before using name-based commands")));
-    }
-    let id = plan
-        .document()
-        .levels
-        .iter()
-        .find(|l| l.name == name)
-        .map(|l| l.id)
-        .ok_or_else(|| {
-            CliError::Failure(format!(
-                "no level named {name:?} in {}; available: {}",
-                path.display(),
-                level_list(plan.document())
-            ))
-        })?;
-
-    let ops = domowik_edit::set_level_operations(plan.document(), id, fields)?;
-    if ops.is_empty() {
+    let updated = edit::set_level(&mut plan, name, fields, &label(path))?;
+    if updated.batch_id.is_none() {
         return Ok(format!("Level {name:?} is unchanged."));
     }
-    plan.commit_and_save(ops)?;
+    plan.save()?;
     let mut msg = format!("Updated level {name:?}.");
     append_warnings(&mut msg, plan.document());
     Ok(msg)
@@ -1014,310 +832,21 @@ pub fn cmd_order_levels(path: &Path, levels: &[String]) -> Result<String> {
     Ok(msg)
 }
 
-/// A machine-readable report of a plan, for `info --json` and `validate --json`.
-///
-/// Issue 0014 requires output that "identifies paths/entity IDs/digests". The
-/// human report identifies walls by their 1-based position, which is what a
-/// person can see on a drawing and type back; this report identifies them by
-/// UUID, which is what a script needs and what survives a document being
-/// reordered.
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Report {
-    pub path: String,
-    /// The document's stable identity (issue 0116), when the document carries
-    /// one; omitted otherwise.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub document_id: Option<Uuid>,
-    /// The §8.1 V1 schema identifier the package declares, a `MAJOR.MINOR`
-    /// string. Not a number: §8.1 makes it an opaque label a writer states.
-    pub format_version: String,
-    /// §7.9's `thin` or `portable`.
-    pub profile: String,
-    pub batches: usize,
-    pub operations: usize,
-    pub valid: bool,
-    pub problems: Vec<String>,
-    /// Warning-class conditions do not affect `valid` or the exit code.
-    pub warnings: Vec<WarningReport>,
-    pub levels: Vec<LevelReport>,
-    /// Operations replay discarded as stale. A projection outcome rather than
-    /// an error (FORMAT-SPEC I5), and invisible in the human report, so a
-    /// script that cares can see it.
-    pub discarded: Vec<DiscardReport>,
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct WarningReport {
-    /// Either a §2.1 level advisory or an R3.1.2 `wall-area-overlap` pair —
-    /// [`domowik_document::warnings::Warning`] is untagged, so this field's
-    /// JSON shape is unchanged: a `{code, ...}` object, exactly as when it
-    /// only ever held a [`domowik_format::ValidationWarning`].
-    #[serde(flatten)]
-    pub warning: domowik_document::warnings::Warning,
-    pub message: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LevelReport {
-    pub id: Uuid,
-    pub name: String,
-    pub elevation_mm: f64,
-    pub floor_thickness_mm: f64,
-    pub default_wall_height_mm: f64,
-    pub default_ceiling_height_mm: f64,
-    /// The stored level-list ordinal (issue 0115), when the document
-    /// customizes its level list; omitted otherwise.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_order: Option<u64>,
-    pub walls: Vec<WallReport>,
-    pub rooms: Vec<RoomReport>,
-    /// Room records on this level, in stable-UUID order (BEHAVIOR-SPEC §5.2).
-    ///
-    /// Separate from `rooms` because the two are different things: `rooms` are
-    /// detected FACES, which exist whether or not any record names them, and
-    /// these are the authoritative records, which persist whether or not any
-    /// face contains their seed.
-    pub room_records: Vec<RoomRecordReport>,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WallReport {
-    pub id: Uuid,
-    /// The last six hex digits of `id`, accepted wherever a wall is named.
-    pub short_id: String,
-    /// The 1-based number the human report and the editing commands use.
-    pub index: usize,
-    pub start_mm: [f64; 2],
-    pub end_mm: [f64; 2],
-    pub thickness_mm: f64,
-    pub height_mm: f64,
-    pub length_mm: f64,
-    pub openings: Vec<OpeningReport>,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpeningReport {
-    pub id: Uuid,
-    /// The last six hex digits of `id`, accepted wherever an opening is named.
-    pub short_id: String,
-    /// The 1-based number in document order that the commands also accept.
-    pub index: usize,
-    pub kind: String,
-    pub u: f64,
-    /// The centre in millimetres along the host from its start: `u` times
-    /// the host's current length.
-    pub centre_offset_mm: f64,
-    /// The centre as a plan point.
-    pub centre_mm: [f64; 2],
-    /// `doorHinged`, `doorSliding`, `windowSideHung`, `windowDoubleSwing` or
-    /// `windowLift`; the kind's default when the plan does not say.
-    pub mechanism: domowik_format::OpeningMechanism,
-    /// `nearStart` or `nearEnd`: the hinged end of the host axis.
-    pub hinge: domowik_format::Hinge,
-    /// `Left` or `Right`: the side the leaf swings into, left being on the
-    /// left walking from the host's start to its end.
-    pub opens_toward: domowik_format::Side,
-    pub swing_deg: f64,
-    pub width_mm: f64,
-    pub height_mm: f64,
-    pub sill_mm: f64,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RoomReport {
-    /// Floor area, measured to the inner faces of the walls (R5.1.1).
-    pub area_mm2: f64,
-    /// The same area under the R5.3.2 display rule: square metres, two
-    /// decimals, exact halves to even. Reported alongside the raw measure so a
-    /// caller showing a plan and a caller computing with one need not each
-    /// reimplement the rounding and disagree about 30.245.
-    pub display_area_m2: String,
-    pub perimeter_mm: f64,
-    /// The canonical exterior ring (R3.2.4), so a caller can draw it.
-    pub boundary_mm: Vec<[f64; 2]>,
-    pub holes_mm: Vec<Vec<[f64; 2]>>,
-    /// The record effectively associated with this face (R5.2.4), if any.
-    pub record_id: Option<Uuid>,
-    /// The label text: the effective record's name when present and non-empty,
-    /// otherwise the `Room` fallback. Absent when the face has no candidates
-    /// and therefore no label at all (R5.3.3).
-    pub label: Option<String>,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RoomRecordReport {
-    pub id: Uuid,
-    /// The last six hex digits of `id`, accepted by the `room` commands.
-    pub short_id: String,
-    /// The 1-based number `room list`, `room set` and `room remove` use.
-    pub index: usize,
-    pub seed_mm: [f64; 2],
-    /// The authoritative name. `null` and `""` are DIFFERENT values here and
-    /// the report keeps them apart, even though both display as `Room`.
-    pub name: Option<String>,
-    pub floor_style_ref: Option<String>,
-    pub ceiling_style_ref: Option<String>,
-    /// One of `associated`, `superseded`, `seed-on-boundary`, `seed-in-wall`,
-    /// `seed-in-exterior` — derived, never stored (R5.2.4).
-    pub status: String,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DiscardReport {
-    pub batch_id: Uuid,
-    pub operation_id: Uuid,
-    pub entity_id: Uuid,
-    pub reason: String,
-}
+pub use domowik_commands::report::{
+    DiscardReport, LevelReport, OpeningReport, Report, RoomRecordReport, RoomReport, WallReport,
+    WarningReport,
+};
 
 /// Builds the machine-readable report for `path`.
 pub fn report(path: &Path) -> Result<Report> {
     let pkg = read_package(path)?;
     let projection = pkg.project().map_err(CliError::from)?;
-    let doc = &projection.document;
-    let numbering = refs::Numbering::new(doc);
-    let problems: Vec<String> = doc.validate_plan().iter().map(|e| e.to_string()).collect();
-
-    let levels = display_levels(doc)
-        .into_iter()
-        .map(|level| {
-            let walls = doc
-                .walls
-                .iter()
-                .enumerate()
-                .filter(|(_, w)| w.level_id == level.id)
-                .map(|(i, w)| WallReport {
-                    id: w.id,
-                    short_id: refs::short_id(w.id),
-                    index: i + 1,
-                    start_mm: w.start_mm,
-                    end_mm: w.end_mm,
-                    thickness_mm: w.thickness_mm,
-                    height_mm: w.height_mm,
-                    length_mm: w.length_mm(),
-                    openings: doc
-                        .openings_on_wall(w.id)
-                        .iter()
-                        .map(|o| OpeningReport {
-                            id: o.id,
-                            short_id: refs::short_id(o.id),
-                            index: numbering.opening(o.id),
-                            kind: match o.kind {
-                                OpeningKind::Door => "door".to_owned(),
-                                OpeningKind::Window => "window".to_owned(),
-                            },
-                            u: o.u,
-                            centre_offset_mm: o.u * w.length_mm(),
-                            mechanism: o.effective_mechanism(),
-                            hinge: o.hinge,
-                            opens_toward: o.opens_toward,
-                            swing_deg: o.swing_deg,
-                            centre_mm: {
-                                let (a, b) = (w.start(), w.end());
-                                [a.x + (b.x - a.x) * o.u, a.y + (b.y - a.y) * o.u]
-                            },
-                            width_mm: o.width_mm,
-                            height_mm: o.height_mm,
-                            sill_mm: o.sill_mm,
-                        })
-                        .collect(),
-                })
-                .collect();
-            let projected = rooms::project_level(doc, level.id);
-            let numbers: Vec<Uuid> = numbered_records(doc).iter().map(|r| r.id).collect();
-            let rooms = projected
-                .faces
-                .iter()
-                .enumerate()
-                .map(|(i, r)| {
-                    let record_id = projected.effective_record(i);
-                    RoomReport {
-                        area_mm2: r.area_mm2(),
-                        display_area_m2: rooms::display_polygon_area_m2(r)
-                            .unwrap_or_else(|| "—".to_owned()),
-                        perimeter_mm: r.perimeter_mm(),
-                        boundary_mm: r.outer.iter().map(|p| [p.x, p.y]).collect(),
-                        holes_mm: r
-                            .holes
-                            .iter()
-                            .map(|h| h.iter().map(|p| [p.x, p.y]).collect())
-                            .collect(),
-                        record_id,
-                        label: record_id
-                            .and_then(|id| doc.room_record(id))
-                            .map(|r| r.display_name().to_owned()),
-                    }
-                })
-                .collect();
-            let room_records = projected
-                .records
-                .iter()
-                .filter_map(|p| {
-                    let record = doc.room_record(p.id)?;
-                    Some(RoomRecordReport {
-                        id: record.id,
-                        short_id: refs::short_id(record.id),
-                        index: numbers.iter().position(|id| *id == record.id)? + 1,
-                        seed_mm: record.seed_mm,
-                        name: record.name.clone(),
-                        floor_style_ref: record.floor_style_ref.clone(),
-                        ceiling_style_ref: record.ceiling_style_ref.clone(),
-                        status: p.status.token().to_owned(),
-                    })
-                })
-                .collect();
-            LevelReport {
-                id: level.id,
-                name: level.name.clone(),
-                elevation_mm: level.elevation_mm,
-                floor_thickness_mm: level.floor_thickness_mm,
-                default_wall_height_mm: level.default_wall_height_mm,
-                default_ceiling_height_mm: level.default_ceiling_height_mm,
-                // The stored list ordinal when the document carries one;
-                // absent otherwise (issue 0115).
-                display_order: level.display_order,
-                walls,
-                rooms,
-                room_records,
-            }
-        })
-        .collect();
-
-    Ok(Report {
-        path: path.display().to_string(),
-        document_id: doc.document_id,
-        format_version: pkg.manifest.format_version.clone(),
-        profile: pkg.manifest.profile.to_string(),
-        batches: pkg.batches.len(),
-        operations: pkg.batches.iter().map(|b| b.operations.len()).sum(),
-        valid: problems.is_empty(),
-        warnings: domowik_document::warnings::validation_warnings(doc)
-            .into_iter()
-            .map(|warning| WarningReport {
-                message: warning.to_string(),
-                warning,
-            })
-            .collect(),
-        problems,
-        levels,
-        discarded: projection
-            .discarded
-            .iter()
-            .map(|d| DiscardReport {
-                batch_id: d.batch_id,
-                operation_id: d.operation_id,
-                entity_id: d.entity_id,
-                reason: format!("{:?}", d.reason),
-            })
-            .collect(),
-    })
+    Ok(domowik_commands::report::build(
+        &path.display().to_string(),
+        &pkg.manifest,
+        &pkg.batches,
+        &projection,
+    ))
 }
 
 /// `info --json`.
@@ -2983,71 +2512,6 @@ fn describe_for_report(op: &Operation) -> OpsOperationReport {
     }
 }
 
-/// Every room record in the document, in the order the room commands number
-/// them: level display order, then stable UUID within a level.
-///
-/// Document order is not canonical (FORMAT-SPEC C1), so numbering by it would
-/// let the same command edit different records in two copies of one plan.
-fn numbered_records(doc: &Document) -> Vec<&RoomRecord> {
-    let mut out: Vec<&RoomRecord> = Vec::with_capacity(doc.room_records.len());
-    for level in display_levels(doc) {
-        let mut on_level: Vec<&RoomRecord> = doc.room_records_on_level(level.id).collect();
-        on_level.sort_by_key(|r| r.id);
-        out.extend(on_level);
-    }
-    // A record whose `levelId` dangles belongs to no level and would vanish
-    // from the listing entirely — which is the one case where a user most
-    // needs to see it, since the only way to fix it is to address it.
-    let mut orphans: Vec<&RoomRecord> = doc
-        .room_records
-        .iter()
-        .filter(|r| doc.level(r.level_id).is_none())
-        .collect();
-    orphans.sort_by_key(|r| r.id);
-    out.extend(orphans);
-    out
-}
-
-/// Resolves a room argument: either its `room list` number, or its UUID.
-///
-/// Both, because the two callers want different things. A person reads a
-/// number off the listing; a script that created a record already holds its
-/// identifier and should not have to re-derive a position that another edit
-/// may have shifted.
-fn resolve_room(doc: &Document, room: &str) -> Result<Uuid> {
-    if let Ok(id) = Uuid::parse_str(room) {
-        return match doc.room_record(id) {
-            Some(_) => Ok(id),
-            None => Err(CliError::Failure(format!(
-                "no room record {id} in this plan; `domowik room list` shows what is there"
-            ))),
-        };
-    }
-    // Six or more hex digits are a short ID even when all digits, exactly as
-    // for walls and openings: `000001` must never mean room number 1.
-    if refs::is_long_short_id(room) {
-        return refs::resolve_room_short(doc, room).expect("shaped like a short ID");
-    }
-    let index: usize = match room.parse() {
-        Ok(index) => index,
-        Err(_) => {
-            return refs::resolve_room_short(doc, room).unwrap_or_else(|| {
-                Err(CliError::Usage(format!(
-                    "expected a room number from `domowik room list`, a record UUID or a short ID (4e1a92), got {room:?}"
-                )))
-            })
-        }
-    };
-    let records = numbered_records(doc);
-    if index == 0 || index > records.len() {
-        return Err(CliError::Failure(format!(
-            "room {index} is out of range; this plan holds {} room record(s)",
-            records.len()
-        )));
-    }
-    Ok(records[index - 1].id)
-}
-
 /// The fields `room set` may change, before they become a [`RoomFields`].
 ///
 /// Every "set" has a matching "clear" at the command line because the two are
@@ -3106,32 +2570,32 @@ pub fn cmd_room_add(
     ceiling_style: Option<&str>,
 ) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let level_id = resolve_level(plan.document(), level_name, path)?;
-    let mut record = RoomRecord::new(id.unwrap_or_else(Uuid::now_v7), level_id, Point::new(x, y));
-    record.name = name.map(str::to_owned);
-    record.floor_style_ref = floor_style.map(str::to_owned);
-    record.ceiling_style_ref = ceiling_style.map(str::to_owned);
-    let record_id = record.id;
+    let added = edit::room_add(
+        &mut plan,
+        edit::NewRoom {
+            seed: [x, y],
+            name: name.map(str::to_owned),
+            id,
+            level: level_name.map(str::to_owned),
+            floor_style: floor_style.map(str::to_owned),
+            ceiling_style: ceiling_style.map(str::to_owned),
+        },
+        &label(path),
+    )?;
+    plan.save()?;
 
-    let ops = domowik_edit::create_room_operations(plan.document(), record)?;
-    plan.commit_and_save(ops)?;
-
-    let projection = rooms::project_level(plan.document(), level_id);
-    let status = projection
-        .record(record_id)
-        .map(|r| r.status)
-        .unwrap_or(RoomStatus::SeedInExterior);
-    let mut msg = format!(
-        "Added room record {record_id} at ({x:.0}, {y:.0}): {}.",
-        status.token()
-    );
-    if let Some(name) = name {
-        msg = format!(
+    let record_id = added.record_id;
+    let mut msg = match name {
+        Some(name) => format!(
             "Added room record {record_id} {name:?} at ({x:.0}, {y:.0}): {}.",
-            status.token()
-        );
-    }
-    msg.push_str(&unplaced_warning(status, record_id));
+            added.status
+        ),
+        None => format!(
+            "Added room record {record_id} at ({x:.0}, {y:.0}): {}.",
+            added.status
+        ),
+    };
+    msg.push_str(&unplaced_warning(added.room_status, record_id));
     append_warnings(&mut msg, plan.document());
     Ok(msg)
 }
@@ -3158,49 +2622,38 @@ fn unplaced_warning(status: RoomStatus, id: Uuid) -> String {
 /// Changes a room record's fields (BEHAVIOR-SPEC R5.2.2 UPDATE).
 pub fn cmd_room_set(path: &Path, room: &str, args: &RoomSetArgs) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let id = resolve_room(plan.document(), room)?;
-    let level_id = match args.level.as_deref() {
-        Some(name) => Some(resolve_level(plan.document(), Some(name), path)?),
-        None => None,
-    };
-    let fields = RoomFields {
-        seed: args.seed.map(|(x, y)| Point::new(x, y)),
+    // The room, then the level, then the flags: the order these checks ran
+    // in before the commands moved, so the first error reported is the same.
+    domowik_commands::levels::resolve_room(plan.document(), room)?;
+    if let Some(level) = args.level.as_deref() {
+        resolve_level(plan.document(), Some(level), path)?;
+    }
+    let changes = edit::RoomChanges {
+        seed: args.seed.map(|(x, y)| [x, y]),
         name: field_edit(args.name.clone(), args.clear_name, "name")?,
-        floor_style_ref: field_edit(
+        floor_style: field_edit(
             args.floor_style.clone(),
             args.clear_floor_style,
             "floor-style",
         )?,
-        ceiling_style_ref: field_edit(
+        ceiling_style: field_edit(
             args.ceiling_style.clone(),
             args.clear_ceiling_style,
             "ceiling-style",
         )?,
-        level_id,
+        level: args.level.clone(),
     };
-
-    let ops = domowik_edit::update_room_operations(plan.document(), id, &fields)?;
-    if ops.is_empty() {
+    let updated = edit::room_set(&mut plan, room, changes, &label(path))?;
+    let id = updated.record_id;
+    if updated.batch_id.is_none() {
         return Ok(format!("Room record {id} is already in that state."));
     }
-    plan.commit_and_save(ops)?;
-
-    let record = plan
-        .document()
-        .room_record(id)
-        .expect("the update just committed")
-        .clone();
-    let projection = rooms::project_level(plan.document(), record.level_id);
-    let status = projection
-        .record(id)
-        .map(|r| r.status)
-        .unwrap_or(RoomStatus::SeedInExterior);
+    plan.save()?;
     let mut msg = format!(
         "Updated room record {id}: {} is now {}.",
-        record.display_name(),
-        status.token()
+        updated.display_name, updated.status
     );
-    msg.push_str(&unplaced_warning(status, id));
+    msg.push_str(&unplaced_warning(updated.room_status, id));
     append_warnings(&mut msg, plan.document());
     Ok(msg)
 }
@@ -3211,15 +2664,12 @@ pub fn cmd_room_set(path: &Path, room: &str, args: &RoomSetArgs) -> Result<Strin
 /// (R5.1.8). Only the label goes.
 pub fn cmd_room_remove(path: &Path, room: &str) -> Result<String> {
     let mut plan = Plan::open(path)?;
-    let id = resolve_room(plan.document(), room)?;
-    let name = plan
-        .document()
-        .room_record(id)
-        .map(|r| r.display_name().to_owned())
-        .unwrap_or_default();
-    let ops = domowik_edit::delete_room_operations(plan.document(), id)?;
-    plan.commit_and_save(ops)?;
-    let mut msg = format!("Removed room record {id} ({name}). The face is unchanged.");
+    let removed = edit::room_remove(&mut plan, room)?;
+    plan.save()?;
+    let mut msg = format!(
+        "Removed room record {} ({}). The face is unchanged.",
+        removed.record_id, removed.display_name
+    );
     append_warnings(&mut msg, plan.document());
     Ok(msg)
 }
@@ -3348,60 +2798,19 @@ pub fn rooms_on_level(doc: &Document, level_id: Uuid) -> Vec<Polygon> {
     plan_on_level(doc, level_id).1
 }
 
-/// Derived display order; never rewrites the document's entity storage.
-/// Invalid elevations sort last by UUID, matching diagnostic ordering.
-fn display_levels(doc: &Document) -> Vec<&domowik_format::Level> {
-    let mut levels: Vec<_> = doc.levels.iter().collect();
-    let valid = |e: f64| e.is_finite() && e.abs() <= domowik_format::COORD_BOUND_MM;
-    levels.sort_by(|a, b| {
-        match (valid(a.elevation_mm), valid(b.elevation_mm)) {
-            (true, true) => a.elevation_mm.partial_cmp(&b.elevation_mm).unwrap(),
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            (false, false) => std::cmp::Ordering::Equal,
-        }
-        .then_with(|| a.id.cmp(&b.id))
-    });
-    levels
-}
-
-/// Resolves an unambiguous name, or the first level in display order.
-/// The level named `name`, refused when absent or ambiguous.
-pub(crate) fn resolve_level_id(doc: &Document, name: &str, path: &Path) -> Result<Uuid> {
-    resolve_level(doc, Some(name), path)
-}
-
+/// The level named `name`, refused when absent or ambiguous; with no name,
+/// the first level in display order.
 fn resolve_level(doc: &Document, name: Option<&str>, path: &Path) -> Result<Uuid> {
-    match name {
-        Some(name) => {
-            let mut matches = doc.levels.iter().filter(|l| l.name == name);
-            let first = matches.next().ok_or_else(|| {
-                CliError::Failure(format!(
-                    "no level named {name:?} in {}; available: {}",
-                    path.display(),
-                    level_list(doc)
-                ))
-            })?;
-            if matches.next().is_some() {
-                return Err(CliError::Failure(format!("multiple levels are named {name:?}; select and rename the intended level in the editor before using name-based commands")));
-            }
-            Ok(first.id)
-        }
-        None => display_levels(doc).first().map(|l| l.id).ok_or_else(|| {
-            CliError::Failure(format!("{} has no levels to add a wall to", path.display()))
-        }),
-    }
+    Ok(domowik_commands::levels::resolve_level(
+        doc,
+        name,
+        &label(path),
+    )?)
 }
 
-fn level_list(doc: &Document) -> String {
-    if doc.levels.is_empty() {
-        return "(none)".to_owned();
-    }
-    display_levels(doc)
-        .into_iter()
-        .map(|l| format!("{:?}", l.name))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// How a command names its plan in messages: the path as given.
+fn label(path: &Path) -> String {
+    path.display().to_string()
 }
 
 /// Appends a sentence per BEHAVIOR-SPEC warning attached to `doc`'s CURRENT
@@ -3712,7 +3121,7 @@ fn rfc3339_now() -> String {
 mod tests {
     use super::*;
     use domowik_document::session::Session;
-    use domowik_format::{Hinge, Role, Side};
+    use domowik_format::{Entity, Hinge, Opening, Role, Side, Wall};
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().expect("tempdir")

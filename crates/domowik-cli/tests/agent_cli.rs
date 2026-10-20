@@ -596,3 +596,50 @@ fn a_submillimetre_gap_is_a_near_miss_with_a_working_suggestion() {
     let (code, report) = check_json(&path, &["--strict"]);
     assert_eq!(code, Some(0), "{report:#}");
 }
+
+/// `room set` reports the first of several errors in the order it always
+/// did: the room, then the level, then conflicting flags.
+#[test]
+fn room_set_reports_a_missing_level_before_a_flag_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = dir.path().join("p.domo");
+    assert!(run(&plan, "new", &[]).status.success());
+    ok(&plan, "room add", &["500", "500", "--name", "Hall"]);
+    let out = run(
+        &plan,
+        "room set",
+        &["1", "--level", "Attic", "--name", "x", "--clear-name"],
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no level named \"Attic\""));
+}
+
+/// Setting a wall or opening to what it already is writes nothing, as
+/// `set-level` and `room set` already did.
+#[test]
+fn unchanged_set_wall_and_set_opening_write_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let plan = dir.path().join("p.domo");
+    ok(&plan, "new", &[]);
+    ok(
+        &plan,
+        "add-wall",
+        &["0", "0", "4000", "0", "--thickness", "200"],
+    );
+    ok(&plan, "add-opening", &["2000,0", "door"]);
+    let before = std::fs::read(&plan).unwrap();
+    let wall = ok(
+        &plan,
+        "set-wall",
+        &["1000,0", "--thickness", "200", "--start", "0,0"],
+    );
+    assert!(wall.contains("is unchanged"), "{wall}");
+    let opening = ok(&plan, "set-opening", &["2000,0", "--width", "900"]);
+    assert!(opening.contains("is unchanged"), "{opening}");
+    assert_eq!(std::fs::read(&plan).unwrap(), before, "nothing was written");
+}

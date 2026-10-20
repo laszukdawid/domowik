@@ -33,7 +33,8 @@ compatibility before treating them as settled.
 | `crates/domowik-geometry` / `domowik-edit` | Authoritative geometry and editing consequences |
 | `crates/domowik-models` / `domowik-scene` | Bounded model decode and renderer-neutral 3D data |
 | `crates/domowik-scene-wire` | Byte format carrying a derived scene from the browser core module to its renderer module |
-| `crates/domowik-cli` | Headless command workflows and SVG/PNG export; `refs.rs` resolves wall/opening references (number, short ID, point), `check.rs` drafting checks, `png.rs` the review overlay |
+| `crates/domowik-commands` | The drafting commands shared by the CLI and other front ends such as the separate `domowik-serve` service: `edit.rs` typed commands on an open plan, `refs.rs` wall/opening references (number, short ID, point), `check.rs` drafting checks, `report.rs` the `info --json` report |
+| `crates/domowik-cli` | Headless command workflows and SVG/PNG export; thin front end over `domowik-commands`; `png.rs` the review overlay |
 | `crates/domowik-devtools` / `domowik-bench` | Repository checks and measurement harnesses |
 | `frontend/native/src` and `frontend/native/include/` | Separate Rust workspace and C ABI |
 | `frontend/dart_harness` | Hand-written Dart bindings and boundary probes |

@@ -19,6 +19,7 @@ domowik-assets = { path = "../domowik-assets" }
 domowik-format = { path = "../domowik-format" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+domowik-commands = { path = "../domowik-commands" }
 domowik-container = { path = "../domowik-container" }
 domowik-document = { path = "../domowik-document" }
 domowik-edit = { path = "../domowik-edit" }

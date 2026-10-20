@@ -1,0 +1,18 @@
+[package]
+name = "domowik-commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Semantic plan-editing commands shared by the CLI and the hosted service"
+
+[dependencies]
+domowik-container = { path = "../domowik-container" }
+domowik-document = { path = "../domowik-document" }
+domowik-edit = { path = "../domowik-edit" }
+domowik-format = { path = "../domowik-format" }
+domowik-geometry = { path = "../domowik-geometry" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

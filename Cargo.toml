@@ -10,6 +10,7 @@ members = [
     "crates/domowik-document",
     "crates/domowik-edit",
     "crates/domowik-geometry",
+    "crates/domowik-commands",
     "crates/domowik-cli",
     "crates/domowik-devtools",
     "crates/domowik-bench",
