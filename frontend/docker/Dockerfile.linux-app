@@ -41,12 +41,12 @@ RUN apt-get update \
 RUN rustup component add rustfmt clippy
 RUN test "$(rustc --version)" = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
 
-# Flutter 3.41.6 -- the SAME version as the macOS host SDK, so the two platform
+# Flutter 3.47.7 -- the SAME version as the macOS host SDK, so the two platform
 # runs are the same framework rather than two that happen to both be stable.
 # Pinned by the SHA-256 that the release manifest publishes, and verified
 # BEFORE the archive is unpacked.
-ARG FLUTTER_VERSION=3.41.6
-ARG FLUTTER_SHA256=503b3e6b7d352fca5d21b6474eca95ad544d8fc3b053782eab63a360c7fc7569
+ARG FLUTTER_VERSION=3.47.7
+ARG FLUTTER_SHA256=af7455f540df951184c7953fbe3cf884766e7541dacf8571f9f582db03dd6230
 RUN curl -fsSL -o /tmp/flutter.tar.xz \
       "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
  && echo "${FLUTTER_SHA256}  /tmp/flutter.tar.xz" | sha256sum -c - \
@@ -66,7 +66,7 @@ ENV PATH="/opt/flutter/bin:${PATH}"
 RUN git config --global --add safe.directory /opt/flutter \
  && flutter --disable-analytics \
  && flutter precache --linux --no-android --no-ios --no-web \
- && test "$(flutter --version --machine | sed -n 's/.*"frameworkVersion": "\([^"]*\)".*/\1/p')" = "3.41.6"
+ && test "$(flutter --version --machine | sed -n 's/.*"frameworkVersion": "\([^"]*\)".*/\1/p')" = "3.47.7"
 
 WORKDIR /work
 

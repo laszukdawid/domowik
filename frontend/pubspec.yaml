@@ -6,7 +6,10 @@ publish_to: none
 version: 0.0.0
 
 environment:
-  sdk: ^3.11.4
+  sdk: ^3.13.5
+  # The editor uses framework API added after 3.41 (e.g. onReorderItem); an
+  # older SDK must fail at `pub get`, not at compile time. Matches the CI pin.
+  flutter: ">=3.47.7"
 
 # NO third-party Dart package, matching the rest of the spike. `cupertino_icons`
 # came with the template and was removed: an icon font is not needed to prove a

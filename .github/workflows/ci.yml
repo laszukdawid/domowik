@@ -41,7 +41,7 @@ jobs:
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0; same reviewed MIT pin as macOS
         with:
           channel: stable
-          flutter-version: 3.41.6
+          flutter-version: 3.47.7
           cache: false
           pub-cache: false
       - name: Install Linux editor prerequisites
@@ -206,7 +206,7 @@ jobs:
       # 1a449444c387b1966244ae4d4f8c696479add0b2, MIT (verified against the
       # tag's LICENSE). Dev-only tool: recorded per THIRD-PARTY-POLICY's
       # toolchain-reproducibility guidance, not as a distributed dependency.
-      # flutter-version matches the toolchain issue 0057 verified.
+      # flutter-version matches the Linux image and the pubspec's Flutter floor.
       #
       # cache/pub-cache explicitly false — already the default, but either
       # would execute this action's own unpinned `actions/cache@v5`; same
@@ -215,7 +215,7 @@ jobs:
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          flutter-version: 3.41.6
+          flutter-version: 3.47.7
           cache: false
           pub-cache: false
 
