@@ -6,6 +6,7 @@ use super::*;
 use domowik_format::{AssetInstance, InstanceTransform};
 use domowik_geometry::spatial::SpatialIndex;
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 use std::path::Path;
 
@@ -14,8 +15,10 @@ pub(crate) type SceneModels =
     std::collections::BTreeMap<String, std::sync::Arc<domowik_models::ModelMesh>>;
 
 /// A renderer-view baseline, keyed by document/content revision and visibility.
-/// Stores only nodes/framing, never another copy of decoded vertices. Its nodes
-/// hold authoritative poses, so cancelling a preview restores them directly.
+/// Stores nodes/framing and the scene's own small derived meshes (slabs, join
+/// patches, the unit cube) for picking, never another copy of decoded model
+/// vertices. Its nodes hold authoritative, untinted poses, so cancelling a
+/// preview or changing selection restores them directly.
 pub(super) struct CachedScene {
     token: u64,
     revision: ContentRevision,
@@ -26,6 +29,8 @@ pub(super) struct CachedScene {
     radius: f32,
     diagnostics: Vec<String>,
     nodes: Vec<domowik_scene::Node>,
+    meshes: BTreeMap<String, Vec<f32>>,
+    mesh_bounds: HashMap<String, domowik_scene::pick::Bounds>,
 }
 
 fn update_pose_node(
@@ -62,21 +67,14 @@ fn cached_pose_scene(
     {
         return None;
     }
-    let mut nodes = cache.nodes.clone();
-    if let Some((revision, preview)) = &plan.asset_pose_preview {
-        if *revision == document_revision(plan.session()) {
-            let id = preview.id.to_string();
-            if let Some(node) = nodes.iter_mut().find(|n| n.id == id) {
-                update_pose_node(plan, preview, cache.origin, node);
-            }
-        }
-    }
+    let nodes = presented_nodes(plan, cache).into_owned();
     // Names-only table: receivers must reuse resident mesh buffers. Keeping
     // names lets scene-wire retain its indexed-instance representation.
     let meshes = nodes.iter().map(|n| (n.mesh.clone(), Vec::new())).collect();
     Some(domowik_scene::Scene {
         instance_only: true,
         scene_token: cache.token,
+        pose_version: plan.pose_version,
         origin_mm: cache.origin,
         center: cache.center,
         radius: cache.radius,
@@ -85,6 +83,150 @@ fn cached_pose_scene(
         meshes,
         required_models: vec![],
     })
+}
+
+/// Plan entity ids among editor selection ids. Selection is a display hint:
+/// ids that are not entities are ignored rather than refusing the request.
+fn entity_set(ids: &[String]) -> HashSet<Uuid> {
+    ids.iter()
+        .filter_map(|id| Uuid::parse_str(id).ok())
+        .collect()
+}
+
+/// The cached view scene when it still matches the presenter's baseline and
+/// the presenter has drawn the current pose overlay.
+fn current_view_scene<'a>(
+    plan: &'a Plan,
+    levels: &[Uuid],
+    ghosted: &[Uuid],
+    token: u64,
+    pose_version: u64,
+) -> Option<&'a CachedScene> {
+    plan.view_scene.as_ref().filter(|cache| {
+        pose_version == plan.pose_version
+            && cache.token == token
+            && cache.revision == plan.content_revision()
+            && cache.levels == levels
+            && cache.ghosted == ghosted
+    })
+}
+
+/// The cached nodes as presented: committed poses with the live pose overlay
+/// applied, so queries see what the last instance update drew. Borrowed
+/// unless an overlay is active.
+fn presented_nodes<'a>(
+    plan: &Plan,
+    cache: &'a CachedScene,
+) -> std::borrow::Cow<'a, [domowik_scene::Node]> {
+    let Some(previews) = plan.pose_previews().filter(|p| !p.is_empty()) else {
+        return std::borrow::Cow::Borrowed(&cache.nodes);
+    };
+    let mut nodes = cache.nodes.clone();
+    for node in &mut nodes {
+        let preview = Uuid::parse_str(&node.id)
+            .ok()
+            .and_then(|id| previews.get(&id));
+        if let Some(preview) = preview {
+            update_pose_node(plan, preview, cache.origin, node);
+        }
+    }
+    std::borrow::Cow::Owned(nodes)
+}
+
+/// Local bounds for a node's mesh key: the scene's own meshes, else a model.
+fn scene_bounds(
+    plan: &Plan,
+    cache: &CachedScene,
+    key: &str,
+) -> Option<domowik_scene::pick::Bounds> {
+    cache
+        .mesh_bounds
+        .get(key)
+        .or_else(|| plan.scene_model_bounds.get(key))
+        .copied()
+}
+
+/// A node's mesh with its cached bounds: the scene's own, else a model.
+fn scene_mesh<'a>(
+    plan: &'a Plan,
+    cache: &'a CachedScene,
+    key: &str,
+) -> Option<domowik_scene::pick::MeshView<'a>> {
+    let vertices = cache
+        .meshes
+        .get(key)
+        .or_else(|| plan.scene_models.get(key).map(|m| &m.vertices))?;
+    Some(domowik_scene::pick::MeshView {
+        vertices,
+        bounds: scene_bounds(plan, cache, key)?,
+    })
+}
+
+/// The first visible surface along a camera ray within `range` metres, in
+/// the presented scene. Ghosted levels are transparent to picking.
+/// `{"hit":null}` when the ray meets nothing.
+fn pick_3d(
+    plan: &Plan,
+    cache: &CachedScene,
+    ghosted: &[Uuid],
+    range: [f64; 2],
+    origin: [f64; 3],
+    direction: [f64; 3],
+) -> Value {
+    use domowik_scene::pick::{self, EntityKind};
+    let doc = plan.session().document();
+    let ghosted_levels: HashSet<Uuid> = ghosted.iter().copied().collect();
+    let mut hidden: HashSet<Uuid> = ghosted_levels.clone();
+    let ghost_walls: HashSet<Uuid> = doc
+        .walls
+        .iter()
+        .filter(|w| ghosted_levels.contains(&w.level_id))
+        .map(|w| w.id)
+        .collect();
+    hidden.extend(&ghost_walls);
+    hidden.extend(
+        doc.openings
+            .iter()
+            .filter(|o| ghost_walls.contains(&o.host_wall_id))
+            .map(|o| o.id),
+    );
+    hidden.extend(
+        doc.asset_instances
+            .iter()
+            .filter(|a| ghosted_levels.contains(&a.level_id))
+            .map(|a| a.id),
+    );
+    let nodes = presented_nodes(plan, cache);
+    let hit = pick::pick(
+        &nodes,
+        origin,
+        direction,
+        range,
+        |key| scene_mesh(plan, cache, key),
+        |node| pick::node_entity(&node.id).is_none_or(|(_, id)| hidden.contains(&id)),
+    );
+    let Some(hit) = hit else {
+        return json!({"hit": null});
+    };
+    let (kind, id) = pick::node_entity(&nodes[hit.node].id).expect("skip rejects unknown ids");
+    let level = match kind {
+        EntityKind::Structure => Some(id),
+        EntityKind::Wall => doc.wall(id).map(|w| w.level_id),
+        EntityKind::Opening => doc
+            .openings
+            .iter()
+            .find(|o| o.id == id)
+            .and_then(|o| doc.wall(o.host_wall_id))
+            .map(|w| w.level_id),
+        EntityKind::Asset => doc.asset_instance(id).map(|a| a.level_id),
+    };
+    json!({"hit": {
+        "kind": kind.as_str(),
+        "entityId": (kind != EntityKind::Structure).then_some(id),
+        "levelId": level,
+        "pointM": hit.point,
+        "distanceM": hit.distance,
+    }})
 }
 
 const DIRECTORIES: &str = "editorAssetDirectories";
@@ -205,6 +347,8 @@ enum Request {
         #[serde(default)]
         ghosted_ids: Vec<Uuid>,
         #[serde(default)]
+        selected_ids: Vec<String>,
+        #[serde(default)]
         pose_only: bool,
         #[serde(default)]
         scene_token: Option<u64>,
@@ -258,7 +402,33 @@ enum Request {
         #[serde(default)]
         preview: bool,
     },
+    #[serde(rename_all = "camelCase")]
+    TranslatePreview {
+        instance_ids: Vec<Uuid>,
+        delta_mm: [f64; 2],
+    },
     ClearPosePreview,
+    #[serde(rename_all = "camelCase")]
+    Pick3d {
+        level_ids: Vec<Uuid>,
+        #[serde(default)]
+        ghosted_ids: Vec<Uuid>,
+        scene_token: u64,
+        pose_version: u64,
+        #[serde(default)]
+        range_m: Option<[f64; 2]>,
+        origin_m: [f64; 3],
+        direction: [f64; 3],
+    },
+    #[serde(rename_all = "camelCase")]
+    Bounds3d {
+        level_ids: Vec<Uuid>,
+        #[serde(default)]
+        ghosted_ids: Vec<Uuid>,
+        scene_token: u64,
+        pose_version: u64,
+        entity_ids: Vec<String>,
+    },
     #[serde(rename_all = "camelCase")]
     Delete {
         instance_id: Uuid,
@@ -561,7 +731,93 @@ fn update_directory(
 fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
     match request {
         Request::ClearPosePreview => {
-            plan.asset_pose_preview = None;
+            plan.set_pose_preview(None);
+        }
+        Request::Pick3d {
+            level_ids,
+            ghosted_ids,
+            scene_token,
+            pose_version,
+            range_m,
+            origin_m,
+            direction,
+        } => {
+            let Some(cache) =
+                current_view_scene(plan, &level_ids, &ghosted_ids, scene_token, pose_version)
+            else {
+                return Ok(json!({"stale": true}));
+            };
+            return Ok(pick_3d(
+                plan,
+                cache,
+                &ghosted_ids,
+                range_m.unwrap_or([0., f64::INFINITY]),
+                origin_m,
+                direction,
+            ));
+        }
+        Request::Bounds3d {
+            level_ids,
+            ghosted_ids,
+            scene_token,
+            pose_version,
+            entity_ids,
+        } => {
+            let Some(cache) =
+                current_view_scene(plan, &level_ids, &ghosted_ids, scene_token, pose_version)
+            else {
+                return Ok(json!({"stale": true}));
+            };
+            let wanted = entity_set(&entity_ids);
+            let presented = presented_nodes(plan, cache);
+            let nodes = presented.iter().filter(|n| {
+                domowik_scene::pick::node_entity(&n.id).is_some_and(|(kind, id)| {
+                    kind != domowik_scene::pick::EntityKind::Structure && wanted.contains(&id)
+                })
+            });
+            let bounds =
+                domowik_scene::pick::world_bounds(nodes, |key| scene_bounds(plan, cache, key));
+            return Ok(
+                json!({"bounds": bounds.map(|(low, high)| json!({"lowM": low, "highM": high}))}),
+            );
+        }
+        Request::TranslatePreview {
+            instance_ids,
+            delta_mm,
+        } => {
+            if delta_mm.iter().any(|v| !v.is_finite()) {
+                return Err("Preview offset must be finite".into());
+            }
+            let degraded: std::collections::HashSet<Uuid> = plan
+                .resolutions()
+                .iter()
+                .filter(|r| r.state.is_degraded())
+                .map(|r| r.instance_id)
+                .collect();
+            let doc = plan.session().document();
+            let mut previews = HashMap::with_capacity(instance_ids.len());
+            for id in instance_ids {
+                // Degraded models keep their committed pose until release.
+                if degraded.contains(&id) {
+                    continue;
+                }
+                let mut asset = doc
+                    .asset_instance(id)
+                    .ok_or("Unknown asset instance")?
+                    .clone();
+                let [x, y] = asset.transform.translation_mm;
+                let moved = [x + delta_mm[0], y + delta_mm[1]];
+                if moved
+                    .iter()
+                    .any(|v| v.abs() > domowik_format::COORD_BOUND_MM)
+                {
+                    return Err("Preview moves a model out of bounds".into());
+                }
+                asset.transform.translation_mm = moved;
+                previews.insert(id, asset);
+            }
+            plan.set_pose_preview(Some((document_revision(plan.session()), previews)));
+            return Ok(json!({}));
         }
         Request::Pose {
             instance_id,
@@ -609,7 +865,8 @@ fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
                 asset.unknown.insert(key.into(), json!(value));
             }
             if preview {
-                plan.asset_pose_preview = Some((document_revision(plan.session()), asset));
+                let revision = document_revision(plan.session());
+                plan.set_pose_preview(Some((revision, HashMap::from([(instance_id, asset)]))));
             } else {
                 let mut fields = serde_json::Map::from_iter([
                     ("transform".into(), json!(asset.transform)),
@@ -624,7 +881,7 @@ fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
                     .map_err(|e| e.to_string())?
                     .commit(vec![Operation::set_fields(instance_id, fields)])
                     .map_err(|e| e.to_string())?;
-                plan.asset_pose_preview = None;
+                plan.set_pose_preview(None);
             }
         }
         Request::List => return list(plan),
@@ -1035,28 +1292,34 @@ pub(crate) fn derive_scene(
     plan: &Arc<Mutex<Plan>>,
     level_ids: &[Uuid],
     ghosted_ids: Vec<Uuid>,
+    selected_ids: &[String],
     pose_only: bool,
     scene_token: Option<u64>,
 ) -> Result<(domowik_scene::Scene, SceneModels), String> {
     if level_ids.len() > 256 {
         return Err("Too many visible 3D levels".into());
     }
+    let selected = entity_set(selected_ids);
     if pose_only {
         let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(scene) = cached_pose_scene(&locked, level_ids, &ghosted_ids, scene_token) {
+        if let Some(mut scene) = cached_pose_scene(&locked, level_ids, &ghosted_ids, scene_token) {
             locked.pose_scene_updates += 1;
+            domowik_scene::pick::highlight(&mut scene.nodes, &selected);
             return Ok((scene, SceneModels::new()));
         }
     }
     // One lock acquisition captures the document, its retained per-level
     // floors and the model cache together, so all describe one revision.
-    let (doc, floors, mut models, missing, revision, preview_id) = {
+    let (doc, floors, mut models, missing, revision, (preview_ids, pose_version)) = {
         let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
         let mut doc = locked.session().document().clone();
-        if let Some((revision, preview)) = &locked.asset_pose_preview {
-            if *revision == document_revision(locked.session()) {
-                if let Some(asset) = doc.asset_instances.iter_mut().find(|a| a.id == preview.id) {
+        let mut preview_ids = Vec::new();
+        let pose_version = locked.pose_version;
+        if let Some(previews) = locked.pose_previews() {
+            for asset in &mut doc.asset_instances {
+                if let Some(preview) = previews.get(&asset.id) {
                     *asset = preview.clone();
+                    preview_ids.push(asset.id);
                 }
             }
         }
@@ -1076,18 +1339,13 @@ pub(crate) fn derive_scene(
             })
             .map(|a| a.digest.clone())
             .collect::<std::collections::BTreeSet<_>>();
-        let preview_id = locked
-            .asset_pose_preview
-            .as_ref()
-            .filter(|(revision, _)| *revision == document_revision(locked.session()))
-            .map(|(_, a)| a.id);
         (
             doc,
             floors,
             locked.scene_models.clone(),
             missing,
             locked.content_revision(),
-            preview_id,
+            (preview_ids, pose_version),
         )
     };
     for digest in missing {
@@ -1103,6 +1361,7 @@ pub(crate) fn derive_scene(
         if let Some(bytes) = bytes {
             match domowik_models::mesh_with_budget(&bytes, 5000) {
                 Ok(mesh) => {
+                    let bounds = domowik_scene::pick::mesh_bounds(&mesh.vertices);
                     let mesh = std::sync::Arc::new(mesh);
                     let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
                     let total = locked
@@ -1125,6 +1384,9 @@ pub(crate) fn derive_scene(
                     {
                         locked.scene_model_decodes += 1;
                         locked.scene_models.insert(digest.clone(), mesh.clone());
+                        if let Some(bounds) = bounds {
+                            locked.scene_model_bounds.insert(digest.clone(), bounds);
+                        }
                         models.insert(digest, mesh);
                     } else {
                         locked
@@ -1152,13 +1414,21 @@ pub(crate) fn derive_scene(
         &heights,
         &floors,
     )?;
+    // Slabs, join patches and the cube are small; bound them once per build.
+    let mesh_bounds: HashMap<_, _> = scene
+        .meshes
+        .iter()
+        .filter_map(|(k, v)| Some((k.clone(), domowik_scene::pick::mesh_bounds(v)?)))
+        .collect();
     {
         let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
         if locked.content_revision() == revision {
             locked.scene_builds += 1;
             scene.scene_token = locked.scene_builds;
+            scene.pose_version = pose_version;
             let mut nodes = scene.nodes.clone();
-            if let Some(id) = preview_id {
+            // The cache keeps committed poses; pose-only reads re-apply the overlay.
+            for id in preview_ids {
                 let text_id = id.to_string();
                 if let (Some(asset), Some(node)) = (
                     locked.session().document().asset_instance(id),
@@ -1177,9 +1447,12 @@ pub(crate) fn derive_scene(
                 radius: scene.radius,
                 diagnostics: scene.diagnostics.clone(),
                 nodes,
+                meshes: scene.meshes.clone(),
+                mesh_bounds,
             });
         }
     }
+    domowik_scene::pick::highlight(&mut scene.nodes, &selected);
     Ok((scene, models))
 }
 
@@ -1191,8 +1464,23 @@ pub(crate) fn derive_scene(
 /// `pose` accepts positionMm [plan-x, plan-y, elevation-offset] and rotationDeg
 /// [plan-X, plan-Y, plan-Z] plus optional unscaled heightMm. With preview:true it
 /// changes only view derivation; the document, save revision and undo are
-/// untouched. `clearPosePreview` discards that plan-local overlay. Preview is
-/// invalidated by an accepted document revision and dies with the plan handle.
+/// untouched. `translatePreview` replaces the overlay with `instanceIds`
+/// shifted by `deltaMm` [plan-x, plan-y] from their committed poses, skipping
+/// degraded models; it is refused for unknown ids or out-of-bound results.
+/// `clearPosePreview` discards that plan-local overlay. Preview is invalidated
+/// by an accepted document revision and dies with the plan handle.
+///
+/// `pick3d` and `bounds3d` query the last presented 3D scene identified by
+/// `levelIds`, `ghostedIds` and `sceneToken`, in that scene's origin-rebased
+/// metres. `pick3d` casts `originM` along `direction` and answers
+/// `{"hit":{kind,entityId,levelId,pointM,distanceM}}` (`entityId` is null for
+/// floors and join patches) or `{"hit":null}`; ghosted levels are skipped,
+/// and optional `rangeM` [near, far] limits hits to the camera's visible
+/// distances along the ray. `bounds3d` answers `{"bounds":{lowM,highM}}` for
+/// `entityIds`, or null. Both name the `poseVersion` of the last presented
+/// frame and answer `{"stale":true}` when that scene, or the pose overlay it
+/// drew, is no longer current.
+/// Both are view queries, linear in scene nodes, and never change the plan.
 ///
 /// `copy`/`cut` capture asset instances into the plan-local clipboard (issue
 /// 0113); `cut` also deletes them in one batch, refused atomically. `paste`
@@ -1301,11 +1589,19 @@ pub unsafe extern "C" fn domowik_plan_assets(
         if let Request::Scene {
             level_ids,
             ghosted_ids,
+            selected_ids,
             pose_only,
             scene_token,
         } = request
         {
-            let scene = match derive_scene(&plan, &level_ids, ghosted_ids, pose_only, scene_token) {
+            let scene = match derive_scene(
+                &plan,
+                &level_ids,
+                ghosted_ids,
+                &selected_ids,
+                pose_only,
+                scene_token,
+            ) {
                 Ok((scene, _)) => scene,
                 Err(e) => return fail(&plan, status::REJECTED, e),
             };
@@ -2082,6 +2378,285 @@ mod tests {
             preview["instances"]
         );
         drop(_lease);
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn translate_preview_moves_several_models_without_rebuilding_or_committing() {
+        let (h, level) = create();
+        let model = import(h, "tv.obj", b"v 0 0 0\nv 2 0 0\nv 0 1 2\nf 1 2 3\n").unwrap();
+        let mut ids = Vec::new();
+        for x in [0, 2000] {
+            let placed = request(
+                h,
+                json!({"kind":"place","digest":model["digest"],
+                "levelId":level,"positionMm":[x,0]}),
+            )
+            .unwrap();
+            let id = placed["instanceId"].clone();
+            request(
+                h,
+                json!({"kind":"set","instanceId":id,"positionMm":[x,0],
+                "dimensionsMm":[1200,700],"heightMm":50,"rotationDeg":0}),
+            )
+            .unwrap();
+            ids.push(id);
+        }
+        let full = request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+        let token = full["sceneToken"].clone();
+        let (plan, lease) = resolve(h).unwrap();
+        let before = plan.lock().unwrap().session().document().clone();
+        let depth = plan.lock().unwrap().session().undo_depth();
+        let builds = plan.lock().unwrap().scene_builds;
+        let warm = json!({"kind":"scene","levelIds":[level],"poseOnly":true,"sceneToken":token});
+
+        request(
+            h,
+            json!({"kind":"translatePreview","instanceIds":ids,"deltaMm":[500,-250]}),
+        )
+        .unwrap();
+        let fast = request(h, warm.clone()).unwrap();
+        assert_eq!(fast["instanceOnly"], true);
+        assert_eq!(plan.lock().unwrap().scene_builds, builds);
+        for i in 0..2 {
+            assert_ne!(fast["nodes"][i]["matrix"], full["nodes"][i]["matrix"]);
+        }
+        assert_eq!(plan.lock().unwrap().session().document(), &before);
+        assert_eq!(plan.lock().unwrap().session().undo_depth(), depth);
+        // A cold build of the overlay agrees with the warm transform path once
+        // each scene's own origin is added back (cold builds recentre).
+        let cold = request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+        let plan_xy = |scene: &Value, i: usize| {
+            let m = &scene["nodes"][i]["matrix"];
+            let o = &scene["originMm"];
+            [
+                o[0].as_f64().unwrap() + m[12].as_f64().unwrap() * 1000.,
+                o[1].as_f64().unwrap() - m[14].as_f64().unwrap() * 1000.,
+            ]
+        };
+        for i in 0..2 {
+            let ([fx, fy], [cx, cy]) = (plan_xy(&fast, i), plan_xy(&cold, i));
+            assert!((fx - cx).abs() < 0.01 && (fy - cy).abs() < 0.01);
+        }
+
+        for bad in [
+            json!({"kind":"translatePreview","instanceIds":["00000000-0000-4000-8000-000000000001"],"deltaMm":[1,1]}),
+            json!({"kind":"translatePreview","instanceIds":ids,"deltaMm":[1e300,0]}),
+        ] {
+            assert!(request(h, bad).is_err());
+        }
+
+        request(h, json!({"kind":"clearPosePreview"})).unwrap();
+        assert_eq!(
+            request(h, json!({"kind":"scene","levelIds":[level]})).unwrap()["nodes"],
+            full["nodes"]
+        );
+
+        // Committing the same offset shows exactly what the preview showed.
+        for (id, x) in ids.iter().zip([500, 2500]) {
+            request(
+                h,
+                json!({"kind":"set","instanceId":id,"positionMm":[x,-250],
+                "dimensionsMm":[1200,700],"heightMm":50,"rotationDeg":0}),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            request(h, json!({"kind":"scene","levelIds":[level]})).unwrap()["nodes"],
+            cold["nodes"]
+        );
+        drop(lease);
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn picking_highlight_and_bounds_query_the_presented_scene_without_rebuilding() {
+        let (h, level) = create();
+        let wall = Uuid::now_v7();
+        execute(
+            h,
+            json!({"operations":[{"kind":"createEntity","operationId":Uuid::now_v7(),
+            "entityId":wall,"entity":{"type":"wall","id":wall,"levelId":level,
+            "startMm":[-3000,3000],"endMm":[3000,3000],"thicknessMm":200,"heightMm":2500}}]}),
+        )
+        .unwrap();
+        let model = import(h, "tv.obj", b"v 0 0 0\nv 2 0 0\nv 0 1 2\nf 1 2 3\n").unwrap();
+        let asset = request(
+            h,
+            json!({"kind":"place","digest":model["digest"],"levelId":level,"positionMm":[0,0]}),
+        )
+        .unwrap()["instanceId"]
+            .clone();
+        request(
+            h,
+            json!({"kind":"set","instanceId":asset,"positionMm":[0,0],
+            "dimensionsMm":[1200,700],"heightMm":800,"rotationDeg":0}),
+        )
+        .unwrap();
+        let full = request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+        // Origin is the content centre: the wall lies at z=-1.5 m, the model at z=+1.5 m.
+        assert_eq!(full["originMm"], json!([0.0, 1500.0]));
+        let token = full["sceneToken"].as_u64().unwrap();
+        let (plan, lease) = resolve(h).unwrap();
+        let builds = plan.lock().unwrap().scene_builds;
+        // The pose version of the last presented frame, as a presenter tracks it.
+        let drawn = std::cell::Cell::new(full["poseVersion"].as_u64().unwrap());
+        let pick = |origin: [f64; 3], direction: [f64; 3], ghosted: Value, token: u64| {
+            request(
+                h,
+                json!({"kind":"pick3d","levelIds":[level],"ghostedIds":ghosted,
+                "sceneToken":token,"poseVersion":drawn.get(),
+                "originM":origin,"direction":direction}),
+            )
+            .unwrap()
+        };
+        let present = |token: u64| {
+            let warm = request(
+                h,
+                json!({"kind":"scene","levelIds":[level],"poseOnly":true,"sceneToken":token}),
+            )
+            .unwrap();
+            drawn.set(warm["poseVersion"].as_u64().unwrap());
+        };
+
+        let down = pick([0., 10., 1.5], [0., -1., 0.], json!([]), token);
+        assert_eq!(down["hit"]["kind"], "asset");
+        assert_eq!(down["hit"]["entityId"], asset);
+        assert_eq!(down["hit"]["levelId"], json!(level));
+        // A ray over the low model reaches the wall's near face.
+        let across = pick([0., 1.5, 5.], [0., 0., -1.], json!([]), token);
+        assert_eq!(across["hit"]["kind"], "wall");
+        assert_eq!(across["hit"]["entityId"], json!(wall));
+        assert!((across["hit"]["distanceM"].as_f64().unwrap() - 6.4).abs() < 1e-4);
+        assert_eq!(
+            pick([20., 1., 5.], [0., 0., -1.], json!([]), token)["hit"],
+            Value::Null
+        );
+        assert_eq!(
+            pick([0., 10., 1.5], [0., -1., 0.], json!([]), token + 7),
+            json!({"stale": true})
+        );
+
+        let bounds = request(
+            h,
+            json!({"kind":"bounds3d","levelIds":[level],"sceneToken":token,"poseVersion":drawn.get(),"entityIds":[wall]}),
+        )
+        .unwrap();
+        let close = |v: &Value, expected: [f64; 3]| {
+            for (k, e) in expected.into_iter().enumerate() {
+                assert!(
+                    (v[k].as_f64().unwrap() - e).abs() < 1e-4,
+                    "{v} vs {expected:?}"
+                );
+            }
+        };
+        close(&bounds["bounds"]["lowM"], [-3., 0., -1.6]);
+        close(&bounds["bounds"]["highM"], [3., 2.5, -1.4]);
+
+        // Picks and bounds follow the presented preview pose, not the
+        // committed one, while the baseline token stays current.
+        request(
+            h,
+            json!({"kind":"translatePreview","instanceIds":[asset],"deltaMm":[2000,0]}),
+        )
+        .unwrap();
+        assert_eq!(
+            pick([2., 10., 1.5], [0., -1., 0.], json!([]), token),
+            json!({"stale": true}),
+            "an overlay the presenter has not drawn yet is not queried"
+        );
+        present(token);
+        assert_eq!(
+            pick([0., 10., 1.5], [0., -1., 0.], json!([]), token)["hit"],
+            Value::Null
+        );
+        assert_eq!(
+            pick([2., 10., 1.5], [0., -1., 0.], json!([]), token)["hit"]["entityId"],
+            asset
+        );
+        let moved = request(
+            h,
+            json!({"kind":"bounds3d","levelIds":[level],"sceneToken":token,"poseVersion":drawn.get(),"entityIds":[asset]}),
+        )
+        .unwrap();
+        close(&moved["bounds"]["lowM"], [1.4, 0., 1.15]);
+        close(&moved["bounds"]["highM"], [2.6, 0.8, 1.85]);
+        request(h, json!({"kind":"clearPosePreview"})).unwrap();
+        present(token);
+        assert_eq!(
+            pick([0., 10., 1.5], [0., -1., 0.], json!([]), token)["hit"]["entityId"],
+            asset
+        );
+        // Picks honour the camera's visible range along the ray.
+        let clipped = request(
+            h,
+            json!({"kind":"pick3d","levelIds":[level],"sceneToken":token,
+            "poseVersion":drawn.get(),"rangeM":[0.,5.],
+            "originM":[0.,1.5,5.],"direction":[0.,0.,-1.]}),
+        )
+        .unwrap();
+        assert_eq!(
+            clipped["hit"],
+            Value::Null,
+            "the wall at 6.4 m is beyond far"
+        );
+
+        // Selection tints through the warm path and never rebuilds or sticks.
+        let warm = |selected: Value| {
+            request(
+                h,
+                json!({"kind":"scene","levelIds":[level],"poseOnly":true,
+                "sceneToken":token,"selectedIds":selected}),
+            )
+            .unwrap()
+        };
+        let color_of = |scene: &Value, id: &str| {
+            scene["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"].as_str().unwrap().contains(id))
+                .unwrap()["color"]
+                .clone()
+        };
+        let tinted = warm(json!([asset]));
+        assert_eq!(tinted["instanceOnly"], true);
+        let asset_text = asset.as_str().unwrap();
+        let wall_text = wall.to_string();
+        assert_ne!(color_of(&tinted, asset_text), color_of(&full, asset_text));
+        assert_eq!(color_of(&tinted, &wall_text), color_of(&full, &wall_text));
+        assert_eq!(warm(json!([]))["nodes"], full["nodes"]);
+        assert_eq!(
+            warm(json!(["not-an-entity"]))["nodes"],
+            full["nodes"],
+            "ids that are not entities never refuse the scene"
+        );
+        assert_eq!(plan.lock().unwrap().scene_builds, builds);
+        let cold = request(
+            h,
+            json!({"kind":"scene","levelIds":[level],"selectedIds":[wall]}),
+        )
+        .unwrap();
+        assert_ne!(color_of(&cold, &wall_text), color_of(&full, &wall_text));
+        let cold_token = cold["sceneToken"].as_u64().unwrap();
+        assert_eq!(
+            pick([0., 1.5, 5.], [0., 0., -1.], json!([]), cold_token)["hit"]["entityId"],
+            json!(wall),
+            "the cached baseline stays untinted and pickable"
+        );
+
+        // Ghosted levels are transparent to picking.
+        let ghosted = request(
+            h,
+            json!({"kind":"scene","levelIds":[level],"ghostedIds":[level]}),
+        )
+        .unwrap();
+        let ghost_token = ghosted["sceneToken"].as_u64().unwrap();
+        assert_eq!(
+            pick([0., 10., 1.5], [0., -1., 0.], json!([level]), ghost_token)["hit"],
+            Value::Null
+        );
+        drop(lease);
         assert_eq!(domowik_plan_close(h), status::OK);
     }
 
@@ -2932,6 +3507,8 @@ struct SceneFrameRequest {
     #[serde(default)]
     ghosted_ids: Vec<Uuid>,
     #[serde(default)]
+    selected_ids: Vec<String>,
+    #[serde(default)]
     pose_only: bool,
     #[serde(default)]
     scene_token: Option<u64>,
@@ -2952,6 +3529,8 @@ struct SceneFrameRequest {
 /// identifies the baseline. Revision/visibility/token mismatch returns a full
 /// frame with a fresh token. Omitting these request fields keeps full-frame
 /// behavior for existing consumers. Preview framing/origin remains fixed.
+/// Optional `selectedIds` tints the nodes of those walls, openings and models
+/// in either kind of frame; selection never invalidates the baseline.
 ///
 /// # Safety
 ///
@@ -2982,6 +3561,7 @@ pub unsafe extern "C" fn domowik_plan_scene_frame(
             &plan,
             &request.level_ids,
             request.ghosted_ids,
+            &request.selected_ids,
             request.pose_only,
             request.scene_token,
         ) {
@@ -3045,6 +3625,7 @@ pub(crate) fn scene_frame(
             ("modelDecodes".into(), json!(model_decodes)),
             ("instanceOnly".into(), json!(scene.instance_only)),
             ("sceneToken".into(), json!(scene.scene_token)),
+            ("poseVersion".into(), json!(scene.pose_version)),
         ]),
         ..Default::default()
     };

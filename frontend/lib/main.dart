@@ -266,6 +266,8 @@ class _PlanPageState extends State<PlanPage>
   int _posePreviewRevision = 0;
   List<double>? _pendingPose;
   bool _poseFrameScheduled = false;
+  // Furniture translation overlay shown in 3D while a 2D drag is in flight.
+  bool _dragPreviewActive = false, _dragPreviewScheduled = false;
   Map<String, ui.Image> _modelPreviews = const {};
   Map<String, String> _modelPreviewErrors = const {};
   final Set<(int, String)> _previewPending = {};
@@ -1578,6 +1580,61 @@ class _PlanPageState extends State<PlanPage>
       if (mounted && pending != null && _poseAssetId != null)
         _sendAssetPosePreview(pending);
     });
+  }
+
+  /// The furniture a drag would move and the offset its release commits, or
+  /// null when the drag has no 3D preview (walls, openings, mixed groups).
+  (List<String>, Offset)? get _dragPreviewTarget {
+    final from = _dragFrom, to = _dragTo;
+    if (from == null || to == null || !_dragClassified) return null;
+    if (_mode == _DragMode.asset) {
+      final asset = _activeAssets.where((a) => a.id == _dragWall).firstOrNull;
+      if (asset == null) return null;
+      // Match _setAsset's whole-millimetre commit so 3D shows the result.
+      final p = asset.position + to - from;
+      final at = Offset(roundPositionMm(p.dx), roundPositionMm(p.dy));
+      return ([asset.id], at - asset.position);
+    }
+    if (_mode == _DragMode.group) {
+      final ids = _selection.ids;
+      final assets = {for (final a in _activeAssets) a.id};
+      if (ids.isEmpty || !ids.every(assets.contains)) return null;
+      return (ids.toList(), to - from);
+    }
+    return null;
+  }
+
+  /// Sends at most one translation preview per frame, using the latest drag.
+  void _scheduleDragPreview() {
+    if (_dragPreviewScheduled ||
+        _viewMode == '2d' ||
+        _poseAssetId != null ||
+        _dragPreviewTarget == null)
+      return;
+    _dragPreviewScheduled = true;
+    WidgetsBinding.instance.scheduleFrameCallback((_) {
+      _dragPreviewScheduled = false;
+      final target = _dragPreviewTarget;
+      if (!mounted || target == null || _activePointer == null) return;
+      final (ids, delta) = target;
+      final result = _assetRequest({
+        'kind': 'translatePreview',
+        'instanceIds': ids,
+        'deltaMm': [delta.dx, delta.dy],
+      });
+      if (result == null) return;
+      setState(() {
+        _dragPreviewActive = true;
+        _posePreviewRevision++;
+      });
+    });
+  }
+
+  void _clearDragPreview() {
+    if (!_dragPreviewActive) return;
+    _dragPreviewActive = false;
+    _assetRequest({'kind': 'clearPosePreview'});
+    _posePreviewRevision++;
   }
 
   void _sendAssetPosePreview(List<double> values) {
@@ -3033,6 +3090,8 @@ class _PlanPageState extends State<PlanPage>
                   ],
                   floorElevationMm: elevation,
                   active: _viewMode != '2d',
+                  selectedIds: _selection.ids.toList()..sort(),
+                  onPick: _pickIn3d,
                   onUndo: _undoDepth > 0 || _poseHasChanges
                       ? _changeHistory
                       : null,
@@ -3191,6 +3250,7 @@ class _PlanPageState extends State<PlanPage>
   }
 
   void _cancelDrag({bool clearSelection = false}) {
+    _clearDragPreview();
     final chainPending = _wallChainTool && _chain.anchor != null;
     if (_activePointer == null &&
         _navigationStart == null &&
@@ -3541,6 +3601,7 @@ class _PlanPageState extends State<PlanPage>
                 _updateOpeningTarget(_view.toPlan(event.localPosition));
               if (_mode == _DragMode.assetRotate && _dragClassified)
                 _updateAssetRotation(_view.toPlan(event.localPosition));
+              if (_dragClassified) _scheduleDragPreview();
             },
             onPointerUp: (event) {
               if (!event.localPosition.dx.isFinite ||
@@ -4481,6 +4542,7 @@ class _PlanPageState extends State<PlanPage>
   }
 
   void _finishDrag(Offset logicalPosition, Duration timeStamp) {
+    _clearDragPreview();
     final mode = _mode;
     final classified = _dragClassified;
     final draft = _draft;
@@ -4728,12 +4790,13 @@ class _PlanPageState extends State<PlanPage>
   void _selectAt(Offset at, Offset logicalPosition) {
     final hits = _hitsAt(at);
     if (hits == null) return;
+    _clickSelect(hits.map((hit) => hit.entityId), logicalPosition);
+  }
+
+  /// A selection click on ranked [ids]; shared by the plan and the 3D view.
+  void _clickSelect(Iterable<String> ids, Offset logicalPosition) {
     setState(() {
-      _selection.click(
-        hits.map((hit) => hit.entityId),
-        logicalPosition,
-        _selectionContext,
-      );
+      _selection.click(ids, logicalPosition, _selectionContext);
       if (_selection.ids.isNotEmpty) _showSelectionInspector();
       _setStatus(
         _selection.ids.isEmpty
@@ -4750,6 +4813,27 @@ class _PlanPageState extends State<PlanPage>
         isError: false,
       );
     });
+  }
+
+  /// A click in the 3D view selects what it hit, switching to that entity's
+  /// level when needed; a double click also centres the plan on the hit.
+  void _pickIn3d(ScenePick pick) {
+    // A plan gesture in flight owns selection until it finishes.
+    if (_activePointer != null || !_acceptAssetPose()) return;
+    final id = pick.entityId, level = pick.levelId;
+    if (id != null && level != null && level != _levelId) {
+      _activateLevel(level);
+      if (_levelId != level) return; // The switch was refused.
+    }
+    _clickSelect(id == null ? const [] : [id], pick.position);
+    final at = pick.planMm;
+    if (pick.open && at != null && _viewMode != '3d' && !_canvasSize.isEmpty) {
+      setState(
+        () => _applyView(
+          _view.pan(_canvasSize.center(Offset.zero) - _view.toScreen(at)),
+        ),
+      );
+    }
   }
 
   void _createWall(Offset from, Offset to) {

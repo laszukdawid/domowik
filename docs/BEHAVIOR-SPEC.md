@@ -4584,6 +4584,24 @@ and diffuse/approximate transparency are permitted. Camera state is coalesced
 per frame, with at most one update in flight, and the camera handler must not
 wait on the GPU render lock. These choices never alter plan/model source data.
 
+**Selection, live preview and cursor navigation (owner request 2026-10-20).**
+The 3D view tints the selected walls, openings and models. Dragging models, or
+a selection containing only models, previews the moved poses in 3D each frame
+before release; the preview is view state outside the document, save state
+and undo, is cleared on release or cancel, and release commits exactly the
+previewed offset. Selection changes and pose previews reuse the presented
+geometry and send only transforms and colours. A click in 3D selects the
+visible wall, opening or model under the cursor using the plan's click rules,
+including toggle modifiers, and activates that entity's level when needed;
+floors and empty space clear selection. Ghosted levels and surfaces outside
+the camera's clip range are not pickable. A click while the presented scene or
+pose is being replaced changes nothing. A double click also centres the plan
+on the hit. Scrolling zooms toward the cursor, orbiting revolves about the
+surface under the press when there is one, and F frames the selection, or all
+visible content when none is drawn, so that it fits the viewport's narrower
+field of view. Picking and framing are view queries over the presented scene:
+they never rebuild scenes, decode models or rescan model vertices.
+
 ### 11.1 Editor preferences (issue 0080)
 
 **Normative experimental-editor behavior.** Preferences is accessible from

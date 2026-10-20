@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' hide Size;
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
 import 'package:domowik_editor/core/ffi_core.dart';
@@ -549,6 +550,279 @@ void main() {
       expect(find.textContaining('3D rendering failed'), findsNothing);
     },
   );
+
+  testWidgets(
+    'selection tints without meshes; clicks pick, double clicks open, F frames',
+    (tester) async {
+      final suffix = Platform.isMacOS ? 'dylib' : 'so';
+      final bridge = Bridge(
+        File('target/release/libdomowik_bridge.$suffix').absolute.path,
+      );
+      final output = alloc<Uint64>(sizeOf<Uint64>());
+      expect(bridge.planCreateDefault(output), ok);
+      final handle = output.value;
+      release(output);
+      addTearDown(() => bridge.planClose(handle));
+      String call(String text) {
+        final ptr = toNative(text);
+        final out = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
+        expect(bridge.planEdit(handle, ptr, utf8.encode(text).length, out), ok);
+        final result = bridge.takeString(out);
+        release(ptr);
+        release(out);
+        return result;
+      }
+
+      Map snapshot() {
+        final out = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
+        expect(bridge.planSnapshot(handle, out), ok);
+        final document = jsonDecode(bridge.takeString(out)) as Map;
+        release(out);
+        return document;
+      }
+
+      final level = (snapshot()['levels'] as List).single['id'] as String;
+      call(
+        jsonEncode({
+          'kind': 'addWall',
+          'levelId': level,
+          'start': [0, 0],
+          'end': [4000, 0],
+          'thicknessMm': 200,
+          'heightMm': 2500,
+        }),
+      );
+      final wallId = (snapshot()['walls'] as List).single['id'] as String;
+      final calls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (c) async {
+          calls.add(c);
+          if (c.method == 'create') return {'textureId': 71, 'session': 1};
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        ),
+      );
+      final key = GlobalKey<ThreeDViewState>();
+      final picks = <ScenePick>[];
+      Future<void> build(List<String> selected, {int revision = 1}) async {
+        await tester.runAsync(() async {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: ThreeDView(
+                  key: key,
+                  core: FfiCore(bridge),
+                  handle: handle,
+                  revision: revision,
+                  levelIds: [level],
+                  ghostedIds: const [],
+                  floorElevationMm: 0,
+                  active: true,
+                  selectedIds: selected,
+                  onPick: picks.add,
+                ),
+              ),
+            ),
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await tester.pumpAndSettle();
+      }
+
+      List<List<double>> colors() => [
+        for (final node
+            in (calls.lastWhere((c) => c.method == 'scene').arguments
+                    as Map)['nodes']
+                as List)
+          List<double>.from(node['color'] as List),
+      ];
+
+      await build(const []);
+      final plain = colors();
+      final meshes = calls.where((c) => c.method == 'mesh').length;
+      await build([wallId]);
+      expect(calls.where((c) => c.method == 'scene'), hasLength(2));
+      expect(colors(), isNot(plain), reason: 'the selected wall is tinted');
+      expect(
+        calls.where((c) => c.method == 'mesh'),
+        hasLength(meshes),
+        reason: 'selection never re-sends geometry',
+      );
+      await build(const []);
+      expect(colors(), plain);
+
+      // Clicks carry explicit times: double clicks are judged by event time.
+      var pointer = 10;
+      Future<void> click(Offset at, int ms) async {
+        final gesture = await tester.createGesture(
+          pointer: pointer++,
+          kind: PointerDeviceKind.mouse,
+        );
+        await gesture.down(at, timeStamp: Duration(milliseconds: ms));
+        await gesture.up(timeStamp: Duration(milliseconds: ms + 40));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+
+      // The fitted camera looks at the wall's centre: a click there picks it.
+      final reads = key.currentState!.sceneRequests;
+      final centre = tester.getCenter(find.byType(Texture));
+      await click(centre, 1000);
+      expect(picks.single.entityId, wallId);
+      expect(picks.single.levelId, level);
+      expect(picks.single.open, isFalse);
+      expect(picks.single.planMm!.dx, closeTo(2000, 300));
+      expect(picks.single.planMm!.dy.abs(), lessThan(150));
+      await click(centre, 3000);
+      expect(picks.last.open, isFalse, reason: 'too slow for a double click');
+      await click(centre, 3200);
+      expect(picks.last.open, isTrue);
+      await click(centre, 3400);
+      expect(picks.last.open, isFalse, reason: 'a third click starts over');
+      // Empty sky picks nothing.
+      await click(
+        tester.getTopLeft(find.byType(Texture)) + const Offset(5, 5),
+        6000,
+      );
+      expect(picks.last.entityId, isNull);
+      expect(key.currentState!.sceneRequests, reads, reason: 'picks are views');
+
+      // Orbiting about the wall under the press keeps the orbit distance.
+      final camera = key.currentState!.camera;
+      final distance = camera.distance;
+      await tester.dragFrom(
+        centre,
+        const Offset(120, 40),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pumpAndSettle();
+      expect(camera.distance, closeTo(distance, 1e-9));
+      expect(picks.length, 5, reason: 'a drag is not a click');
+      // F frames the selection: the wall's box centre at x=0 (origin-rebased).
+      await build([wallId]);
+      await click(centre, 9000); // Focuses the view for the key.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.pumpAndSettle();
+      expect(camera.target[0], closeTo(0, 1e-6));
+      expect(camera.target[1], closeTo(1.25, 1e-6));
+      expect(camera.target[2], closeTo(0, 1e-6));
+      final half = math.sqrt(2 * 2 + 1.25 * 1.25 + 0.1 * 0.1);
+      expect(camera.distance, closeTo(half * 2.3, 1e-6));
+
+      // Scrolling zooms toward the cursor, not the screen centre.
+      final target = List.of(camera.target);
+      final scroll = TestPointer(1, PointerDeviceKind.mouse);
+      await tester.sendEventToBinding(
+        scroll.hover(centre + const Offset(150, 0)),
+      );
+      await tester.sendEventToBinding(scroll.scroll(const Offset(0, -200)));
+      await tester.pumpAndSettle();
+      expect(camera.target, isNot(target));
+
+      // An edit makes the presented scene stale until it reloads: a click
+      // then neither selects nor clears.
+      call(
+        jsonEncode({
+          'kind': 'addWall',
+          'levelId': level,
+          'start': [0, 10000],
+          'end': [4000, 10000],
+          'thicknessMm': 200,
+          'heightMm': 2500,
+        }),
+      );
+      final before = picks.length;
+      await click(centre, 20000);
+      expect(picks, hasLength(before), reason: 'a stale pick is not a miss');
+
+      // The reload moves the origin to (2000, 5000) mid-flight; the framing
+      // still ends on the selected wall in the new coordinates.
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+      await tester.pump(const Duration(milliseconds: 60));
+      await build([wallId], revision: 2);
+      expect(camera.target[0], closeTo(0, 1e-6));
+      expect(camera.target[1], closeTo(1.25, 1e-6));
+      expect(camera.target[2], closeTo(5, 1e-6));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(bridge.outstandingBuffers(), 0);
+    },
+  );
+
+  testWidgets(
+    'a selection made during the first load reuses that load as its baseline',
+    (tester) async {
+      final suffix = Platform.isMacOS ? 'dylib' : 'so';
+      final bridge = Bridge(
+        File('target/release/libdomowik_bridge.$suffix').absolute.path,
+      );
+      final output = alloc<Uint64>(sizeOf<Uint64>());
+      expect(bridge.planCreateDefault(output), ok);
+      final handle = output.value;
+      release(output);
+      addTearDown(() => bridge.planClose(handle));
+      final snapshot = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
+      expect(bridge.planSnapshot(handle, snapshot), ok);
+      final level =
+          ((jsonDecode(bridge.takeString(snapshot)) as Map)['levels'] as List)
+                  .single['id']
+              as String;
+      release(snapshot);
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (c) async =>
+            c.method == 'create' ? {'textureId': 71, 'session': 1} : null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        ),
+      );
+      final core = _SceneRecordingCore(bridge);
+      Widget view(List<String> selected) => MaterialApp(
+        home: Scaffold(
+          body: ThreeDView(
+            core: core,
+            handle: handle,
+            revision: 1,
+            levelIds: [level],
+            ghostedIds: const [],
+            floorElevationMm: 0,
+            active: true,
+            selectedIds: selected,
+          ),
+        ),
+      );
+      await tester.runAsync(() async {
+        await tester.pumpWidget(view(const []));
+        await tester.pump();
+        expect(core.poseOnly, [false], reason: 'the first load is in flight');
+        await tester.pumpWidget(view(const ['entity']));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+      expect(core.poseOnly, [false, true]);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    },
+  );
+}
+
+/// Records whether each scene request asked for a warm, transform-only update.
+class _SceneRecordingCore extends FfiCore {
+  _SceneRecordingCore(super.bridge);
+  final List<bool> poseOnly = [];
+  @override
+  Future<Object?> assetsInBackground(int handle, Map<String, Object?> request) {
+    if (request['kind'] == 'scene') poseOnly.add(request['poseOnly'] == true);
+    return super.assetsInBackground(handle, request);
+  }
 }
 
 /// For presenter tests whose scene requests never reach a core.

@@ -372,6 +372,7 @@ typedef struct {
   NSDictionary *request = @{
     @"levelIds" : args[@"levelIds"] ?: @[],
     @"ghostedIds" : args[@"ghostedIds"] ?: @[],
+    @"selectedIds" : args[@"selectedIds"] ?: @[],
     @"poseOnly" : args[@"poseOnly"] ?: @NO,
     @"sceneToken" : args[@"sceneToken"] ?: [NSNull null],
   };

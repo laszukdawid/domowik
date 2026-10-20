@@ -10,6 +10,7 @@ import 'package:domowik_editor/asset_library.dart';
 import 'package:domowik_editor/main.dart';
 import 'package:domowik_editor/platform/config_storage_native.dart';
 import 'package:domowik_editor/platform/model_import.dart';
+import 'package:domowik_editor/three_d_view.dart';
 import 'package:domowik_editor/user_config.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -776,6 +777,7 @@ void main() {
       final bridge = Bridge(
         File('target/release/libdomowik_bridge.$suffix').absolute.path,
       );
+      final core = _CountingCore(bridge);
       const files = MethodChannel('invalid.domowik-spike/files');
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(files, (
         call,
@@ -804,7 +806,7 @@ void main() {
                     child: TextField(key: ValueKey('shortcut-typing-probe')),
                   ),
                 ),
-                Expanded(child: PlanPage(bridgeLoader: () => FfiCore(bridge))),
+                Expanded(child: PlanPage(bridgeLoader: () => core)),
               ],
             ),
           ),
@@ -918,6 +920,13 @@ void main() {
       expect(scene().selectedIds, before.keys.toSet());
       expect(scene().selected, isNotNull);
 
+      // In split view the drag previews live in 3D.
+      await tap(find.byKey(const ValueKey('view-mode-menu')));
+      await tap(find.text('2D + 3D split view'));
+      ThreeDView view() => tester.widget<ThreeDView>(find.byType(ThreeDView));
+      expect(view().selectedIds, before.keys.toList()..sort());
+      core.requests.clear();
+
       // One drag on EITHER member moves every member by the same plan delta.
       final grab =
           topLeft +
@@ -927,16 +936,35 @@ void main() {
         grab,
         kind: PointerDeviceKind.mouse,
       );
-      await gesture.moveBy(const Offset(45, 25));
+      await gesture.moveBy(const Offset(20, 10));
+      await gesture.moveBy(const Offset(25, 15));
       await tester.pump();
       expect(scene().groupPreview?.$1, before.keys.toSet());
+      List<Map> sent(String kind) =>
+          core.requests.where((r) => r['kind'] == kind).toList();
+      expect(
+        sent('translatePreview'),
+        hasLength(1),
+        reason: 'two moves in one frame coalesce into one preview',
+      );
+      final previewed = sent('translatePreview').single;
+      expect((previewed['instanceIds'] as List).toSet(), before.keys.toSet());
+      expect(sent('clearPosePreview'), isEmpty);
       await gesture.up();
       await tester.pumpAndSettle();
+      expect(sent('clearPosePreview'), hasLength(1));
+      expect(sent('translatePreview'), hasLength(1));
       final after = {
         for (final asset in scene().assets) asset.id: asset.position,
       };
       final deltas = [for (final id in before.keys) after[id]! - before[id]!];
       expect(deltas[0], isNot(Offset.zero));
+      final shown = (previewed['deltaMm'] as List).cast<num>();
+      expect(
+        (deltas[0] - Offset(shown[0].toDouble(), shown[1].toDouble())).distance,
+        lessThan(1e-6),
+        reason: 'release commits exactly what 3D previewed',
+      );
       for (final delta in deltas) {
         expect((delta - deltas[0]).distance, lessThan(1e-6));
       }
@@ -947,6 +975,37 @@ void main() {
       expect({
         for (final asset in scene().assets) asset.id: asset.position,
       }, before);
+
+      // A 3D pick selects through the same click rules; empty space clears,
+      // and a double click also centres the plan on the hit.
+      final picked = scene().assets.first;
+      view().onPick!(ScenePick(entityId: picked.id, position: Offset.zero));
+      await tester.pumpAndSettle();
+      expect(scene().selectedIds, {picked.id});
+      expect(view().selectedIds, [picked.id]);
+      view().onPick!(const ScenePick(position: Offset.zero));
+      await tester.pumpAndSettle();
+      expect(scene().selectedIds, isEmpty);
+      expect(view().selectedIds, isEmpty);
+      final target = scene().assets.last;
+      view().onPick!(
+        ScenePick(
+          entityId: target.id,
+          planMm: target.position,
+          position: Offset.zero,
+          open: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(scene().selected, target.id);
+      final size = tester.getSize(canvas());
+      expect(
+        (scene().toScreen(target.position) - size.center(Offset.zero)).distance,
+        lessThan(1),
+      );
+      // The remaining steps assume the full-width plan.
+      await tap(find.byKey(const ValueKey('view-mode-menu')));
+      await tap(find.text('2D plan'));
 
       final first = scene().assets.first;
       final second = scene().assets.last;
@@ -1194,9 +1253,11 @@ class _CountingCore extends FfiCore {
   _CountingCore(super.bridge);
   int previews = 0, stateReads = 0, listReads = 0;
   bool refusePoseCommit = false;
+  final List<Map> requests = [];
   @override
   CoreReply assets(int handle, String request) {
     final message = jsonDecode(request) as Map;
+    requests.add(message);
     if (refusePoseCommit &&
         message['kind'] == 'pose' &&
         message['preview'] != true) {
