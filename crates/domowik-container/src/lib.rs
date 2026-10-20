@@ -25,7 +25,7 @@ use domowik_document::replay::{project_from_with_tombstones, Projection};
 use domowik_document::session::Session;
 use domowik_format::Document;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, Write};
 use std::path::Path;
 use uuid::Uuid;
@@ -48,6 +48,11 @@ pub struct Limits {
     pub max_nesting_depth: u32,
     /// Row **L23** — snapshot metadata, in uncompressed serialized bytes.
     pub max_snapshot_metadata_bytes: u64,
+    /// Row **L1** — total expanded bytes across every inventoried entry of
+    /// one open. A host that admits packages from strangers sets this lower
+    /// than the format's ceiling: it is the bound on work and memory one
+    /// upload can demand, which per-entry limits alone do not give.
+    pub max_total_expanded_bytes: u64,
 }
 
 impl Limits {
@@ -76,6 +81,25 @@ impl Limits {
 
     /// Row **L23** — operations per batch.
     pub const L23_OPERATIONS_PER_BATCH: u64 = 65_535;
+
+    /// Row **L1** — total expanded bytes per open: 2 GiB.
+    pub const L1_TOTAL_EXPANDED_BYTES: u64 = 2_147_483_648;
+
+    /// Row **L15** — per-entry expansion ratio, expanded : physical.
+    pub const L15_EXPANSION_RATIO: u64 = 1_000;
+
+    /// Row **L15** — entries stored in fewer physical bytes than this are
+    /// bounded by [`Self::L15_SMALL_ENTRY_EXPANDED_BYTES`] instead of the ratio.
+    pub const L15_SMALL_ENTRY_PHYSICAL_BYTES: u64 = 64;
+
+    /// Row **L15** — the absolute expanded bound for a tiny physical entry.
+    pub const L15_SMALL_ENTRY_EXPANDED_BYTES: u64 = 65_536;
+
+    /// Row **L16** — aggregate expansion ratio, expanded : physical.
+    pub const L16_AGGREGATE_RATIO: u64 = 100;
+
+    /// Row **L16** — the aggregate ratio applies only above this total.
+    pub const L16_AGGREGATE_FLOOR_BYTES: u64 = 64 * 1024 * 1024;
 
     /// Row **L11** — JSON container nesting depth: 128 levels.
     ///
@@ -241,6 +265,7 @@ impl Default for Limits {
             max_operations_per_batch: Self::L23_OPERATIONS_PER_BATCH,
             max_nesting_depth: Self::L11_NESTING_DEPTH,
             max_snapshot_metadata_bytes: L23_SNAPSHOT_METADATA_BYTES,
+            max_total_expanded_bytes: Self::L1_TOTAL_EXPANDED_BYTES,
         }
     }
 }
@@ -763,6 +788,40 @@ pub enum ContainerError {
     },
 
     #[error(
+        "{path}: entry `{entry}` changed, and its inventory row carries fields this \
+         version does not understand; refusing to write rather than drop them \
+         (FORMAT-SPEC §8.4 U2)"
+    )]
+    UnpreservableEntryFields { path: String, entry: String },
+
+    #[error(
+        "{path}: the entries expand to more than {limit} bytes in total \
+         (FORMAT-SPEC §9.3 row L1)"
+    )]
+    TotalExpandedExceeded { path: String, limit: u64 },
+
+    #[error(
+        "{path}: entry `{entry}` expands beyond {expanded} bytes from {physical} stored \
+         bytes (FORMAT-SPEC §9.3 row L15)"
+    )]
+    ExpansionRatioExceeded {
+        path: String,
+        entry: String,
+        expanded: u64,
+        physical: u64,
+    },
+
+    #[error(
+        "{path}: the entries expand to {expanded} bytes from {physical} stored bytes \
+         (FORMAT-SPEC §9.3 row L16)"
+    )]
+    AggregateExpansionExceeded {
+        path: String,
+        expanded: u64,
+        physical: u64,
+    },
+
+    #[error(
         "{path}: declares format version {found}, and this build reads {supported} \
          (FORMAT-SPEC §8.2 V3)"
     )]
@@ -949,11 +1008,18 @@ impl ContainerError {
             NestingDepthExceeded { .. } => "limit-nesting-depth",
             SnapshotMetadataExceeded { .. } => "limit-snapshot-metadata",
             EntryTooLarge { .. } => "limit-entry-size",
+            TotalExpandedExceeded { .. } => "limit-total-expanded",
+            ExpansionRatioExceeded { .. } => "limit-expansion-ratio",
+            AggregateExpansionExceeded { .. } => "limit-aggregate-expansion",
             OperationCountExceeded { .. } => "limit-operation-count",
             Json { .. } => "malformed-json",
             MalformedDigest { .. } => "invalid-digest",
             // Not rejections of an input.
-            Io { .. } | NoLevels | UnsafeTarget { .. } | Command { .. } => return None,
+            Io { .. }
+            | NoLevels
+            | UnsafeTarget { .. }
+            | Command { .. }
+            | UnpreservableEntryFields { .. } => return None,
             // An open-mode outcome, not a rejection of the package: §9.6 says
             // the package OPENS, read-only. Giving it a §9.4 class would put a
             // successful open into the vocabulary of refusals.
@@ -1361,10 +1427,37 @@ impl Plan {
         )
     }
 
+    /// Opens `pkg` for a NEW writer epoch: every batch this plan commits is
+    /// minted under `actor`.
+    ///
+    /// For hosts where several writers take turns on one plan, such as the
+    /// `domowik-serve` hosted service. [`Plan::open`] continues the actor with the
+    /// highest watermark, which is right for one file on one machine; two
+    /// writers continuing it would mint overlapping operation ids. `actor`
+    /// must not already appear in the log, which is refused.
+    pub fn open_package_as(pkg: Package, actor: Uuid) -> Result<Self, ContainerError> {
+        if pkg.log()?.watermark().contains_key(&actor) {
+            return Err(ContainerError::UnsafeTarget {
+                path: "<package>".to_owned(),
+                reason: "the writer actor already appears in this plan's log",
+            });
+        }
+        Self::from_package_with_actor(pkg, None, |_| false, Some(actor))
+    }
+
     fn from_package(
         pkg: Package,
         path: Option<std::path::PathBuf>,
         resolved: impl Fn(&str) -> bool,
+    ) -> Result<Self, ContainerError> {
+        Self::from_package_with_actor(pkg, path, resolved, None)
+    }
+
+    fn from_package_with_actor(
+        pkg: Package,
+        path: Option<std::path::PathBuf>,
+        resolved: impl Fn(&str) -> bool,
+        actor: Option<Uuid>,
     ) -> Result<Self, ContainerError> {
         let log = pkg.log()?;
         // Highest watermark wins, and the ACTOR ID breaks a tie. Without the
@@ -1372,12 +1465,13 @@ impl Plan {
         // arbitrary one of the tied entries — so two actors at equal counters
         // would make the writing identity depend on hash iteration order, and
         // the same plan would continue a different stream on each invocation.
-        let actor = log
-            .watermark()
-            .iter()
-            .max_by_key(|(&a, &c)| (c, a))
-            .map(|(&a, _)| a)
-            .unwrap_or_else(Uuid::now_v7);
+        let actor = actor.unwrap_or_else(|| {
+            log.watermark()
+                .iter()
+                .max_by_key(|(&a, &c)| (c, a))
+                .map(|(&a, _)| a)
+                .unwrap_or_else(Uuid::now_v7)
+        });
 
         let session = Session::open_snapshot(
             actor,
@@ -1699,15 +1793,59 @@ pub fn encode_package_with_limits(
 ) -> Result<Vec<u8>, ContainerError> {
     const DISPLAY: &str = "<memory>";
     preflight(package)?;
-    let bytes = write_archive(std::io::Cursor::new(Vec::new()), package, DISPLAY)?.into_inner();
-    let validated = read_package_bytes(DISPLAY, &bytes, limits).and_then(|p| p.project().map(drop));
-    if let Err(e) = validated {
-        return Err(ContainerError::CandidateInvalid {
-            path: DISPLAY.to_owned(),
-            source: Box::new(e),
-        });
+    let mut stored = Stored::default();
+    loop {
+        let bytes = write_archive(std::io::Cursor::new(Vec::new()), package, DISPLAY, &stored)?
+            .into_inner();
+        let validated =
+            read_package_bytes(DISPLAY, &bytes, limits).and_then(|p| p.project().map(drop));
+        match validated {
+            Ok(()) => return Ok(bytes),
+            Err(e) if stored.adapt(&e) => continue,
+            Err(e) => {
+                return Err(ContainerError::CandidateInvalid {
+                    path: DISPLAY.to_owned(),
+                    source: Box::new(e),
+                })
+            }
+        }
     }
-    Ok(bytes)
+}
+
+/// Entries the writer stores uncompressed.
+///
+/// DEFLATE is the default, but a very repetitive entry (an unknown manifest
+/// field of one repeated character, say) deflates beyond row L15's 1,000 : 1,
+/// and a reader must refuse it. FORMAT-SPEC §7.2 permits stored entries, so
+/// the writer stores exactly the entries the read-back check refuses on a
+/// ratio: L15 names its entry; L16 is a property of the whole package, so it
+/// stores everything. The normal path costs nothing: this only grows when a
+/// candidate was refused.
+#[derive(Debug, Default)]
+struct Stored {
+    entries: BTreeSet<String>,
+    all: bool,
+}
+
+impl Stored {
+    fn contains(&self, name: &str) -> bool {
+        self.all || self.entries.contains(name)
+    }
+
+    /// Learns from a refused candidate. `true` when writing again with
+    /// stored entries can succeed where this attempt did not.
+    fn adapt(&mut self, error: &ContainerError) -> bool {
+        match error {
+            ContainerError::ExpansionRatioExceeded { entry, .. } if !self.contains(entry) => {
+                self.entries.insert(entry.clone())
+            }
+            ContainerError::AggregateExpansionExceeded { .. } if !self.all => {
+                self.all = true;
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Writes `package` to `path`, replacing any existing file.
@@ -1796,31 +1934,40 @@ pub fn write_package_with_limits(
     let dir = parent_dir(path);
     let tmp = dir.join(temporary_name(path));
 
-    // S1.
-    {
-        let file = std::fs::File::create(&tmp).map_err(io_err(&tmp))?;
-        let file = write_archive(file, package, &tmp.display().to_string())?;
+    let mut stored = Stored::default();
+    loop {
+        // S1.
+        {
+            let file = std::fs::File::create(&tmp).map_err(io_err(&tmp))?;
+            let file = write_archive(file, package, &tmp.display().to_string(), &stored)?;
 
-        // S3. Sync the CONTENTS before the rename, so a completed replace can
-        // never point at bytes that never reached storage.
-        file.sync_all().map_err(io_err(&tmp))?;
-    }
+            // S3. Sync the CONTENTS before the rename, so a completed replace can
+            // never point at bytes that never reached storage.
+            file.sync_all().map_err(io_err(&tmp))?;
+        }
 
-    // S2. Reader-equivalent validation of the candidate, INCLUDING projecting
-    // its operation log — a package that parses but whose log is structurally
-    // malformed is not readable, and discovering that on the next open would
-    // mean the failure surfaced after the old copy was already gone.
-    //
-    // Ordered after S3 rather than before it only because the file must be
-    // closed and flushed to be reopened; the §9.7 step ordering is about what
-    // each step ESTABLISHES, and nothing here depends on validating before the
-    // contents are stable.
-    if let Err(e) = validate_candidate(&tmp, limits) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(ContainerError::CandidateInvalid {
-            path: path.display().to_string(),
-            source: Box::new(e),
-        });
+        // S2. Reader-equivalent validation of the candidate, INCLUDING projecting
+        // its operation log — a package that parses but whose log is structurally
+        // malformed is not readable, and discovering that on the next open would
+        // mean the failure surfaced after the old copy was already gone.
+        //
+        // Ordered after S3 rather than before it only because the file must be
+        // closed and flushed to be reopened; the §9.7 step ordering is about what
+        // each step ESTABLISHES, and nothing here depends on validating before the
+        // contents are stable.
+        match validate_candidate(&tmp, limits) {
+            Ok(()) => break,
+            // A ratio refusal: write the candidate again with the refused entries
+            // stored (see `Stored`).
+            Err(e) if stored.adapt(&e) => continue,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(ContainerError::CandidateInvalid {
+                    path: path.display().to_string(),
+                    source: Box::new(e),
+                });
+            }
+        }
     }
 
     // S4.
@@ -1846,6 +1993,7 @@ fn write_archive<W: Write + Seek>(
     writer: W,
     package: &Package,
     display: &str,
+    stored: &Stored,
 ) -> Result<W, ContainerError> {
     let mut zip = zip::ZipWriter::new(writer);
     let opts: zip::write::FileOptions<'_, ()> =
@@ -1908,20 +2056,39 @@ fn write_archive<W: Write + Seek>(
     // is protected by the container CRC-32 and the §7.2 structural checks
     // instead, and a forged manifest surfaces through the digests it
     // mislists.
+    //
+    // A row's members this version does not interpret (§8.4 U2) describe the
+    // bytes that row was written for. They are carried when the entry's
+    // bytes are unchanged; when the bytes changed, their meaning for the new
+    // bytes is unknown, so the write is refused rather than dropping them.
     let mut manifest = package.manifest.clone();
     manifest.entries = entries
         .iter()
         .map(|(name, bytes)| {
-            (
+            let sha256 = digest_of(bytes);
+            let byte_length = bytes.len() as u64;
+            let unknown = match package.manifest.entries.get(name) {
+                Some(prior) if !prior.unknown.is_empty() => {
+                    if prior.sha256 != sha256 || prior.byte_length != byte_length {
+                        return Err(ContainerError::UnpreservableEntryFields {
+                            path: display.to_owned(),
+                            entry: name.clone(),
+                        });
+                    }
+                    prior.unknown.clone()
+                }
+                _ => Default::default(),
+            };
+            Ok((
                 name.clone(),
                 EntryIntegrity {
-                    sha256: digest_of(bytes),
-                    byte_length: bytes.len() as u64,
-                    unknown: Default::default(),
+                    sha256,
+                    byte_length,
+                    unknown,
                 },
-            )
+            ))
         })
-        .collect();
+        .collect::<Result<_, ContainerError>>()?;
     // §7.9: the profile is a fact about the package, not a preference. A
     // package embedding every blob its table names verifies standalone and
     // is portable; one that does not is thin.
@@ -1937,7 +2104,13 @@ fn write_archive<W: Write + Seek>(
         ),
     );
 
+    let stored_opts = opts.compression_method(zip::CompressionMethod::Stored);
     for (name, bytes) in entries {
+        let opts = if stored.contains(&name) {
+            stored_opts
+        } else {
+            opts
+        };
         zip.start_file(name, opts)
             .map_err(|e| ContainerError::Archive {
                 path: display.to_owned(),
@@ -2271,6 +2444,9 @@ fn read_package_from<R: Read + Seek>(
         return Err(ContainerError::UnsupportedDevelopmentLayout { path: display });
     }
 
+    // Rows L1/L15 cover the manifest too: it is decompressed and parsed
+    // before the inventory pass, and is not in its own inventory.
+    let manifest_sizes = guard_manifest_expansion(&mut archive, &display, limits)?;
     let manifest: Manifest = read_json_entry(&mut archive, MANIFEST_ENTRY, &display, limits)?;
     // §8.2 V3: a reader accepts exactly the schemas it claims to support, and
     // names both versions when it refuses. There is no ordering here and no
@@ -2288,7 +2464,7 @@ fn read_package_from<R: Read + Seek>(
     // meaning. Structural integrity precedes semantics: a forged entry should
     // surface as the digest the manifest mislists, not as whatever its
     // contents happen to deserialise into.
-    verify_inventory(&mut archive, &manifest, &display, limits)?;
+    verify_inventory(&mut archive, &manifest, &display, limits, manifest_sizes)?;
 
     // Row L23's snapshot-metadata cap, over the DECOMPRESSED entry and before
     // the section is turned into owned structures. The cap bounds what a reader
@@ -2354,11 +2530,73 @@ fn read_package_from<R: Read + Seek>(
 /// Entries are streamed and hashed without being retained, so the cost is one
 /// extra read of each entry and a bounded amount of memory, not a second copy
 /// of the package.
+/// The expanded size an entry stored in `physical` bytes may reach under
+/// row L15.
+fn l15_bound(physical: u64) -> u64 {
+    if physical < Limits::L15_SMALL_ENTRY_PHYSICAL_BYTES {
+        Limits::L15_SMALL_ENTRY_EXPANDED_BYTES
+    } else {
+        physical.saturating_mul(Limits::L15_EXPANSION_RATIO)
+    }
+}
+
+/// Streams the manifest once, discarding its bytes, to hold it to rows L1
+/// and L15 BEFORE it is parsed. Returns its (expanded, physical) sizes, which
+/// the inventory pass continues counting from.
+fn guard_manifest_expansion<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    path: &str,
+    limits: &Limits,
+) -> Result<(u64, u64), ContainerError> {
+    let Ok(mut entry) = archive.by_name(MANIFEST_ENTRY) else {
+        // Absence is reported by the reader that needs it.
+        return Ok((0, 0));
+    };
+    let physical = entry.compressed_size();
+    let bound = l15_bound(physical);
+    let mut observed: u64 = 0;
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let read = entry.read(&mut buf).map_err(|e| ContainerError::Io {
+            path: path.to_owned(),
+            source: e,
+        })?;
+        if read == 0 {
+            break;
+        }
+        observed += read as u64;
+        if observed > limits.max_entry_bytes {
+            return Err(ContainerError::EntryTooLarge {
+                path: path.to_owned(),
+                entry: MANIFEST_ENTRY.to_owned(),
+                declared: observed,
+                limit: limits.max_entry_bytes,
+            });
+        }
+        if observed > bound {
+            return Err(ContainerError::ExpansionRatioExceeded {
+                path: path.to_owned(),
+                entry: MANIFEST_ENTRY.to_owned(),
+                expanded: observed,
+                physical,
+            });
+        }
+        if observed > limits.max_total_expanded_bytes {
+            return Err(ContainerError::TotalExpandedExceeded {
+                path: path.to_owned(),
+                limit: limits.max_total_expanded_bytes,
+            });
+        }
+    }
+    Ok((observed, physical))
+}
+
 fn verify_inventory<R: Read + Seek>(
     archive: &mut zip::ZipArchive<R>,
     manifest: &Manifest,
     path: &str,
     limits: &Limits,
+    (manifest_expanded, manifest_physical): (u64, u64),
 ) -> Result<(), ContainerError> {
     use sha2::{Digest, Sha256};
 
@@ -2376,6 +2614,12 @@ fn verify_inventory<R: Read + Seek>(
         }
     }
 
+    // Rows L1 and L16 accumulate across every entry of this open; L15 is per
+    // entry. All three are checked as bytes arrive, so a bomb costs at most
+    // one buffer past its limit. Later reads of the same entries are bounded
+    // by this pass: each must match the inventoried length it verified.
+    let mut total_expanded: u64 = manifest_expanded;
+    let mut total_physical: u64 = manifest_physical;
     for (name, expected) in &manifest.entries {
         let Ok(mut entry) = archive.by_name(name) else {
             return Err(ContainerError::InventoryEntryMissing {
@@ -2395,6 +2639,9 @@ fn verify_inventory<R: Read + Seek>(
                 limit: limits.max_entry_bytes,
             });
         }
+        let physical = entry.compressed_size();
+        total_physical = total_physical.saturating_add(physical);
+        let entry_bound = l15_bound(physical);
         let mut hasher = Sha256::new();
         let mut observed: u64 = 0;
         let mut buf = [0u8; 64 * 1024];
@@ -2433,6 +2680,21 @@ fn verify_inventory<R: Read + Seek>(
                     limit: limits.max_entry_bytes,
                 });
             }
+            if observed > entry_bound {
+                return Err(ContainerError::ExpansionRatioExceeded {
+                    path: path.to_owned(),
+                    entry: name.clone(),
+                    expanded: observed,
+                    physical,
+                });
+            }
+            total_expanded = total_expanded.saturating_add(read as u64);
+            if total_expanded > limits.max_total_expanded_bytes {
+                return Err(ContainerError::TotalExpandedExceeded {
+                    path: path.to_owned(),
+                    limit: limits.max_total_expanded_bytes,
+                });
+            }
             hasher.update(&buf[..read]);
         }
         // §7.4 C3: a byte-length contradiction between the inventory and the
@@ -2456,6 +2718,15 @@ fn verify_inventory<R: Read + Seek>(
                 actual,
             });
         }
+    }
+    if total_expanded > Limits::L16_AGGREGATE_FLOOR_BYTES
+        && total_expanded > total_physical.saturating_mul(Limits::L16_AGGREGATE_RATIO)
+    {
+        return Err(ContainerError::AggregateExpansionExceeded {
+            path: path.to_owned(),
+            expanded: total_expanded,
+            physical: total_physical,
+        });
     }
     Ok(())
 }
@@ -3265,6 +3536,7 @@ mod tests {
             max_entry_bytes: 1,
             max_nesting_depth: Limits::L11_NESTING_DEPTH,
             max_snapshot_metadata_bytes: L23_SNAPSHOT_METADATA_BYTES,
+            max_total_expanded_bytes: Limits::L1_TOTAL_EXPANDED_BYTES,
         };
         assert!(matches!(
             read_package_with_limits(&path, &tiny),
