@@ -408,6 +408,10 @@ def report(run_dir):
         findings.append(
             "The **3D presenter lags Flutter** while the view moves, so fast Flutter frames do not mean "
             "smooth 3D (3D/Flutter frames per second): " + "; ".join(lagging) + ".")
+    for s in scenarios:
+        for note in s.get("interruptions") or []:
+            findings.append(f"`{s['workload']}` {s['name']}: {note}; the drag was retried "
+                            "and only the completed attempt is measured.")
     if (env.get("machine", {}).get("power") or {}).get("source") == "battery":
         findings.append("The machine ran on **battery**; results may be throttled.")
     if (env.get("machine", {}).get("power") or {}).get("lowPowerMode"):
@@ -708,6 +712,11 @@ def public_summary(run_dir):
         "n/a: not reported by this platform's 3D presenter.",
     ]
     out.append("Problems: " + ("; ".join(problems) if problems else "none") + "\n")
+    notes = [f"{s['workload']} {s['name']}: {scrub(n)}" for s in results["scenarios"]
+             for n in s.get("interruptions") or []]
+    if notes:
+        out.append("Interrupted by outside input and retried (not failures; the retried "
+                   "attempt's checks above apply): " + "; ".join(notes) + "\n")
     return "\n".join(out)
 
 

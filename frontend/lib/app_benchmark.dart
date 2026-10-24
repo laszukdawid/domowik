@@ -10,6 +10,10 @@ const String benchmarkPlansVariable = 'DOMOWIK_BENCHMARK_PLANS';
 /// A directory of furniture models placed into plans that have few.
 const String benchmarkModelsVariable = 'DOMOWIK_BENCHMARK_MODELS';
 
+/// `1` simulates the window leaving and regaining the foreground during the
+/// first attempt of every drag, to exercise interruption handling.
+const String benchmarkInterruptVariable = 'DOMOWIK_BENCHMARK_INTERRUPT';
+
 /// Drives the real editor through scripted interactions and records frame,
 /// latency, presenter and memory measurements. Timings depend on the host;
 /// nothing here is a pass/fail gate. Native desktop only.
@@ -32,8 +36,40 @@ class _AppBenchmark {
   /// none or one.
   static const _minPreviews = 10;
 
+  /// Attempts per drag when outside input interrupts it (see [_drag]).
+  static const _dragAttempts = 3;
+
+  /// Events the benchmark did not cause: the window leaving the foreground,
+  /// and key or pointer input other than its own synthetic mouse. Cleared at
+  /// each drag attempt; a drag the editor cancelled while any were recorded
+  /// was interrupted by its environment rather than broken.
+  final List<String> _outside = [];
+
+  void _onOutsidePointer(PointerEvent event) {
+    if (event.device == _SyntheticMouse._device ||
+        event is PointerHoverEvent ||
+        event is PointerAddedEvent ||
+        event is PointerRemovedEvent) {
+      return;
+    }
+    _outside.add('${event.kind.name} input');
+  }
+
+  bool _onOutsideKey(KeyEvent event) {
+    if (event is KeyDownEvent) _outside.add('key ${event.logicalKey.keyLabel}');
+    return false;
+  }
+
   Future<void> run() async {
     page._benchmarking = true;
+    final lifecycle = AppLifecycleListener(
+      onStateChange: (state) {
+        if (state != AppLifecycleState.resumed)
+          _outside.add('app ${state.name}');
+      },
+    );
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onOutsidePointer);
+    HardwareKeyboard.instance.addHandler(_onOutsideKey);
     SchedulerBinding.instance.addTimingsCallback(_onTimings);
     final started = sceneClock.elapsedMicroseconds;
     var exitCode = 0;
@@ -95,6 +131,11 @@ class _AppBenchmark {
       exitCode = 1;
     } finally {
       SchedulerBinding.instance.removeTimingsCallback(_onTimings);
+      GestureBinding.instance.pointerRouter.removeGlobalRoute(
+        _onOutsidePointer,
+      );
+      HardwareKeyboard.instance.removeHandler(_onOutsideKey);
+      lifecycle.dispose();
     }
     hostExit(exitCode);
   }
@@ -604,8 +645,12 @@ class _AppBenchmark {
     Offset from,
     Offset direction,
     List<String> ids,
-    _DragMode mode,
-  ) async {
+    _DragMode mode, {
+    int attempt = 1,
+  }) async {
+    final where = '${_workload['name']}/${record['name']}';
+    final interruptions = (record['interruptions'] ??= <String>[]) as List;
+    _outside.clear();
     final box = page._paintKey.currentContext!.findRenderObject()! as RenderBox;
     final start = box.localToGlobal(page._view.toScreen(from));
     final unit = direction / direction.distance;
@@ -638,6 +683,46 @@ class _AppBenchmark {
         moves.add((sent, page._posePreviewRevision));
       }
       if (i == 10) record['dragMode'] = page._mode.name;
+      if (attempt == 1 &&
+          i == 40 &&
+          hostEnvironment(benchmarkInterruptVariable) == '1') {
+        _outside.add('injected by $benchmarkInterruptVariable');
+        // The same entry point the platform uses when the window loses and
+        // regains the foreground; protected because only platforms call it.
+        // ignore: invalid_use_of_protected_member
+        WidgetsBinding.instance
+          ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+          ..handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await _frame();
+      }
+      // The editor cancels a drag when the window leaves the foreground or
+      // other input arrives; it then ignores the rest of this gesture.
+      if (page._activePointer == null) {
+        _pointers.release(at);
+        await _settle();
+        final causes = _outside.toSet().join(', ');
+        if (_outside.isEmpty) {
+          _problems.add(
+            '$where: the editor cancelled the drag after $i frames without '
+            'any outside input',
+          );
+          record['committed'] = false;
+          return;
+        }
+        interruptions.add(
+          'attempt $attempt cancelled after $i frames by outside input: '
+          '$causes',
+        );
+        if (attempt >= _dragAttempts) {
+          _problems.add(
+            '$where: outside input interrupted all $attempt attempts '
+            '($causes); keep the benchmark window focused and untouched',
+          );
+          record['committed'] = false;
+          return;
+        }
+        return _drag(record, from, direction, ids, mode, attempt: attempt + 1);
+      }
     }
     // The last move's preview may still be in flight: wait for it.
     if (moves.isNotEmpty) await _loadAfter(moves.last.$1);
@@ -660,6 +745,7 @@ class _AppBenchmark {
         inputTo3d.samples.add(ms);
       }
     }
+    final statusBefore = page._status;
     final t0 = sceneClock.elapsedMicroseconds;
     _pointers.release(at);
     final release = _Latency();
@@ -679,12 +765,13 @@ class _AppBenchmark {
     _latencies(record, 'dragInputTo3dMs', inputTo3d);
     record['releaseTo3dMs'] = release.samples.firstOrNull;
     record['committed'] = committed;
-    record['statusAfterRelease'] = page._status;
-    final where = '${_workload['name']}/${record['name']}';
+    // Only a status the release itself set says anything about the release.
+    final status = page._status == statusBefore ? '(unchanged)' : page._status;
+    record['statusAfterRelease'] = status;
     if (record['dragMode'] != mode.name) {
       _problems.add(
         '$where: expected a ${mode.name} drag, got ${record['dragMode']} '
-        '(status "${page._status}")',
+        '(status "$status")',
       );
     }
     if (previews.length < _minPreviews) {
@@ -692,7 +779,7 @@ class _AppBenchmark {
     }
     if (!committed) {
       _problems.add(
-        '$where: release did not commit the move (status "${page._status}")',
+        '$where: release did not commit the move (status "$status")',
       );
     }
     if (release.missing > 0) {

@@ -37,6 +37,15 @@ previewed and committed, and that the run recorded no problems. It is built from
 timings, host name, hardware, displays or power state, and scrubs host names
 and paths from problem text. Use it for issues and pull requests.
 
+The editor cancels a drag when its window leaves the foreground or other
+input arrives, as it should for a person. The benchmark records outside
+events (lifecycle changes, and key or pointer input that is not its own), so
+a drag cancelled during one is retried, up to three attempts, and reported as
+an interruption rather than a failure. A cancellation with no outside event
+is a failure. `DOMOWIK_BENCHMARK_INTERRUPT=1 task benchmark` simulates the
+window losing the foreground during every drag's first attempt, to check
+this handling.
+
 The run takes about a minute plus the build, opens the editor window and
 drives it; leave it visible and the machine otherwise idle. Plug laptops in:
 the report notes battery power and macOS Low Power Mode because both

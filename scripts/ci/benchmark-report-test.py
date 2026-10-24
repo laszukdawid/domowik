@@ -156,6 +156,17 @@ class PublicSummaryTests(unittest.TestCase):
         self.assertIn("All checks pass", br.public_summary(run))
         self.assertIn("previews **coalesced** during drag-furniture", br.report(run))
 
+    def test_interrupted_and_retried_drags_are_notes_not_failures(self):
+        note = "attempt 1 cancelled after 67 frames by outside input: app inactive"
+        data = results([scenario("drag-group", dragMode="group", committed=True,
+                                 previewLoads=118, presenter={"frames": 100},
+                                 interruptions=[note])])
+        run = self.run_dir(data, self.env())
+        text = br.public_summary(run)
+        self.assertIn("All checks pass", text)
+        self.assertIn(f"plan drag-group: {note}", text)
+        self.assertIn("only the completed attempt is measured", br.report(run))
+
 
 if __name__ == "__main__":
     unittest.main()
