@@ -30,12 +30,15 @@ static ALLOCATOR: Counting<System> = Counting(System);
 struct Options {
     iterations: usize,
     warmup: usize,
+    /// `--export NAME PATH`: write that corpus as a `.domo` package and exit.
+    export: Option<(String, std::path::PathBuf)>,
 }
 
 fn parse_options() -> Result<Options, String> {
     let mut o = Options {
         iterations: 50,
         warmup: 5,
+        export: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -58,6 +61,11 @@ fn parse_options() -> Result<Options, String> {
                 } else {
                     o.warmup = v;
                 }
+            }
+            "--export" => {
+                let name = args.next().ok_or("--export needs a corpus name")?;
+                let path = args.next().ok_or("--export needs an output path")?;
+                o.export = Some((name, path.into()));
             }
             "--help" | "-h" => return Err("usage".to_owned()),
             other => return Err(format!("unknown argument {other}")),
@@ -94,10 +102,19 @@ fn main() {
         Ok(o) => o,
         Err(message) => {
             eprintln!("domowik-bench: {message}");
-            eprintln!("usage: domowik-bench [--smoke] [--iterations N] [--warmup N]");
+            eprintln!(
+                "usage: domowik-bench [--smoke] [--iterations N] [--warmup N] | --export CORPUS PATH"
+            );
             std::process::exit(2);
         }
     };
+    if let Some((name, path)) = &options.export {
+        if let Err(message) = corpus::export(name, path) {
+            eprintln!("domowik-bench: {message}");
+            std::process::exit(1);
+        }
+        return;
+    }
 
     println!("# Interaction benchmark run\n");
     print_environment(&options);

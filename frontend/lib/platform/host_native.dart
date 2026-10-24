@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../selftest.dart' show bundleRoot;
 
@@ -45,3 +46,26 @@ Future<(String, String, Future<void> Function())> hostProbeModel(
 /// The application bundle directory, for the first-frame probe's packaging
 /// check, or null when it cannot be determined.
 String? hostBundleRoot() => bundleRoot();
+
+/// The bytes of the file at `path`, for the benchmark's plan inputs.
+Future<Uint8List> hostReadBytes(String path) => File(path).readAsBytes();
+
+/// Writes `text` to `path`, readable by its owner only (benchmark results).
+Future<void> hostWritePrivate(String path, String text) async {
+  final file = File(path);
+  await file.writeAsString(text, flush: true);
+  if (!Platform.isWindows) await Process.run('chmod', ['600', path]);
+}
+
+/// Current and peak resident memory of this process, in bytes.
+(int, int) hostMemory() => (ProcessInfo.currentRss, ProcessInfo.maxRss);
+
+/// The host OS name, version and logical CPU count.
+(String, String, int) hostSystem() => (
+  Platform.operatingSystem,
+  Platform.operatingSystemVersion,
+  Platform.numberOfProcessors,
+);
+
+/// The Dart runtime version string.
+String hostDartVersion() => Platform.version;

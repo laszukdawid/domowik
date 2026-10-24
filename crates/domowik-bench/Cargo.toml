@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 domowik-cli = { path = "../domowik-cli" }
+domowik-container = { path = "../domowik-container" }
 domowik-document = { path = "../domowik-document" }
 domowik-format = { path = "../domowik-format" }
 domowik-geometry = { path = "../domowik-geometry" }

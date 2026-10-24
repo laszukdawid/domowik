@@ -398,6 +398,18 @@ pub fn islands() -> Corpus {
     }
 }
 
+/// Writes the named corpus as a snapshot-only `.domo` package, so applications
+/// can open exactly the documents the interaction tables measure.
+pub fn export(name: &str, path: &std::path::Path) -> Result<(), String> {
+    let corpus = all()
+        .into_iter()
+        .chain(shapes())
+        .find(|c| c.name == name)
+        .ok_or_else(|| format!("no corpus named {name}"))?;
+    let package = domowik_container::Package::new(corpus.doc);
+    domowik_container::write_package(path, &package).map_err(|e| e.to_string())
+}
+
 /// Every generated corpus, in report order.
 pub fn all() -> Vec<Corpus> {
     vec![
@@ -539,4 +551,23 @@ fn nonconvex() -> Corpus {
         ],
     );
     c
+}
+
+#[cfg(test)]
+mod export_tests {
+    #[test]
+    fn an_exported_corpus_reopens_as_the_same_document() {
+        let path =
+            std::env::temp_dir().join(format!("domowik-corpus-{}.domo", uuid::Uuid::now_v7()));
+        super::export("campus-xl", &path).unwrap();
+        let mut plan = domowik_container::Plan::open(&path).unwrap();
+        let doc = plan.session().unwrap().document().clone();
+        std::fs::remove_file(&path).unwrap();
+        let expected = super::campus_xl().doc;
+        assert_eq!(doc.walls, expected.walls);
+        assert_eq!(doc.openings, expected.openings);
+        assert_eq!(doc.levels, expected.levels);
+        assert!(super::export("no-such-corpus", &path).is_err());
+        assert!(!path.exists());
+    }
 }

@@ -11,6 +11,7 @@
 // It remains experimental. The workspace presents the core's geometry and
 // routes user gestures through the shared editing API.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
@@ -19,6 +20,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
 import 'core/domowik_core.dart';
@@ -48,10 +50,13 @@ import 'three_d_view.dart';
 import 'warnings_banner.dart';
 import 'plan_painter.dart';
 import 'wall_chain_state.dart';
+import 'benchmark_stats.dart';
 
 // Preserve the editor's existing public imports while keeping scene payloads
 // and painting separate from the editor's input/file lifecycle.
 export 'plan_painter.dart';
+
+part 'app_benchmark.dart';
 
 /// Set to `1` in the environment to drive the real UI for one interaction,
 /// report what the painter actually received, and exit.
@@ -409,7 +414,19 @@ class _PlanPageState extends State<PlanPage>
     if (hostEnvironment(webProbeVariable) == '1') {
       WidgetsBinding.instance.addPostFrameCallback((_) => _runWebProbe());
     }
+    if (hostEnvironment(benchmarkVariable) case final output?
+        when hostHasFilesystem) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _AppBenchmark(this, output).run(),
+      );
+    }
   }
+
+  /// Set while the benchmark drives the editor; isolates user preferences.
+  bool _benchmarking = false;
+
+  /// [setState] for the benchmark runner, which lives outside this class.
+  void _benchSetState(VoidCallback change) => setState(change);
 
   /// The browser build's release probe (issue 0088, frontend/scripts/
   /// web-probe.sh): the shipped page, its WebAssembly core and renderer, one
@@ -2130,11 +2147,13 @@ class _PlanPageState extends State<PlanPage>
           // view preference still reset per BEHAVIOR-SPEC §2.6.
           _levelView.reset(
             levels,
-            rememberedActive:
-                _userConfig.lastActiveLevels[_session?.levelPreferencesKey(
-                  documentId,
-                  levels.map((l) => l.id),
-                )],
+            // A benchmark must not depend on, or change, the user's choice.
+            rememberedActive: _benchmarking
+                ? null
+                : _userConfig.lastActiveLevels[_session?.levelPreferencesKey(
+                    documentId,
+                    levels.map((l) => l.id),
+                  )],
           );
           _resetLevelView = false;
         } else {
@@ -2293,6 +2312,7 @@ class _PlanPageState extends State<PlanPage>
   }
 
   void _rememberActiveLevel(String id) {
+    if (_benchmarking) return;
     final key = _session?.levelPreferencesKey(
       _documentId,
       _levels.map((level) => level.id),

@@ -25,9 +25,10 @@ later phase does not imply that earlier exit criteria are complete.
   uses a native OpenGL presenter; macOS and the browser use the shared `wgpu`
   renderer via Metal and WebGPU respectively.
 - **Performance:** the Rust core uses incremental geometry, spatial indexes,
-  caches and filtered exact predicates. Benchmarks cover core workloads, but
-  measured whole-editor frame-time, input-latency and memory budgets are still
-  open.
+  caches and filtered exact predicates. Benchmarks cover core workloads, and
+  `task benchmark` measures whole-editor frame time, interaction latency and
+  memory on a desktop host; the budgets those measurements are judged against
+  are still open.
 
 See [Architecture](ARCHITECTURE.md) for how these pieces fit together,
 [Getting started](GETTING-STARTED.md) to run them, and

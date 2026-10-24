@@ -13,6 +13,26 @@ import 'editor_workflows.dart';
 import 'platform/scene_presenter_host.dart';
 import 'scene_presenter.dart';
 
+/// Monotonic clock for scene-load instrumentation; benchmarks share it.
+final Stopwatch sceneClock = Stopwatch()..start();
+
+/// One scene load: whether it was transform-only, when it started and ended
+/// on [sceneClock] (µs), whether it installed a scene, and the widget's
+/// `poseRevision` when it started. A load includes at least every pose
+/// preview up to that revision; it may include a later one.
+class SceneLoadSample {
+  const SceneLoadSample(
+    this.poseOnly,
+    this.startMicros,
+    this.endMicros,
+    this.ok,
+    this.poseRevision,
+  );
+  final bool poseOnly, ok;
+  final int startMicros, endMicros, poseRevision;
+  int get micros => endMicros - startMicros;
+}
+
 /// What a click in the 3D view landed on. [entityId] is null for floors,
 /// join patches and empty space; [planMm] is the hit in plan millimetres.
 class ScenePick {
@@ -130,6 +150,12 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
   List<String> _diagnostics = [];
   Map<String, Object?>? _pendingCamera;
   int sceneRequests = 0, meshRequests = 0;
+
+  /// Scene-load samples, recorded only while non-null (benchmarks).
+  List<SceneLoadSample>? loadSamples;
+
+  /// The 3D viewport's logical size, as picks address it.
+  Size get viewportSize => _size;
   String? get diagnosticError => _shownError;
   bool get loading => _loading;
 
@@ -246,6 +272,9 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
     if (session == null || _loading || !widget.active) return;
     final generation = _generation, handle = widget.handle, surface = session!;
     final poseOnly = _poseOnly && _hasScene;
+    final started = sceneClock.elapsedMicroseconds;
+    final poseRevision = widget.poseRevision;
+    var installed = false;
     _poseOnly = false;
     _loading = true;
     _sceneDirty = false;
@@ -316,6 +345,7 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
       camera.radius = math.max(1, _radius);
       if (_presenterLoadsScene) {
         _finishScene(scene);
+        installed = true;
         return;
       }
       final meshes = scene['instanceOnly'] == true
@@ -389,6 +419,7 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
       });
       if (!current()) return;
       _finishScene(scene);
+      installed = true;
     } catch (e) {
       if (current()) {
         if (poseOnly) {
@@ -402,6 +433,15 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
         }
       }
     } finally {
+      loadSamples?.add(
+        SceneLoadSample(
+          poseOnly,
+          started,
+          sceneClock.elapsedMicroseconds,
+          installed,
+          poseRevision,
+        ),
+      );
       _loading = false;
       if (mounted) {
         setState(() {});
