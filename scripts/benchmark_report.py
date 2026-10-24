@@ -5,6 +5,8 @@
     benchmark_report.py report RUN_DIR       Markdown report for one run
     benchmark_report.py compare RUN_A RUN_B  comparison written owner-only to
                                              private/benchmarks/compare-*.md
+    benchmark_report.py public-summary [RUN] health checks safe to post
+                                             publicly (latest run by default)
 
 Reports describe one machine in detail and are CONFIDENTIAL: they stay in the
 gitignored private/ tree and are moved between machines by hand. Standard
@@ -608,9 +610,106 @@ def compare(run_a, run_b):
     return "\n".join(out) + "\n"
 
 
+# ------------------------------------------------------------- public summary
+
+# Scenarios that must only move or tint instances, and the drag modes expected.
+_DRAG_MODES = {"drag-furniture": "asset", "drag-group": "group"}
+
+
+def _scrubber(env):
+    """Removes the host name and filesystem paths from free text."""
+    host = (env.get("hostname") or "").strip()
+    short = host.split(".")[0]
+
+    def scrub(text):
+        text = re.sub(r"(?:/Users|/home|/private|/tmp|/var|/Volumes)/\S+", "<path>", str(text))
+        text = re.sub(r"[A-Za-z]:\\\S+", "<path>", text)
+        for name in {host, short} - {""}:
+            text = text.replace(name, "<host>")
+        return text
+    return scrub
+
+
+def public_summary(run_dir):
+    """Pass/fail health of a run, safe to post publicly.
+
+    Built from an allow-list only: OS family, architecture, Flutter version,
+    commit, 3D graphics API, and per-scenario counts and checks. No timings,
+    host name, hardware model, displays, power state or paths; problem and
+    error text is scrubbed of the host name and paths."""
+    run = Path(run_dir)
+    results = json.loads((run / "results.json").read_text())
+    env_path = run / "environment.json"
+    env = json.loads(env_path.read_text()) if env_path.exists() else {}
+    scrub = _scrubber(env)
+    apis = sorted({m[1] for w in results["workloads"]
+                   if (m := re.search(r"\(([^)]+)\)\s*$", str(w.get("driver") or "")))})
+    commit = ((env.get("source") or {}).get("commit") or "?")[:12]
+    uncommitted = (env.get("source") or {}).get("uncommittedFiles")
+    checks = []
+
+    def check(ok, text):
+        checks.append(("ok  " if ok else "FAIL") + "  " + text)
+
+    rows = []
+    for s in results["scenarios"]:
+        where = f"{s['workload']} {s['name']}"
+        frames = (s.get("frames") or {}).get("count")
+        presenter = s.get("presenter") or {}
+        frames_3d, uploads = presenter.get("frames"), presenter.get("meshUploads")
+        missing = sum(v.get("missing", 0) for v in s.values() if isinstance(v, dict))
+        if s.get("error"):
+            check(False, f"{where}: error {scrub(s['error'])}")
+        check(bool(frames), f"{where}: Flutter frames recorded")
+        if missing:
+            check(False, f"{where}: {missing} action(s) never produced their 3D result")
+        if s["name"] in ("orbit", "drag-furniture", "drag-group") and frames_3d is not None:
+            check(frames_3d > 0, f"{where}: 3D presenter produced frames")
+        if s["name"] in TRANSFORM_ONLY and uploads is not None:
+            check(uploads == 0, f"{where}: no mesh uploads")
+        if s["name"] in _DRAG_MODES:
+            check(s.get("dragMode") == _DRAG_MODES[s["name"]]
+                  and s.get("committed") is True
+                  and (s.get("previewLoads") or 0) >= 60,
+                  f"{where}: {_DRAG_MODES[s['name']]} drag previewed and committed")
+        extra = ", ".join(f"{k} {s[k]}" for k in ("dragMode", "committed", "previewLoads", "hits")
+                          if k in s)
+        show = lambda v: "n/a" if v is None else v
+        rows.append(f"| {s['workload']} | {s['name']} | {show(frames)} | {show(frames_3d)} "
+                    f"| {show(uploads)} | {missing} | {extra} |")
+    failed = sum(1 for c in checks if c.startswith("FAIL"))
+    out = [
+        "### Domowik benchmark health (public summary)\n",
+        f"`{env.get('system') or results['host'].get('os')} {env.get('architecture') or ''}`".rstrip()
+        + f" · Flutter {(env.get('toolchain') or {}).get('flutter') or '?'}"
+        + f" · commit `{commit}`" + (f" + {uncommitted} uncommitted file(s)" if uncommitted else "")
+        + f" · 3D: {', '.join(apis) or 'n/a'}\n",
+        f"**{'All checks pass' if not failed else f'{failed} check(s) failed'}** "
+        f"({len(checks)} checks; timings are deliberately omitted).\n",
+        "```text", *[c for c in checks if c.startswith("FAIL")],
+        *[c for c in checks if not c.startswith("FAIL")], "```\n",
+        "| Workload | Scenario | Flutter frames | 3D frames | Mesh uploads | Missing results | Drag / pick |",
+        "|---|---|---|---|---|---|---|", *rows, "",
+        "n/a: not reported by this platform's 3D presenter.",
+    ]
+    problems = [scrub(p) for p in results.get("problems", [])]
+    out.append("Problems: " + ("; ".join(problems) if problems else "none") + "\n")
+    return "\n".join(out)
+
+
+def _latest_run():
+    runs = sorted(p for p in (Path(__file__).resolve().parent.parent / "private" / "benchmarks").glob("2*")
+                  if (p / "results.json").exists())
+    if not runs:
+        raise SystemExit("no benchmark run with results.json under private/benchmarks/")
+    return runs[-1]
+
+
 def main(argv):
     if len(argv) >= 1 and argv[0] == "environment":
         print(json.dumps(environment(), indent=1))
+    elif argv and argv[0] in ("public-summary", "--public-summary") and len(argv) <= 2:
+        print(public_summary(argv[1] if len(argv) == 2 else _latest_run()))
     elif len(argv) == 2 and argv[0] == "report":
         print(report(argv[1]))
     elif len(argv) == 3 and argv[0] == "compare":

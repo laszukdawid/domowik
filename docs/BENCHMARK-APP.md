@@ -17,6 +17,7 @@ the method; it records no results.
 task benchmark                     # build the release app, run, report
 task benchmark -- --no-build       # reuse the last release build
 task benchmark:compare -- private/benchmarks/RUN_A private/benchmarks/RUN_B
+task benchmark:summary             # health checks safe to post publicly
 ```
 
 Each run creates `private/benchmarks/<UTC stamp>-<host>/` with `REPORT.md`,
@@ -24,6 +25,17 @@ the raw `results.json`, `environment.json` (hardware, displays, power and
 toolchain) and the application log. To evaluate on another machine, check out
 the same commit there, run `task benchmark`, and carry the run directory back
 by hand; `benchmark:compare` writes a side-by-side table with B/A ratios.
+
+`task benchmark:summary` (or `scripts/benchmark_report.py public-summary
+[RUN]`, the latest run by default) prints whether a run works without saying
+how fast it was or what ran it: OS family, architecture, Flutter version,
+commit and 3D graphics API, then pass/fail checks and per-scenario counts.
+It checks that every scenario recorded frames and every action produced its
+3D result, that the 3D presenter drew while the view moved, that orbit, pick
+and selection uploaded no meshes, and that drags ran in the expected mode,
+previewed and committed. It is built from an allow-list, contains no
+timings, host name, hardware, displays or power state, and scrubs host names
+and paths from problem text. Use it for issues and pull requests.
 
 The run takes about a minute plus the build, opens the editor window and
 drives it; leave it visible and the machine otherwise idle. Plug laptops in:

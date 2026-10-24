@@ -80,5 +80,59 @@ class ReportTests(unittest.TestCase):
         self.assertIn("CONFIDENTIAL", br.report(run))
 
 
+class PublicSummaryTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(prefix="domowik-bench-public-")
+        self.addCleanup(self.scratch.cleanup)
+
+    def run_dir(self, data, env):
+        path = pathlib.Path(self.scratch.name) / "run"
+        path.mkdir()
+        (path / "results.json").write_text(json.dumps(data))
+        (path / "environment.json").write_text(json.dumps(env))
+        return path
+
+    def env(self):
+        return {"hostname": "secret-host.local", "system": "Linux", "architecture": "x86_64",
+                "machine": {"cpu": "Secret CPU 9000", "gpus": [{"name": "Secret GPU"}],
+                            "power": {"source": "battery"}},
+                "toolchain": {"flutter": "3.47.7"}, "source": {"commit": "abcdef1234567890"}}
+
+    def test_it_leaks_no_host_hardware_paths_or_timings(self):
+        data = results(
+            [scenario("orbit", presenter={"frames": 50, "meshUploads": 0},
+                      error="crashed reading /home/someone/plan.domo on secret-host",
+                      pickMs=latency([123.456]))],
+            problems=["plan/orbit: failed at /Users/someone/x on secret-host.local"])
+        data["workloads"] = [{"name": "plan", "driver": "Secret GPU (OpenGL)"}]
+        text = br.public_summary(self.run_dir(data, self.env()))
+        for secret in ("secret-host", "someone", "Secret CPU", "Secret GPU", "battery", "123.456"):
+            self.assertNotIn(secret, text)
+        self.assertIn("<path>", text)
+        self.assertIn("<host>", text)
+        self.assertIn("`Linux x86_64`", text)
+        self.assertIn("3D: OpenGL", text)
+
+    def test_broken_runs_fail_the_matching_checks(self):
+        data = results([
+            scenario("drag-furniture", dragMode="body", committed=False, previewLoads=1,
+                     presenter={"frames": 0}, dragInputTo3dMs=latency([5.0], missing=3)),
+            scenario("selection", presenter={"meshUploads": 7}),
+        ])
+        text = br.public_summary(self.run_dir(data, self.env()))
+        self.assertIn("FAIL  plan drag-furniture: asset drag previewed and committed", text)
+        self.assertIn("FAIL  plan drag-furniture: 3D presenter produced frames", text)
+        self.assertIn("FAIL  plan drag-furniture: 3 action(s) never produced their 3D result", text)
+        self.assertIn("FAIL  plan selection: no mesh uploads", text)
+        self.assertIn("4 check(s) failed", text)
+
+    def test_a_clean_run_passes_and_unreported_counters_are_not_failures(self):
+        data = results([scenario("orbit", presenter={}),
+                        scenario("pick", presenter={"meshUploads": 0}, hits=3)])
+        text = br.public_summary(self.run_dir(data, self.env()))
+        self.assertIn("All checks pass", text)
+        self.assertIn("| plan | orbit | 60 | n/a | n/a | 0 |", text)
+
+
 if __name__ == "__main__":
     unittest.main()
