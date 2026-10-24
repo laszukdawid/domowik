@@ -32,8 +32,8 @@ how fast it was or what ran it: OS family, architecture, Flutter version,
 commit and 3D graphics API, then pass/fail checks and per-scenario counts.
 It checks that every scenario recorded frames and every action produced its
 3D result, that the 3D presenter drew while the view moved, that orbit, pick
-and selection uploaded no meshes, and that drags ran in the expected mode,
-previewed and committed. It is built from an allow-list, contains no
+and selection uploaded no meshes, that drags ran in the expected mode,
+previewed and committed, and that the run recorded no problems. It is built from an allow-list, contains no
 timings, host name, hardware, displays or power state, and scrubs host names
 and paths from problem text. Use it for issues and pull requests.
 
@@ -72,8 +72,9 @@ Each workload is measured on its level with the most walls.
 | `switch-level` | Activates each level in turn, three rounds. | Activation + 2D refresh; activation → 3D. |
 
 A scenario cannot pass by measuring the wrong thing. A drag must run in the
-expected mode, preview on at least half its frames, and on release move every
-dragged model and advance the document; otherwise it is reported as a
+expected mode, produce at least ten 3D previews (a slow host coalesces moves
+into fewer previews, which shows in the latencies, not as a failure), and on
+release move every dragged model and advance the document; otherwise it is reported as a
 problem with the editor's drag mode and status message. An interaction whose
 3D scene never installs within its timeout is counted as *missing*: the
 metric is marked incomplete instead of losing its slowest samples.

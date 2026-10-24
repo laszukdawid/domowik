@@ -133,6 +133,29 @@ class PublicSummaryTests(unittest.TestCase):
         self.assertIn("All checks pass", text)
         self.assertIn("| plan | orbit | 60 | n/a | n/a | 0 |", text)
 
+    def test_recorded_problems_alone_prevent_an_all_clear(self):
+        for problem in ("plan/wall-edit: edit 0 refused",
+                        "plan/drag-furniture: no 3D scene after release"):
+            with self.subTest(problem=problem):
+                data = results([scenario("wall-edit")], problems=[problem])
+                path = pathlib.Path(self.scratch.name) / str(abs(hash(problem)))
+                path.mkdir()
+                (path / "results.json").write_text(json.dumps(data))
+                text = br.public_summary(path)
+                self.assertNotIn("All checks pass", text)
+                self.assertIn("1 check(s) failed", text)
+                self.assertIn(f"FAIL  problem: {problem}", text)
+
+    def test_a_slow_host_coalescing_previews_still_works(self):
+        # The Linux campus-xl shape: right mode, committed, every move shown,
+        # but 120 moves carried by fewer previews.
+        data = results([scenario("drag-furniture", dragMode="asset", committed=True,
+                                 previewLoads=48, presenter={"frames": 415, "meshUploads": 0},
+                                 dragInputTo3dMs=latency([20.0] * 120))])
+        run = self.run_dir(data, self.env())
+        self.assertIn("All checks pass", br.public_summary(run))
+        self.assertIn("previews **coalesced** during drag-furniture", br.report(run))
+
 
 if __name__ == "__main__":
     unittest.main()

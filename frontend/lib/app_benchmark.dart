@@ -26,6 +26,12 @@ class _AppBenchmark {
 
   static const _steps = 120;
 
+  /// Fewest 3D previews a working drag produces over [_steps] frames. A slow
+  /// host coalesces moves into fewer previews, which the latency figures
+  /// show; a drag that grabbed a wall or whose preview path broke produces
+  /// none or one.
+  static const _minPreviews = 10;
+
   Future<void> run() async {
     page._benchmarking = true;
     SchedulerBinding.instance.addTimingsCallback(_onTimings);
@@ -681,7 +687,7 @@ class _AppBenchmark {
         '(status "${page._status}")',
       );
     }
-    if (previews.length < _steps / 2) {
+    if (previews.length < _minPreviews) {
       _problems.add('$where: ${previews.length} 3D previews in $_steps frames');
     }
     if (!committed) {

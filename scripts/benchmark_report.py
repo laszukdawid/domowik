@@ -390,6 +390,13 @@ def report(run_dir):
                 findings.append(f"`{s['workload']}` {s['name']} ran {loads['full']['count']} full scene build(s).")
         if (s.get("frames") or {}).get("count", 0) == 0:
             findings.append(f"`{s['workload']}` {s['name']} recorded no frames; its frame columns are empty.")
+    for s in scenarios:
+        previews, frames = s.get("previewLoads"), (s.get("dragInputTo3dMs") or {}).get("count")
+        if previews is not None and frames and previews < 0.9 * frames:
+            findings.append(
+                f"3D previews **coalesced** during {s['name']} on `{s['workload']}`: "
+                f"{previews} previews carried {frames} pointer moves, so the 3D update "
+                "takes longer than a frame there.")
     lagging = []
     for s in scenarios:
         flutter_fps = (s.get("frames") or {}).get("fps")
@@ -612,8 +619,11 @@ def compare(run_a, run_b):
 
 # ------------------------------------------------------------- public summary
 
-# Scenarios that must only move or tint instances, and the drag modes expected.
+# Drag scenarios and the drag mode each must run in.
 _DRAG_MODES = {"drag-furniture": "asset", "drag-group": "group"}
+# Fewest previews a working drag produces (app_benchmark.dart _minPreviews);
+# a slow host coalesces moves into fewer, which is a timing, not a failure.
+_MIN_PREVIEWS = 10
 
 
 def _scrubber(env):
@@ -670,13 +680,18 @@ def public_summary(run_dir):
         if s["name"] in _DRAG_MODES:
             check(s.get("dragMode") == _DRAG_MODES[s["name"]]
                   and s.get("committed") is True
-                  and (s.get("previewLoads") or 0) >= 60,
+                  and (s.get("previewLoads") or 0) >= _MIN_PREVIEWS,
                   f"{where}: {_DRAG_MODES[s['name']]} drag previewed and committed")
         extra = ", ".join(f"{k} {s[k]}" for k in ("dragMode", "committed", "previewLoads", "hits")
                           if k in s)
         show = lambda v: "n/a" if v is None else v
         rows.append(f"| {s['workload']} | {s['name']} | {show(frames)} | {show(frames_3d)} "
                     f"| {show(uploads)} | {missing} | {extra} |")
+    # Every recorded problem is a failure in its own right: some (a refused
+    # edit, no scene after a release) have no other check to catch them.
+    problems = [scrub(p) for p in results.get("problems", [])]
+    for problem in problems:
+        check(False, f"problem: {problem}")
     failed = sum(1 for c in checks if c.startswith("FAIL"))
     out = [
         "### Domowik benchmark health (public summary)\n",
@@ -692,7 +707,6 @@ def public_summary(run_dir):
         "|---|---|---|---|---|---|---|", *rows, "",
         "n/a: not reported by this platform's 3D presenter.",
     ]
-    problems = [scrub(p) for p in results.get("problems", [])]
     out.append("Problems: " + ("; ".join(problems) if problems else "none") + "\n")
     return "\n".join(out)
 
