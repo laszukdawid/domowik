@@ -39,12 +39,12 @@ The editor and CLI use the same document and geometry core. See
 | Work | Requirements |
 | --- | --- |
 | CLI / Rust core | rustup and the toolchain selected by `rust-toolchain.toml` (currently Rust 1.98.0) |
-| Desktop editor | Flutter stable with Dart satisfying `^3.11.4`, Rust, and the native tools below |
+| Desktop editor | Flutter 3.47.7 or later stable (Dart 3.13.5+), Rust, and the native tools below |
 | Browser editor | The above, plus Python 3 to serve the build; `rust-toolchain.toml` installs the two WebAssembly targets, and the scripts fetch the pinned `wasm-bindgen-cli` and test browser on first use |
 | Full verification | Rust, Python 3, shell/native utilities used by `scripts/verify.sh`; Flutter for GUI checks |
 
-macOS CI pins Flutter 3.41.6. The Dart constraint alone does not establish
-compatibility with every Flutter release. Check which SDK your shell invokes:
+CI pins Flutter 3.47.7, and `frontend/pubspec.yaml` refuses older SDKs at
+`flutter pub get`. A newer stable release is not verified until CI moves to it. Check which SDK your shell invokes:
 
 ```sh
 cargo --version
@@ -296,7 +296,6 @@ See [Contributing](../CONTRIBUTING.md) for full verification and CPU benchmarks.
 
 | Symptom | Check |
 | --- | --- |
-| `lipo: -verify_arch requires exactly one input file` | Xcode 27's `lipo` versus Flutter 3.41.6 (flutter/flutter#188461). The Xcode project puts `scripts/macos/lipo-compat` first on PATH for its Flutter phases; build through the project, not a bare `flutter assemble`. |
 | `CoreSimulator is out of date` / `DVTCoreDeviceCore` noise | macOS is older than Xcode's device frameworks expect. Harmless for macOS builds; a macOS update clears it. |
 | Cargo/rustup missing during a GUI build | Check the build process's PATH, not just your terminal; macOS expects the standard rustup location. |
 | GTK or epoxy not found | Install development packages and check the pkg-config command above. |

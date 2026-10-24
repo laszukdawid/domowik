@@ -19,9 +19,13 @@ source publication too, not only to shipping a compiled application.
 - Checked 2026-10-04 against the installed SDK at revision
   `6a19cca56475dbfba1478ee68d7bd0c2ef891da1` and the upstream 3.41.6 license.
   The retained text is copied unchanged from the installed SDK's LICENSE.
+- Rechecked 2026-10-20 when CI moved to Flutter 3.47.7 (revision
+  `abaf9c523780a608bd46686fd5e53740a07077f8`): its LICENSE is byte-identical
+  to the retained copy. Generated platform files were not regenerated; the
+  3.41.6 template references above remain their provenance.
 - Earlier SDK use is recorded in `tools.json`; Android generation is recorded
-  in `toolchain-android.json`. The 3.41.6 reference is the current CI pin, not
-  a claim that every historical generated file came from that version.
+  in `toolchain-android.json`. The 3.41.6 reference is not a claim that every
+  historical generated file came from that version.
 
 This closes the missing retained source notice, not the staged GUI binary
 inventory. Flutter engine/Dart dependencies, framework/font licenses and

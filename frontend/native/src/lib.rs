@@ -222,6 +222,9 @@ pub struct DomowikBuf {
 
 struct Plan {
     scene_models: std::collections::BTreeMap<String, std::sync::Arc<domowik_models::ModelMesh>>,
+    /// Local bounds of each `scene_models` mesh, computed once at decode so
+    /// 3D picking and framing never rescan model vertices.
+    scene_model_bounds: HashMap<String, domowik_scene::pick::Bounds>,
     scene_model_decodes: u64,
     scene_model_errors: std::collections::BTreeMap<String, String>,
     resolutions: Option<(
@@ -239,9 +242,12 @@ struct Plan {
     /// confirms against.
     metadata_changes: u64,
     asset_hits: Option<asset_library::FootprintIndex>,
-    /// View-only pose, valid only for the captured document revision. Never
-    /// serialized, saved, or applied to the authoritative session.
-    asset_pose_preview: Option<(usize, domowik_format::AssetInstance)>,
+    /// View-only poses by instance, valid only for the captured document
+    /// revision. Never serialized, saved, or applied to the authoritative
+    /// session.
+    asset_pose_preview: Option<(usize, HashMap<Uuid, domowik_format::AssetInstance>)>,
+    /// Bumped on every overlay change; see [`Plan::set_pose_preview`].
+    pose_version: u64,
     /// Plan-session-local furniture clipboard (issue 0113): captured asset
     /// instances and the anchor the next paste places at the pointer. View
     /// state, like `asset_pose_preview`: never persisted, never in the
@@ -291,14 +297,25 @@ impl Plan {
         &'a self,
         asset: &'a domowik_format::AssetInstance,
     ) -> &'a domowik_format::AssetInstance {
-        match &self.asset_pose_preview {
-            Some((revision, preview))
-                if *revision == document_revision(self.session()) && preview.id == asset.id =>
-            {
-                preview
-            }
-            _ => asset,
-        }
+        self.pose_previews()
+            .and_then(|previews| previews.get(&asset.id))
+            .unwrap_or(asset)
+    }
+    /// Replaces the pose overlay and versions the change, so 3D queries can
+    /// tell which overlay a presented frame drew.
+    fn set_pose_preview(
+        &mut self,
+        preview: Option<(usize, HashMap<Uuid, domowik_format::AssetInstance>)>,
+    ) {
+        self.asset_pose_preview = preview;
+        self.pose_version += 1;
+    }
+    /// The pose overlay when it still describes the current document revision.
+    fn pose_previews(&self) -> Option<&HashMap<Uuid, domowik_format::AssetInstance>> {
+        self.asset_pose_preview
+            .as_ref()
+            .filter(|(revision, _)| *revision == document_revision(self.session()))
+            .map(|(_, previews)| previews)
     }
     /// The key for caches that depend on asset resolution as well as on the
     /// document: hit placeholders, footprints and resolutions.
@@ -1319,10 +1336,12 @@ unsafe fn register_plan(
             metadata_dirty: false,
             metadata_changes: 0,
             scene_models: Default::default(),
+            scene_model_bounds: Default::default(),
             scene_model_decodes: 0,
             scene_model_errors: Default::default(),
             asset_hits: None,
             asset_pose_preview: None,
+            pose_version: 0,
             asset_clipboard: None,
             view_scene: None,
             scene_builds: 0,

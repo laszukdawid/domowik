@@ -16,13 +16,19 @@ later phase does not imply that earlier exit criteria are complete.
   Plans open on the first listed floor by default and remember the device's last
   active-floor choice, including for older files without document identity.
   The asset library offers list/grid browsing with on-demand model thumbnails.
-- **3D view:** experimental views derive scene data from the same plan. Linux
+- **3D view:** experimental views derive scene data from the same plan and
+  share its selection: selected items are tinted, clicking in 3D selects, and
+  navigation zooms toward the cursor, orbits about the picked surface and
+  frames the selection. Dragging, rotating or numerically placing furniture,
+  including furniture-only group moves, previews live in 3D before release;
+  wall and opening edits update 3D after they are committed. Linux
   uses a native OpenGL presenter; macOS and the browser use the shared `wgpu`
   renderer via Metal and WebGPU respectively.
 - **Performance:** the Rust core uses incremental geometry, spatial indexes,
-  caches and filtered exact predicates. Benchmarks cover core workloads, but
-  measured whole-editor frame-time, input-latency and memory budgets are still
-  open.
+  caches and filtered exact predicates. Benchmarks cover core workloads, and
+  `task benchmark` measures whole-editor frame time, interaction latency and
+  memory on a desktop host; the budgets those measurements are judged against
+  are still open.
 
 See [Architecture](ARCHITECTURE.md) for how these pieces fit together,
 [Getting started](GETTING-STARTED.md) to run them, and

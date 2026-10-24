@@ -118,6 +118,10 @@ CPU timings are not presented frame time or input latency. Record host,
 toolchains, workload and measurement limits; do not promote them into a
 whole-app or comparative performance claim.
 
+For frame time, interaction latency and 3D scene work in the release editor,
+run `task benchmark` ([application benchmark](docs/BENCHMARK-APP.md)). Its
+reports identify the machine and stay in the gitignored `private/` tree.
+
 ## Full verification
 
 `./scripts/verify.sh` on your machine is the merge gate. GitHub Actions run

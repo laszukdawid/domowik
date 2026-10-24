@@ -895,6 +895,9 @@ fi
 stage "failure banner regression"
 ./scripts/ci/verify-banner-regression.sh
 
+stage "benchmark report regression"
+python3 scripts/ci/benchmark-report-test.py
+
 stage "web browser launcher regression"
 if [ "$(uname -s)" = Linux ]; then
   ./frontend/scripts/test-run-web-browser.sh

@@ -147,6 +147,7 @@ class WebScenePresenter implements ScenePresenter {
           jsonEncode({
             'levelIds': args['levelIds'],
             'ghostedIds': args['ghostedIds'],
+            'selectedIds': args['selectedIds'] ?? const [],
             'poseOnly': args['poseOnly'] ?? false,
             'sceneToken': args['sceneToken'],
           }),

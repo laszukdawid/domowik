@@ -330,6 +330,8 @@ struct LoadRequest {
     #[serde(default)]
     ghosted_ids: Vec<Uuid>,
     #[serde(default)]
+    selected_ids: Vec<String>,
+    #[serde(default)]
     pose_only: bool,
     #[serde(default)]
     scene_token: Option<u64>,
@@ -375,6 +377,7 @@ pub unsafe extern "C" fn domowik_r3d_load_scene(
             &session,
             &request.level_ids,
             request.ghosted_ids,
+            &request.selected_ids,
             request.pose_only,
             request.scene_token,
         ) {
@@ -441,6 +444,7 @@ pub unsafe extern "C" fn domowik_r3d_load_scene(
             "diagnostics": scene.diagnostics,
             "modelDecodes": decodes,
             "sceneToken": scene.scene_token,
+            "poseVersion": scene.pose_version,
             "instanceOnly": scene.instance_only,
         });
         release(body.to_string().into_bytes(), out)

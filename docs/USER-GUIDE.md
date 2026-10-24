@@ -350,10 +350,19 @@ slabs and imported meshes, with diagnostic boxes where needed, and follow
 edits, undo and redo. It is not yet a photorealistic renderer; on Android and
 Windows, use 2D.
 
-In aerial/orbit mode, drag to orbit, right-drag or Shift-drag to pan, and scroll
-to zoom. **Fit** resets the aerial framing. In **Walk through**, drag for mouse
-look, use W/A/S/D to move, Q/E to change height and Shift for faster movement.
-These are camera operations, not edits to the plan.
+In aerial/orbit mode, drag to orbit around the surface under the cursor,
+right-drag or Shift-drag to pan, and scroll to zoom toward the cursor. Press
+**F** to frame the selection, or the whole scene when nothing is selected.
+**Fit** resets the aerial framing. In **Walk through**, drag for mouse look,
+use W/A/S/D to move, Q/E to change height and Shift for faster movement. These
+are camera operations, not edits to the plan.
+
+Selection is shared between the views. Selected walls, openings and models are
+tinted in 3D. Click a wall, opening or model in 3D to select it (Ctrl, Cmd or
+Shift-click adds or removes it); click the floor or empty space to clear the
+selection. Double-click to also centre the 2D plan on that point. While you
+drag furniture in the 2D plan, the 3D view follows the move live; walls and
+openings update in 3D when you release them.
 
 ## Preferences and local configuration
 

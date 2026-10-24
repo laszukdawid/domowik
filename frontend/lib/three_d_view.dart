@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
@@ -11,6 +12,46 @@ import 'core/domowik_core.dart';
 import 'editor_workflows.dart';
 import 'platform/scene_presenter_host.dart';
 import 'scene_presenter.dart';
+
+/// Monotonic clock for scene-load instrumentation; benchmarks share it.
+final Stopwatch sceneClock = Stopwatch()..start();
+
+/// One scene load: whether it was transform-only, when it started and ended
+/// on [sceneClock] (µs), whether it installed a scene, and the widget's
+/// `poseRevision` when it started. A load includes at least every pose
+/// preview up to that revision; it may include a later one.
+class SceneLoadSample {
+  const SceneLoadSample(
+    this.poseOnly,
+    this.startMicros,
+    this.endMicros,
+    this.ok,
+    this.poseRevision,
+  );
+  final bool poseOnly, ok;
+  final int startMicros, endMicros, poseRevision;
+  int get micros => endMicros - startMicros;
+}
+
+/// What a click in the 3D view landed on. [entityId] is null for floors,
+/// join patches and empty space; [planMm] is the hit in plan millimetres.
+class ScenePick {
+  const ScenePick({
+    this.entityId,
+    this.levelId,
+    this.planMm,
+    required this.position,
+    this.open = false,
+  });
+  final String? entityId, levelId;
+  final Offset? planMm;
+
+  /// The click in the 3D view's logical pixels.
+  final Offset position;
+
+  /// A double click: callers reveal the hit, not only select it.
+  final bool open;
+}
 
 /// GPU texture client. Document revisions trigger asynchronous scene work;
 /// pointer/keyboard navigation sends only one coalesced camera matrix per frame.
@@ -26,6 +67,8 @@ class ThreeDView extends StatefulWidget {
     required this.ghostedIds,
     required this.floorElevationMm,
     required this.active,
+    this.selectedIds = const [],
+    this.onPick,
     this.onUndo,
     this.onRedo,
   });
@@ -39,13 +82,16 @@ class ThreeDView extends StatefulWidget {
   final List<String> levelIds, ghostedIds;
   final double floorElevationMm;
   final bool active;
+
+  /// Entities tinted in 3D. A change re-sends transforms only, never meshes.
+  final List<String> selectedIds;
+  final ValueChanged<ScenePick>? onPick;
   final VoidCallback? onUndo, onRedo;
   @override
   State<ThreeDView> createState() => ThreeDViewState();
 }
 
-class ThreeDViewState extends State<ThreeDView>
-    with SingleTickerProviderStateMixin {
+class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
   static const channel = MethodChannel('invalid.domowik-spike/three-d');
 
   /// This host's presenter: the native one on [channel], or the browser's.
@@ -68,7 +114,7 @@ class ThreeDViewState extends State<ThreeDView>
   // monotonic load number that lets them refuse a stale load finishing late.
   bool _presenterLoadsScene = false;
   bool _hasScene = false, _poseOnly = false;
-  int? _sceneToken;
+  int? _sceneToken, _poseVersion;
   final GlobalKey _textureBoundary = GlobalKey();
   int _loadNumber = 0;
   bool _creating = false,
@@ -79,6 +125,18 @@ class ThreeDViewState extends State<ThreeDView>
       _cameraInFlight = false;
   bool _resetSurface = true;
   bool _mouseDragging = false, _pan = false;
+  // Click detection and the orbit pivot picked under the press.
+  Offset? _pressAt;
+  bool _pressMoved = false, _pressPrimary = false;
+  final Set<int> _down = {};
+  Duration? _lastClickTime;
+  Offset? _lastClickAt;
+  List<double>? _pivot;
+  // Animated framing: interpolates target and distance.
+  late final Ticker _flight;
+  Duration? _flightStart;
+  List<double> _flightFrom = const [], _flightTo = const [];
+  double _flightFromDistance = 0, _flightToDistance = 0;
   double _lastScale = 1;
   Size _size = const Size(800, 600);
   List<double> _center = [0, 1, 0], _origin = [0, 0];
@@ -92,6 +150,12 @@ class ThreeDViewState extends State<ThreeDView>
   List<String> _diagnostics = [];
   Map<String, Object?>? _pendingCamera;
   int sceneRequests = 0, meshRequests = 0;
+
+  /// Scene-load samples, recorded only while non-null (benchmarks).
+  List<SceneLoadSample>? loadSamples;
+
+  /// The 3D viewport's logical size, as picks address it.
+  Size get viewportSize => _size;
   String? get diagnosticError => _shownError;
   bool get loading => _loading;
 
@@ -99,6 +163,7 @@ class ThreeDViewState extends State<ThreeDView>
   void initState() {
     super.initState();
     _ticker = createTicker(_tick);
+    _flight = createTicker(_fly);
     _presenter.setMethodCallHandler(_fromPresenter);
     if (widget.active) _ensureSurface();
   }
@@ -133,17 +198,20 @@ class ThreeDViewState extends State<ThreeDView>
       _sceneDirty = true;
       _poseOnly = false;
       if (old.handle != widget.handle) {
+        _interrupt();
         _uploadedModels.clear();
         _fitNext = true;
         _origin = [0, 0];
         _resetSurface = true;
         _hasScene = false;
       }
-    } else if (old.poseRevision != widget.poseRevision) {
+    } else if (old.poseRevision != widget.poseRevision ||
+        old.selectedIds.join(',') != widget.selectedIds.join(',')) {
       // Preview changes must not starve the display by invalidating every
       // in-flight load. Present that result, then load the latest pose. There
       // is at most one in flight and one dirty/latest request, never a queue.
-      if (!_sceneDirty) _poseOnly = _hasScene;
+      // During a full load, the pending update can reuse that load's baseline.
+      if (!_sceneDirty) _poseOnly = _hasScene || _loading;
       _sceneDirty = true;
     }
     if (widget.active) {
@@ -151,6 +219,7 @@ class ThreeDViewState extends State<ThreeDView>
     } else {
       _held.clear();
       _ticker.stop();
+      _flight.stop();
       _focus.unfocus();
     }
   }
@@ -160,6 +229,7 @@ class ThreeDViewState extends State<ThreeDView>
     _generation++;
     _presenter.setMethodCallHandler(null);
     _ticker.dispose();
+    _flight.dispose();
     _focus.dispose();
     if (session != null)
       _presenter
@@ -202,6 +272,9 @@ class ThreeDViewState extends State<ThreeDView>
     if (session == null || _loading || !widget.active) return;
     final generation = _generation, handle = widget.handle, surface = session!;
     final poseOnly = _poseOnly && _hasScene;
+    final started = sceneClock.elapsedMicroseconds;
+    final poseRevision = widget.poseRevision;
+    var installed = false;
     _poseOnly = false;
     _loading = true;
     _sceneDirty = false;
@@ -226,6 +299,7 @@ class ThreeDViewState extends State<ThreeDView>
               'generation': ++_loadNumber,
               'levelIds': widget.levelIds,
               'ghostedIds': widget.ghostedIds,
+              'selectedIds': widget.selectedIds,
               'poseOnly': poseOnly,
               'sceneToken': _sceneToken,
             }))!;
@@ -235,6 +309,7 @@ class ThreeDViewState extends State<ThreeDView>
                   'kind': 'scene',
                   'levelIds': widget.levelIds,
                   'ghostedIds': widget.ghostedIds,
+                  'selectedIds': widget.selectedIds,
                   'poseOnly': poseOnly,
                   'sceneToken': _sceneToken,
                 }))
@@ -250,18 +325,27 @@ class ThreeDViewState extends State<ThreeDView>
           .cast<num>()
           .map((v) => v.toDouble())
           .toList();
-      camera.rebase(
-        (_origin[0] - origin[0]) / 1000,
-        -(_origin[1] - origin[1]) / 1000,
-      );
+      final shiftX = (_origin[0] - origin[0]) / 1000;
+      final shiftZ = -(_origin[1] - origin[1]) / 1000;
+      camera.rebase(shiftX, shiftZ);
+      // An animated framing continues in the new origin's coordinates.
+      for (final point in [_flightFrom, _flightTo]) {
+        if (point.length == 3) {
+          point[0] += shiftX;
+          point[2] += shiftZ;
+        }
+      }
       _origin = origin;
       _center = (scene['center'] as List)
           .cast<num>()
           .map((v) => v.toDouble())
           .toList();
       _radius = (scene['radius'] as num).toDouble();
+      // Zoom limits, clipping and framing follow the scene as it grows.
+      camera.radius = math.max(1, _radius);
       if (_presenterLoadsScene) {
         _finishScene(scene);
+        installed = true;
         return;
       }
       final meshes = scene['instanceOnly'] == true
@@ -335,6 +419,7 @@ class ThreeDViewState extends State<ThreeDView>
       });
       if (!current()) return;
       _finishScene(scene);
+      installed = true;
     } catch (e) {
       if (current()) {
         if (poseOnly) {
@@ -348,6 +433,15 @@ class ThreeDViewState extends State<ThreeDView>
         }
       }
     } finally {
+      loadSamples?.add(
+        SceneLoadSample(
+          poseOnly,
+          started,
+          sceneClock.elapsedMicroseconds,
+          installed,
+          poseRevision,
+        ),
+      );
       _loading = false;
       if (mounted) {
         setState(() {});
@@ -359,6 +453,7 @@ class ThreeDViewState extends State<ThreeDView>
   void _finishScene(Map<String, Object?> scene) {
     _hasScene = true;
     _sceneToken = (scene['sceneToken'] as num?)?.toInt();
+    _poseVersion = (scene['poseVersion'] as num?)?.toInt();
     if (_fitNext) {
       camera.fit(_center, _radius);
       _fitNext = false;
@@ -366,6 +461,17 @@ class ThreeDViewState extends State<ThreeDView>
     setState(
       () => _diagnostics = (scene['diagnostics'] as List).cast<String>(),
     );
+    _sendCamera();
+  }
+
+  /// Zooms toward the scene point under logical pixel [at].
+  void _zoomAt(Offset at, double factor) {
+    final ray = camera.ray(at.dx, at.dy, _size.width, _size.height);
+    if (ray == null) {
+      camera.zoom(factor);
+    } else {
+      camera.zoomToward(factor, ray.$2);
+    }
     _sendCamera();
   }
 
@@ -438,6 +544,127 @@ class ThreeDViewState extends State<ThreeDView>
       );
     }
     _sendCamera();
+  }
+
+  /// A synchronous view query against the presented scene, or null when it
+  /// is stale, refused, or no scene is installed yet.
+  Map<String, Object?>? _sceneQuery(Map<String, Object?> request) {
+    final token = _sceneToken, poseVersion = _poseVersion;
+    if (!_hasScene || token == null || poseVersion == null) return null;
+    final reply = widget.core.assets(
+      widget.handle,
+      jsonEncode({
+        ...request,
+        'levelIds': widget.levelIds,
+        'ghostedIds': widget.ghostedIds,
+        'sceneToken': token,
+        'poseVersion': poseVersion,
+      }),
+    );
+    if (!reply.succeeded) return null;
+    final result = jsonDecode(reply.text!) as Map<String, Object?>;
+    return result['stale'] == true ? null : result;
+  }
+
+  /// The pick answer under logical pixel [at]: `{hit: …}` with a null hit
+  /// for empty space, or null when no current scene could answer (stale,
+  /// loading or refused), which callers must not treat as empty space.
+  Map<String, Object?>? pickAt(Offset at) {
+    final ray = camera.ray(at.dx, at.dy, _size.width, _size.height);
+    if (ray == null) return null;
+    return _sceneQuery({
+      'kind': 'pick3d',
+      'originM': ray.$1,
+      'direction': ray.$2,
+      'rangeM': camera.visibleRange(ray.$2),
+    });
+  }
+
+  void _click(Offset at, Duration now) {
+    final open =
+        _lastClickTime != null &&
+        _lastClickAt != null &&
+        now - _lastClickTime! < const Duration(milliseconds: 400) &&
+        (at - _lastClickAt!).distance < 6;
+    _lastClickTime = open ? null : now;
+    _lastClickAt = at;
+    final onPick = widget.onPick;
+    if (onPick == null) return;
+    final answer = pickAt(at);
+    // The scene on screen is being replaced: neither select nor clear.
+    if (answer == null) return;
+    final hit = answer['hit'] as Map<String, Object?>?;
+    final point = (hit?['pointM'] as List?)?.cast<num>();
+    onPick(
+      ScenePick(
+        entityId: hit?['entityId'] as String?,
+        levelId: hit?['levelId'] as String?,
+        planMm: point == null
+            ? null
+            : Offset(
+                _origin[0] + point[0] * 1000,
+                _origin[1] - point[2] * 1000,
+              ),
+        position: at,
+        open: open,
+      ),
+    );
+  }
+
+  /// Frames the selection, or the whole scene when nothing selected is drawn.
+  void frameSelection() {
+    final bounds = widget.selectedIds.isEmpty
+        ? null
+        : _sceneQuery({
+                'kind': 'bounds3d',
+                'entityIds': widget.selectedIds,
+              })?['bounds']
+              as Map<String, Object?>?;
+    if (bounds == null) {
+      _flyTo(_center, _radius);
+      return;
+    }
+    final low = (bounds['lowM'] as List).cast<num>();
+    final high = (bounds['highM'] as List).cast<num>();
+    final half = [for (var i = 0; i < 3; i++) (high[i] - low[i]) / 2];
+    _flyTo([
+      for (var i = 0; i < 3; i++) (low[i] + high[i]) / 2,
+    ], math.sqrt(half.fold<double>(0, (s, v) => s + v * v)));
+  }
+
+  /// Animates the orbit camera to frame a sphere over 250 ms.
+  void _flyTo(List<double> center, double extent) {
+    camera.walking = false;
+    _flightFrom = List.of(camera.target);
+    _flightFromDistance = camera.distance;
+    _flightTo = List.of(center);
+    camera.radius = math.max(camera.radius, extent);
+    _flightToDistance = camera.framingDistance(
+      extent,
+      _size.width / math.max(1, _size.height),
+    );
+    _flightStart = null;
+    if (!_flight.isActive) _flight.start();
+    setState(() {});
+  }
+
+  void _fly(Duration elapsed) {
+    _flightStart ??= elapsed;
+    final t = math.min(1.0, (elapsed - _flightStart!).inMicroseconds / 250000);
+    final k = 1 - math.pow(1 - t, 3).toDouble();
+    camera.target = [
+      for (var i = 0; i < 3; i++)
+        _flightFrom[i] + (_flightTo[i] - _flightFrom[i]) * k,
+    ];
+    camera.distance =
+        _flightFromDistance + (_flightToDistance - _flightFromDistance) * k;
+    _sendCamera();
+    if (t >= 1) _flight.stop();
+  }
+
+  /// Any direct navigation takes over from an animated framing.
+  void _interrupt() {
+    if (_flight.isActive) _flight.stop();
   }
 
   Future<Map<String, Object?>> stats() async => (await _presenter
@@ -521,6 +748,7 @@ class ThreeDViewState extends State<ThreeDView>
                   label: const Text('Orbit'),
                   selected: !camera.walking,
                   onSelected: (_) {
+                    _interrupt();
                     setState(() => camera.fit(_center, _radius));
                     _sendCamera();
                     _focus.requestFocus();
@@ -532,6 +760,7 @@ class ThreeDViewState extends State<ThreeDView>
                   label: const Text('Walk through'),
                   selected: camera.walking,
                   onSelected: (_) {
+                    _interrupt();
                     setState(
                       () => camera.enterWalk(widget.floorElevationMm / 1000),
                     );
@@ -543,6 +772,7 @@ class ThreeDViewState extends State<ThreeDView>
                   key: const ValueKey('3d-fit'),
                   tooltip: 'Fit 3D scene',
                   onPressed: () {
+                    _interrupt();
                     setState(() => camera.fit(_center, _radius));
                     _sendCamera();
                     _focus.requestFocus();
@@ -614,8 +844,12 @@ class ThreeDViewState extends State<ThreeDView>
                             ?.call();
                         return KeyEventResult.handled;
                       }
-                      if (key == LogicalKeyboardKey.keyF ||
-                          key == LogicalKeyboardKey.home) {
+                      if (key == LogicalKeyboardKey.keyF) {
+                        frameSelection();
+                        return KeyEventResult.handled;
+                      }
+                      if (key == LogicalKeyboardKey.home) {
+                        _interrupt();
                         camera.fit(_center, _radius);
                         _sendCamera();
                         return KeyEventResult.handled;
@@ -633,6 +867,7 @@ class ThreeDViewState extends State<ThreeDView>
                         LogicalKeyboardKey.arrowRight,
                       ];
                       if (keys.contains(key)) {
+                        _interrupt();
                         _held.add(key);
                         if (!_ticker.isActive) {
                           _lastTick = null;
@@ -645,6 +880,16 @@ class ThreeDViewState extends State<ThreeDView>
                     child: Listener(
                       onPointerDown: (e) {
                         _focus.requestFocus();
+                        _interrupt();
+                        _down.add(e.pointer);
+                        _pressAt = e.localPosition;
+                        // A second finger makes this a gesture, never a click.
+                        _pressMoved = _down.length > 1;
+                        _pivot = null;
+                        final primary =
+                            e.kind != PointerDeviceKind.mouse ||
+                            e.buttons == kPrimaryMouseButton;
+                        _pressPrimary = primary;
                         if (e.kind == PointerDeviceKind.mouse) {
                           _mouseDragging = true;
                           _pan =
@@ -652,34 +897,69 @@ class ThreeDViewState extends State<ThreeDView>
                               e.buttons == kSecondaryMouseButton ||
                               HardwareKeyboard.instance.isShiftPressed;
                         }
+                        if (primary && !_pan && !camera.walking) {
+                          _pivot =
+                              ((pickAt(e.localPosition)?['hit']
+                                          as Map?)?['pointM']
+                                      as List?)
+                                  ?.cast<num>()
+                                  .map((v) => v.toDouble())
+                                  .toList();
+                        }
                       },
                       onPointerMove: (e) {
+                        final press = _pressAt;
+                        if (press != null &&
+                            (e.localPosition - press).distance >
+                                (e.kind == PointerDeviceKind.mouse ? 4 : 10))
+                          _pressMoved = true;
                         if (!_mouseDragging ||
                             e.kind != PointerDeviceKind.mouse)
                           return;
                         if (_pan)
                           camera.pan(e.delta.dx, e.delta.dy);
+                        else if (_pivot case final pivot?)
+                          camera.orbitAround(pivot, e.delta.dx, e.delta.dy);
                         else
                           camera.orbit(e.delta.dx, e.delta.dy);
                         _sendCamera();
                       },
-                      onPointerUp: (_) => _mouseDragging = false,
-                      onPointerCancel: (_) => _mouseDragging = false,
+                      onPointerUp: (e) {
+                        _down.remove(e.pointer);
+                        // Shift-drag pans, but a Shift-click still selects.
+                        final click =
+                            _pressAt != null && !_pressMoved && _pressPrimary;
+                        _mouseDragging = false;
+                        _pressAt = null;
+                        _pivot = null;
+                        if (click) _click(e.localPosition, e.timeStamp);
+                      },
+                      onPointerCancel: (e) {
+                        _down.remove(e.pointer);
+                        _mouseDragging = false;
+                        _pressAt = null;
+                        _pivot = null;
+                      },
                       onPointerSignal: (e) {
                         if (e is PointerScrollEvent) {
                           GestureBinding.instance.pointerSignalResolver
                               .register(e, (_) {
-                                camera.zoom(math.exp(e.scrollDelta.dy * 0.002));
-                                _sendCamera();
+                                _interrupt();
+                                _zoomAt(
+                                  e.localPosition,
+                                  math.exp(e.scrollDelta.dy * 0.002),
+                                );
                               });
                         }
                       },
-                      onPointerPanZoomStart: (_) => _lastScale = 1,
+                      onPointerPanZoomStart: (_) {
+                        _interrupt();
+                        _lastScale = 1;
+                      },
                       onPointerPanZoomUpdate: (e) {
                         camera.pan(e.panDelta.dx, e.panDelta.dy);
-                        camera.zoom(_lastScale / e.scale);
+                        _zoomAt(e.localPosition, _lastScale / e.scale);
                         _lastScale = e.scale;
-                        _sendCamera();
                       },
                       child: GestureDetector(
                         onScaleStart: (_) => _lastScale = 1,
@@ -691,6 +971,12 @@ class ThreeDViewState extends State<ThreeDView>
                               e.focalPointDelta.dy,
                             );
                             camera.zoom(_lastScale / e.scale);
+                          } else if (_pivot case final pivot?) {
+                            camera.orbitAround(
+                              pivot,
+                              e.focalPointDelta.dx,
+                              e.focalPointDelta.dy,
+                            );
                           } else {
                             camera.orbit(
                               e.focalPointDelta.dx,
@@ -731,7 +1017,7 @@ class ThreeDViewState extends State<ThreeDView>
                                 child: Text(
                                   camera.walking
                                       ? 'Drag to look · WASD to move · Q/E height · Shift faster'
-                                      : 'Drag to orbit · right/Shift-drag to pan · scroll to zoom',
+                                      : 'Click to select · drag to orbit · right/Shift-drag to pan · scroll to zoom · F to frame',
                                   style: const TextStyle(fontSize: 12),
                                 ),
                               ),

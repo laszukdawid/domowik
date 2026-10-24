@@ -12,6 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub mod asset_pose;
+pub mod pick;
+
+/// `f32`s per mesh vertex: position xyz, normal xyz, rgba.
+pub const VERTEX_FLOATS: usize = 10;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +25,9 @@ pub struct Scene {
     pub instance_only: bool,
     /// Presenter baseline identity, assigned by the bridge (zero in pure builds).
     pub scene_token: u64,
+    /// The bridge's pose-overlay version these node transforms reflect (zero in
+    /// pure builds). View queries name it so they match what was drawn.
+    pub pose_version: u64,
     pub origin_mm: [f64; 2],
     pub center: [f32; 3],
     pub radius: f32,
@@ -75,7 +82,8 @@ fn matrix(position: [f64; 3], scale: [f64; 3], yaw: f64) -> ([f32; 16], [f32; 9]
     (m.map(|v| v as f32), n.map(|v| v as f32))
 }
 
-fn cube() -> Vec<f32> {
+/// The unit `builtin:cube` mesh: X/Z in [-0.5, 0.5], Y in [0, 1].
+pub fn cube() -> Vec<f32> {
     let p = [
         [-0.5, 0., -0.5],
         [0.5, 0., -0.5],
@@ -384,6 +392,7 @@ pub fn build_with_floors(
         scene: Scene {
             instance_only: false,
             scene_token: 0,
+            pose_version: 0,
             origin_mm,
             center: [0.; 3],
             radius: 5.,

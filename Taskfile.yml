@@ -39,6 +39,21 @@ tasks:
       - ./scripts/build-web.sh
       - ./scripts/web-probe.sh
 
+  benchmark:
+    desc: Benchmark the release desktop editor and write a CONFIDENTIAL report to private/benchmarks/
+    cmds:
+      - ./scripts/benchmark.sh {{.CLI_ARGS}}
+
+  benchmark:summary:
+    desc: Print a benchmark run's health checks without timings or machine details, safe to post publicly
+    cmds:
+      - python3 scripts/benchmark_report.py public-summary {{.CLI_ARGS}}
+
+  benchmark:compare:
+    desc: 'Compare two benchmark runs, e.g. task benchmark:compare -- private/benchmarks/A private/benchmarks/B'
+    cmds:
+      - python3 scripts/benchmark_report.py compare {{.CLI_ARGS}}
+
   test:
     desc: Run all Rust tests
     cmds:

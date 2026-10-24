@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 // The browser host: no environment, no process, no filesystem. Probes that
 // need them are native-only and never start here.
 
@@ -30,3 +32,16 @@ Future<(String, String, Future<void> Function())> hostProbeModel(
 
 /// A page has no bundle directory.
 String? hostBundleRoot() => null;
+
+/// The benchmark is native-only; browsers have no paths.
+Future<Uint8List> hostReadBytes(String path) =>
+    throw UnsupportedError('the benchmark runs only on native hosts');
+
+Future<void> hostWritePrivate(String path, String text) =>
+    throw UnsupportedError('the benchmark runs only on native hosts');
+
+(int, int) hostMemory() => (0, 0);
+
+(String, String, int) hostSystem() => ('web', '', 0);
+
+String hostDartVersion() => '';

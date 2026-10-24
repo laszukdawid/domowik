@@ -64,22 +64,22 @@
     },
     {
       "name": "dart-sdk-linux-arm64",
-      "version": "3.11.4 stable; SHA-256 c35ba6f0de1f5ebbf23506612bffc347c7ba94c3a4c75110cab1157892166d3c",
-      "sourceUrl": "https://storage.googleapis.com/dart-archive/channels/stable/release/3.11.4/sdk/dartsdk-linux-arm64-release.zip",
+      "version": "3.13.5 stable; SHA-256 19a731647c3ed55058ee46dde00330150e6a8729bb6121b4a31e86084c8a3e6d",
+      "sourceUrl": "https://storage.googleapis.com/dart-archive/channels/stable/release/3.13.5/sdk/dartsdk-linux-arm64-release.zip",
       "license": "BSD-3-Clause",
       "status": "dev-only",
       "usedIn": "frontend/docker/Dockerfile.linux-abi: runs dart_harness/bin/harness.dart against the Linux .so, so dart:ffi symbol resolution is executed on Linux rather than inferred from the macOS run.",
-      "provenance": "Official Dart archive, pinned by version AND by the publisher's own SHA-256, which the Dockerfile verifies with `sha256sum -c` BEFORE unpacking. Version 3.11.4 is not a free choice: it is the Dart that Flutter 3.41.6 carries, so the harness runs on the same VM the application does. No Dart SDK component is distributed with Domowik.",
+      "provenance": "Official Dart archive, pinned by version AND by the publisher's own SHA-256, which the Dockerfile verifies with `sha256sum -c` BEFORE unpacking. Version 3.13.5 is not a free choice: it is the Dart that Flutter 3.47.7 carries, so the harness runs on the same VM the application does. No Dart SDK component is distributed with Domowik.",
       "added": "2026-09-12"
     },
     {
       "name": "flutter-sdk-linux-x64 (issue 0024 Rust spike)",
-      "version": "3.41.6 stable; SHA-256 503b3e6b7d352fca5d21b6474eca95ad544d8fc3b053782eab63a360c7fc7569; bundled Dart 3.11.4",
-      "sourceUrl": "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.41.6-stable.tar.xz",
+      "version": "3.47.7 stable; SHA-256 af7455f540df951184c7953fbe3cf884766e7541dacf8571f9f582db03dd6230; bundled Dart 3.13.5",
+      "sourceUrl": "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.7-stable.tar.xz",
       "license": "BSD-3-Clause (framework and Dart SDK); prebuilt engine artifacts carry their own aggregated terms and are not redistributed",
       "status": "dev-only",
       "usedIn": "frontend/docker/Dockerfile.linux-app: builds and runs the Flutter LINUX application so bundle packaging is executed on Linux, not assumed from the macOS bundle.",
-      "provenance": "Official Flutter release archive, pinned by version and by the SHA-256 published in releases_linux.json, verified before unpacking. 3.41.6 matches the macOS host SDK exactly so the two platform runs are the same framework. NOTE FOR THE RECORD, and it constrains the evidence: Flutter publishes NO stable Linux arm64 archive — releases_linux.json lists dart_sdk_arch x64 only — so this slice runs as linux/amd64 under emulation on an Apple Silicon host. Functional and packaging results are valid; timings from it are not and are not quoted as measurements.",
+      "provenance": "Official Flutter release archive, pinned by version and by the SHA-256 published in releases_linux.json, verified before unpacking. 3.47.7 matches the macOS host SDK exactly so the two platform runs are the same framework. NOTE FOR THE RECORD, and it constrains the evidence: Flutter publishes NO stable Linux arm64 archive — releases_linux.json lists dart_sdk_arch x64 only — so this slice runs as linux/amd64 under emulation on an Apple Silicon host. Functional and packaging results are valid; timings from it are not and are not quoted as measurements.",
       "added": "2026-09-12"
     },
     {

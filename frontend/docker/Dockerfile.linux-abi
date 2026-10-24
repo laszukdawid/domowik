@@ -49,16 +49,16 @@ WORKDIR /work
 # symbols the way Flutter will. That is a separate question and it has its own
 # harness, so the Linux run needs a Dart SDK.
 #
-# Version 3.11.4 is not a free choice: it is exactly the Dart that Flutter
-# 3.41.6 carries, so the harness runs against the same VM the application does
+# Version 3.13.5 is not a free choice: it is exactly the Dart that Flutter
+# 3.47.7 carries, so the harness runs against the same VM the application does
 # rather than a newer one that happens to be current.
 #
 # Pinned by SHA-256 from the publisher's own `.sha256sum`, and VERIFIED before
 # the archive is unpacked. An unverified download inside an image whose purpose
 # is to be evidence would undermine the evidence.
-ARG DART_VERSION=3.11.4
+ARG DART_VERSION=3.13.5
 ARG DART_ARCH=arm64
-ARG DART_SHA256=c35ba6f0de1f5ebbf23506612bffc347c7ba94c3a4c75110cab1157892166d3c
+ARG DART_SHA256=19a731647c3ed55058ee46dde00330150e6a8729bb6121b4a31e86084c8a3e6d
 RUN apt-get update \
  && apt-get install --no-install-recommends --yes \
       ca-certificates=20250419~deb12u1 \
@@ -71,4 +71,4 @@ RUN apt-get update \
  && unzip -q /tmp/dartsdk.zip -d /usr/local \
  && rm /tmp/dartsdk.zip
 ENV PATH="/usr/local/dart-sdk/bin:${PATH}"
-RUN test "$(dart --version 2>&1 | cut -d' ' -f4)" = "3.11.4"
+RUN test "$(dart --version 2>&1 | cut -d' ' -f4)" = "3.13.5"
