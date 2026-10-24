@@ -507,7 +507,7 @@ class _AppBenchmark {
             final t0 = sceneClock.elapsedMicroseconds;
             page._activateLevel(id);
             activate.add((sceneClock.elapsedMicroseconds - t0) / 1000);
-            _to3d(to3d, await _loadAfter(t0, timeoutMs: 5000), t0);
+            _to3d(to3d, await _loadAfter(t0), t0);
           }
         }
         _latencies(record, 'activateMs', activate);
@@ -640,7 +640,7 @@ class _AppBenchmark {
       if (i == 10) record['dragMode'] = page._mode.name;
     }
     // The last move's preview may still be in flight: wait for it.
-    if (moves.isNotEmpty) await _loadAfter(moves.last.$1, timeoutMs: 5000);
+    if (moves.isNotEmpty) await _loadAfter(moves.last.$1);
     final firstRevision = moves.isEmpty ? null : moves.first.$2;
     final previews = [
       for (final s in view.loadSamples!)
