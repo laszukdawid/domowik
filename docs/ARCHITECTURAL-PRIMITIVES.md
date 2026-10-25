@@ -76,6 +76,10 @@ apply. Undo/redo, context changes and disposal must not replay delayed edits.
 Acknowledging a live edit preserves focus and the caret. Dimensions use the
 editor's display units without changing the stored millimetre contract. No new persistence fields or
 schema label are needed; these are existing connection endpoint offsets.
+Elevation acknowledgements reconcile only binary64 datum-round-trip noise
+(less than `10^-8` mm); unchanged accepted text retains Rust's precise value
+without generating another edit. History and external edits still reset local
+pending work.
 
 ### Validation and consequences
 
@@ -140,6 +144,11 @@ cut topology; no new approximate orientation predicate is introduced. Output
 order follows document order, with generated treads in ascending step order.
 Inputs are validated before edits; geometry functions return errors for invalid
 references or parameters and impose the fixed riser budget before allocation.
+Drawing an already-invalid file is best-effort: 2D/3D views and SVG/PNG exports
+omit only stair assemblies that cannot be derived, report their entity IDs and
+reasons, and retain the valid drawing. Strict derivation and edit admission do
+not become permissive. A missing connection is reported even when its level
+cannot be determined.
 2D clients receive Rust-derived outlines, tread/arrow segments and direction
 labels. They do not reconstruct stair geometry in Dart. 3D construction derives
 from the same bodies and cuts; presenter resource ownership is unchanged.

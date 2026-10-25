@@ -67,6 +67,17 @@ pub fn render_level_reporting(
     level_id: Uuid,
     assets: &BTreeMap<String, Vec<u8>>,
 ) -> (String, Vec<LabelWarning>) {
+    let (svg, labels, _) = render_level_diagnostics(doc, level_id, assets);
+    (svg, labels)
+}
+
+/// Best-effort SVG with both label warnings and omitted-assembly diagnostics.
+/// Interactive/CLI callers should report the latter, not silently discard them.
+pub fn render_level_diagnostics(
+    doc: &Document,
+    level_id: Uuid,
+    assets: &BTreeMap<String, Vec<u8>>,
+) -> (String, Vec<LabelWarning>, Vec<String>) {
     let walls: Vec<_> = doc.walls_on_level(level_id).collect();
 
     let (mut min, mut max) = doc
@@ -221,7 +232,9 @@ pub fn render_level_reporting(
     }
 
     // Architectural bodies and stair graphics share Rust-derived geometry.
-    if let Ok(construction) = domowik_geometry::architecture::plan(doc, level_id) {
+    let (construction, construction_diagnostics) =
+        domowik_geometry::architecture::plan_reporting(doc, level_id);
+    {
         let font = label::Annotator::new().ok();
         for item in construction {
             let p = Polygon {
@@ -339,7 +352,7 @@ pub fn render_level_reporting(
     }
 
     svg.push_str("</g>\n</svg>\n");
-    (svg, labels.warnings)
+    (svg, labels.warnings, construction_diagnostics)
 }
 
 /// Draws a door leaf and its swing arc from the R4.0.4 fields.

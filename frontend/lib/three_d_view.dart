@@ -14,6 +14,7 @@ import 'core/domowik_core.dart';
 import 'editor_workflows.dart';
 import 'platform/scene_presenter_host.dart';
 import 'scene_presenter.dart';
+import 'scene_packet.dart';
 
 /// Monotonic clock for scene-load instrumentation; benchmarks share it.
 final Stopwatch sceneClock = Stopwatch()..start();
@@ -329,22 +330,10 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
         installed = true;
         return;
       }
-      final meshes = scene['instanceOnly'] == true
-          ? <String, Object?>{}
-          : scene['meshes'] as Map<String, Object?>;
       // Mutable geometry must not replace resident meshes individually: old
       // nodes/camera could render with only some meshes rebased to a new origin.
-      final geometry = {
-        for (final entry in meshes.entries)
-          entry.key: {
-            'vertices': Float32List.fromList(
-              (entry.value as List)
-                  .cast<num>()
-                  .map((v) => v.toDouble())
-                  .toList(),
-            ),
-          },
-      };
+      final packet = await prepareScenePacket(scene, current: current);
+      if (packet == null) return;
       for (final digest in (scene['requiredModels'] as List).cast<String>()) {
         if (_uploadedModels.contains(digest)) continue;
         if (!current()) return;
@@ -381,20 +370,6 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
         _uploadedModels.add(digest);
       }
       if (!current()) return;
-      final nodes = [
-        for (final item in scene['nodes'] as List)
-          {
-            'mesh': item['mesh'],
-            'transparent': item['transparent'],
-            for (final key in ['matrix', 'normalMatrix', 'color'])
-              key: Float32List.fromList(
-                (item[key] as List)
-                    .cast<num>()
-                    .map((v) => v.toDouble())
-                    .toList(),
-              ),
-          },
-      ];
       final nextCamera = Camera3D.copy(camera);
       _rebaseCamera(nextCamera, scene);
       nextCamera.radius = math.max(1, (scene['radius'] as num).toDouble());
@@ -413,8 +388,8 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
         await _presenter.invokeMethod<void>('scene', {
           ..._cameraPacket(nextCamera),
           'session': surface,
-          'meshes': geometry,
-          'nodes': nodes,
+          'meshes': packet.meshes,
+          'nodes': packet.nodes,
         });
         // Even if a newer revision arrived during commit, this is the scene
         // now on screen. Adopt its origin before navigation or the next load.

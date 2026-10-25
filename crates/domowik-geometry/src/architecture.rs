@@ -160,7 +160,21 @@ pub fn stair(doc: &Document, s: &Staircase) -> Result<StairGeometry, String> {
 /// Owned semantic 2D geometry for either endpoint level. Clients paint the
 /// returned segments; they must not regenerate authoritative stair geometry.
 pub fn plan(doc: &Document, level: Uuid) -> Result<Vec<PlanConstruction>, String> {
+    let (items, diagnostics) = plan_reporting(doc, level);
+    if diagnostics.is_empty() {
+        Ok(items)
+    } else {
+        Err(diagnostics.join("; "))
+    }
+}
+
+/// Best-effort drawing of an already-open document. Invalid stair assemblies
+/// are omitted individually and reported in document order, including dangling
+/// connections whose level cannot be determined. Valid geometry is unchanged.
+/// This does not relax the strict derivation or edit-validation contracts.
+pub fn plan_reporting(doc: &Document, level: Uuid) -> (Vec<PlanConstruction>, Vec<String>) {
     let mut out = Vec::new();
+    let mut diagnostics = Vec::new();
     for b in doc
         .construction_bodies
         .iter()
@@ -189,13 +203,20 @@ pub fn plan(doc: &Document, level: Uuid) -> Result<Vec<PlanConstruction>, String
         }
     }
     for s in &doc.staircases {
-        let c = doc
-            .connection(s.connection_id)
-            .ok_or("missing connection")?;
+        let Some(c) = doc.connection(s.connection_id) else {
+            diagnostics.push(stair_diagnostic(s, "missing stair connection"));
+            continue;
+        };
         if c.from.level_id != level && c.to.level_id != level {
             continue;
         }
-        let g = stair(doc, s)?;
+        let g = match stair(doc, s) {
+            Ok(g) => g,
+            Err(error) => {
+                diagnostics.push(stair_diagnostic(s, &error));
+                continue;
+            }
+        };
         let mut segments = Vec::new();
         for b in g.bodies.iter().filter(|b| b.role == BodyRole::Platform) {
             let corners = b.footprint.corners();
@@ -249,5 +270,10 @@ pub fn plan(doc: &Document, level: Uuid) -> Result<Vec<PlanConstruction>, String
             }),
         });
     }
-    Ok(out)
+    (out, diagnostics)
+}
+
+/// Stable, entity-addressable rendering diagnostic; no untrusted name markup.
+pub fn stair_diagnostic(stair: &Staircase, error: &str) -> String {
+    format!("Skipped staircase {}: {error}", stair.id)
 }

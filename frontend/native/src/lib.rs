@@ -178,6 +178,11 @@ pub mod status {
 /// `domowik_web_free`.
 /// **17** adds `setWalls`: one atomic height/thickness edit of same-level walls.
 /// Older libraries reject the new gesture; version checking catches that at load.
+/// **18** adds architectural bodies, hosted cuts, level connections and stairs,
+/// their edit gestures and derived plan graphics (experimental schema 0.2).
+/// **19** adds descending stair preview/drawing and live stair properties.
+/// Derived plan drawing skips invalid stairs with `constructionDiagnostics`;
+/// strict edit admission remains unchanged.
 const ABI_VERSION: i32 = 19;
 
 /// An owned byte buffer handed to the caller.
@@ -2769,10 +2774,8 @@ pub unsafe extern "C" fn domowik_plan_derived(
             domowik_format::OpeningHost::LevelFloor(level),
             &projection.faces,
         );
-        let construction = match domowik_geometry::architecture::plan(document, level) {
-            Ok(v) => v,
-            Err(_) => return status::REJECTED,
-        };
+        let (construction, construction_diagnostics) =
+            domowik_geometry::architecture::plan_reporting(document, level);
         let (occupied, rooms) = (projection.occupied, projection.faces);
         plan.levels.get_mut(&level).expect("synced above").apertures = cache;
         plan.aperture_builds = plan.aperture_builds.saturating_add(built);
@@ -2800,6 +2803,7 @@ pub unsafe extern "C" fn domowik_plan_derived(
             "levelId": level.to_string(),
             "floorSurfaces":floor_surfaces.iter().map(to_json).collect::<Vec<_>>(),
             "construction":construction,
+            "constructionDiagnostics":construction_diagnostics,
             "openings": apertures,
             "occupied": occupied.iter().map(to_json).collect::<Vec<_>>(),
             // What to DRAW: the occupied region with opening cuts (R4.2.2).
@@ -3898,6 +3902,55 @@ mod tests {
         let mut handle = 0u64;
         assert_eq!(unsafe { domowik_plan_create(&mut handle) }, status::OK);
         handle
+    }
+
+    #[test]
+    fn invalid_snapshot_stairs_do_not_blank_derived_walls_rooms_or_valid_stairs() {
+        let (h, lower) = plan_with_a_room();
+        let mut doc: Document = serde_json::from_value(snapshot_json(h)).unwrap();
+        assert_eq!(domowik_plan_close(h), status::OK);
+        let mut upper = Level::new("Upper");
+        upper.elevation_mm = 2600.0;
+        let high = upper.id;
+        doc.levels.push(upper);
+        let connection: domowik_format::LevelConnection =
+            serde_json::from_value(serde_json::json!({
+                "id":Uuid::now_v7(), "name":"Synthetic connection",
+                "from":{"levelId":lower,"positionMm":[0,1000],"offsetMm":0},
+                "to":{"levelId":high,"positionMm":[3780,1000],"offsetMm":0}
+            }))
+            .unwrap();
+        let valid: domowik_format::Staircase = serde_json::from_value(serde_json::json!({
+            "id":Uuid::now_v7(),"name":"Valid stair","connectionId":connection.id,
+            "widthMm":924,"risers":15,"guardHeightMm":1000,"openingIds":[]
+        }))
+        .unwrap();
+        let mut invalid = valid.clone();
+        invalid.id = Uuid::now_v7();
+        invalid.risers = 1;
+        doc.level_connections.push(connection);
+        doc.staircases = vec![invalid.clone(), valid.clone()];
+        let session =
+            Session::open_snapshot(Uuid::now_v7(), doc, &Default::default(), &[], vec![]).unwrap();
+        let mut reopened = 0;
+        assert_eq!(
+            unsafe { register_session(session, &mut reopened) },
+            status::OK
+        );
+        let level = std::ffi::CString::new(lower.to_string()).unwrap();
+        let (code, bytes) =
+            call_returning(|out| unsafe { domowik_plan_derived(reopened, level.as_ptr(), out) });
+        assert_eq!(code, status::OK);
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(!result["occupied"].as_array().unwrap().is_empty());
+        assert!(!result["rooms"].as_array().unwrap().is_empty());
+        assert_eq!(result["construction"].as_array().unwrap().len(), 1);
+        assert_eq!(result["construction"][0]["id"], valid.id.to_string());
+        assert!(result["constructionDiagnostics"][0]
+            .as_str()
+            .unwrap()
+            .contains(&invalid.id.to_string()));
+        assert_eq!(domowik_plan_close(reopened), status::OK);
     }
 
     #[test]

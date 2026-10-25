@@ -18,6 +18,7 @@ class _StairCore extends FfiCore {
   _StairCore(super.bridge);
   int handle = 0;
   int stairEdits = 0, derivedReads = 0;
+  String? renderDiagnostic;
   @override
   CoreReply edit(int handle, String request) {
     if ((jsonDecode(request) as Map)['kind'] == 'setStaircase') stairEdits++;
@@ -27,7 +28,11 @@ class _StairCore extends FfiCore {
   @override
   CoreReply derived(int handle, String levelId) {
     derivedReads++;
-    return super.derived(handle, levelId);
+    final reply = super.derived(handle, levelId);
+    if (!reply.succeeded || renderDiagnostic == null) return reply;
+    final payload = jsonDecode(reply.text!) as Map<String, Object?>;
+    payload['constructionDiagnostics'] = [renderDiagnostic];
+    return CoreReply(reply.code, text: jsonEncode(payload));
   }
 
   @override
@@ -131,6 +136,29 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'omitted stair diagnostics stay visible beside the valid drawing',
+    (tester) async {
+      core.renderDiagnostic =
+          'Skipped staircase synthetic-invalid: invalid stair geometry';
+      await start(tester);
+      final banner = find.byKey(const ValueKey('level-warnings-banner'));
+      expect(banner, findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('level-warnings-summary')));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.text(core.renderDiagnostic!),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('level-warnings-close')));
+      await tester.pumpAndSettle();
+      expect(canvas(), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'rapid stair typing sends one command and preserves the focused editor',

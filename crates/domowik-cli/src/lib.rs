@@ -574,13 +574,15 @@ pub fn cmd_export_svg(path: &Path, out: &Path, level_name: Option<&str>) -> Resu
             .ok_or_else(|| CliError::Failure(format!("{} has no levels", path.display())))?,
     };
 
-    let (svg, label_warnings) = svg::render_level_reporting(doc, level_id, &pkg.assets);
+    let (svg, label_warnings, construction_diagnostics) =
+        svg::render_level_diagnostics(doc, level_id, &pkg.assets);
     std::fs::write(out, svg.as_bytes())
         .map_err(|e| CliError::Failure(format!("could not write {}: {e}", out.display())))?;
 
     let count = doc.walls_on_level(level_id).count();
     let mut msg = format!("Wrote {} ({count} wall(s)).", out.display());
     append_label_warnings(&mut msg, &label_warnings);
+    append_construction_diagnostics(&mut msg, &construction_diagnostics);
     Ok(msg)
 }
 
@@ -593,6 +595,12 @@ pub fn cmd_export_svg(path: &Path, out: &Path, level_name: Option<&str>) -> Resu
 fn append_label_warnings(msg: &mut String, warnings: &[label::LabelWarning]) {
     for warning in warnings {
         msg.push_str(&format!("\n  {warning}"));
+    }
+}
+
+fn append_construction_diagnostics(msg: &mut String, diagnostics: &[String]) {
+    for diagnostic in diagnostics {
+        msg.push_str(&format!("\n  {diagnostic}"));
     }
 }
 
@@ -1435,6 +1443,7 @@ pub fn cmd_export_png(
         ));
     }
     append_label_warnings(&mut msg, &raster.label_warnings);
+    append_construction_diagnostics(&mut msg, &raster.construction_diagnostics);
     Ok(msg)
 }
 

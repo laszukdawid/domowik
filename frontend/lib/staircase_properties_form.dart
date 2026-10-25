@@ -59,6 +59,7 @@ class _StaircasePropertiesFormState extends State<StaircasePropertiesForm> {
   late final _focus = {for (final key in _labels.keys) key: FocusNode()};
   final _observed = <String, TextEditingValue>{};
   final _rejected = <String>{};
+  final _acceptedText = <String, String>{};
   Timer? _timer;
   VoidCallback? _detach;
   bool _synchronizing = false, _cancelled = false, _awaitingEcho = false;
@@ -98,13 +99,14 @@ class _StaircasePropertiesFormState extends State<StaircasePropertiesForm> {
       _attach();
     }
     final source = _source;
-    final ownEcho = _awaitingEcho && mapEquals(source, _baseline);
+    final ownEcho = _awaitingEcho && _matchesAcknowledgement(source);
     if (widget.units != oldWidget.units ||
         widget.enabled != oldWidget.enabled ||
-        !mapEquals(source, _baseline) ||
+        (!mapEquals(source, _baseline) && !ownEcho) ||
         (widget.revision != oldWidget.revision && !ownEcho)) {
       _cancel();
       _baseline = source;
+      _acceptedText.clear();
       _rejected.clear();
       _synchronizing = true;
       for (final key in _labels.keys) {
@@ -118,8 +120,33 @@ class _StaircasePropertiesFormState extends State<StaircasePropertiesForm> {
         _observed[key] = controller.value;
       }
       _synchronizing = false;
+    } else if (ownEcho) {
+      // Adopt Rust's precise result without rewriting a focused controller or
+      // cancelling edits made since submission. Retain accepted text so the
+      // unchanged decimal input cannot submit the rounding difference again.
+      _baseline = source;
     }
     _awaitingEcho = false;
+  }
+
+  bool _matchesAcknowledgement(Map<String, Object?> source) {
+    for (final key in _labels.keys) {
+      final a = source[key], b = _baseline[key];
+      if (a == b) continue;
+      // Only elevations take the subtract-datum/add-datum round trip. Four
+      // binary64 epsilons at the format's 10^7 mm coordinate bound cover its
+      // arithmetic error (< 10^-8 mm), not a meaningful external edit.
+      const toleranceMm = 4 * 2.220446049250313e-16 * 10000000;
+      if (!key.endsWith('ElevationMm') ||
+          a is! num ||
+          b is! num ||
+          !a.isFinite ||
+          !b.isFinite ||
+          (a - b).abs() > toleranceMm) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Object? _parse(String key) {
@@ -129,6 +156,7 @@ class _StaircasePropertiesFormState extends State<StaircasePropertiesForm> {
       final value = int.tryParse(text.trim());
       return value != null && value >= 2 && value <= 256 ? value : null;
     }
+    if (_acceptedText[key] == text) return _baseline[key];
     final value = widget.units.parseLength(
       text,
       originalMm: (_baseline[key] as num).toDouble(),
@@ -176,6 +204,7 @@ class _StaircasePropertiesFormState extends State<StaircasePropertiesForm> {
     _timer?.cancel();
     _timer = null;
     _cancelled = true;
+    _awaitingEcho = false;
   }
 
   void _flush() {
@@ -192,6 +221,9 @@ class _StaircasePropertiesFormState extends State<StaircasePropertiesForm> {
     if (changes.isEmpty) return;
     if (widget.onChanged(changes)) {
       _baseline.addAll(changes);
+      for (final key in changes.keys) {
+        _acceptedText[key] = _controllers[key]!.text;
+      }
       _awaitingEcho = true;
     } else if (mounted) {
       _rejected.addAll(changes.keys);

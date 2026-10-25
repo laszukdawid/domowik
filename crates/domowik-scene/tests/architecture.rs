@@ -37,6 +37,45 @@ fn stairs() -> Document {
     d.level_connections.push(c);
     d
 }
+
+#[test]
+fn invalid_stairs_are_reported_without_hiding_valid_geometry() {
+    let mut d = stairs();
+    let valid = d.staircases[0].clone();
+    let mut inverted = d.level_connections[0].clone();
+    inverted.id = Uuid::now_v7();
+    inverted.to.offset_mm = -3000.0;
+    let mut bad = valid.clone();
+    bad.id = Uuid::now_v7();
+    bad.connection_id = inverted.id;
+    let mut dangling = valid.clone();
+    dangling.id = Uuid::now_v7();
+    dangling.connection_id = Uuid::now_v7();
+    d.level_connections.push(inverted);
+    d.staircases.insert(0, bad.clone());
+    d.staircases.push(dangling.clone());
+    let low = d.levels[0].id;
+    assert!(!d.validate_plan().is_empty());
+    assert!(domowik_geometry::architecture::stair(&d, &bad).is_err());
+    assert!(domowik_geometry::architecture::plan(&d, low).is_err());
+    let (plan, diagnostics) = domowik_geometry::architecture::plan_reporting(&d, low);
+    assert_eq!(plan.len(), 1);
+    assert_eq!(plan[0].id, valid.id);
+    assert_eq!(diagnostics.len(), 2);
+    assert!(diagnostics[0].contains(&bad.id.to_string()));
+    assert!(diagnostics[1].contains(&dangling.id.to_string()));
+    let scene = domowik_scene::build(&d, &[low], &BTreeSet::new(), &BTreeMap::new()).unwrap();
+    assert_eq!(scene.diagnostics, diagnostics);
+    assert!(!scene.nodes.is_empty());
+    let prefix = format!("geometry:stair:{}:", valid.id);
+    let stair_meshes: Vec<_> = scene
+        .meshes
+        .keys()
+        .filter(|name| name.starts_with("geometry:stair:"))
+        .collect();
+    assert!(!stair_meshes.is_empty());
+    assert!(stair_meshes.iter().all(|name| name.starts_with(&prefix)));
+}
 #[test]
 fn staircase_renders_once_from_either_level_and_treads_reach_correct_elevations() {
     let d = stairs();

@@ -39,6 +39,88 @@ Future<void> mount(
 );
 
 void main() {
+  for (final units in UnitSystem.values) {
+    testWidgets(
+      'rounded ${units.name} elevation echoes preserve pending typing',
+      (tester) async {
+        var current = <String, Object?>{
+          ...properties,
+          'endElevationMm': -6000.0,
+        };
+        var name = 'Test stairs', revision = 0;
+        final calls = <Map<String, Object?>>[];
+        late StateSetter rebuild;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  rebuild = setState;
+                  return StaircasePropertiesForm(
+                    name: name,
+                    properties: current,
+                    units: units,
+                    revision: revision,
+                    onChanged: (changes) {
+                      calls.add(changes);
+                      return true;
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+        final text = units == UnitSystem.metric ? '-4095.9' : '-161.2558';
+        await tester.enterText(field('startElevationMm'), text);
+        await settleEdit(tester);
+        final typed = calls.single['startElevationMm'] as double;
+        final echo = (typed - 2600.0) + 2600.0;
+        expect(
+          echo,
+          isNot(typed),
+          reason: 'exercise a non-exact datum round trip',
+        );
+        await tester.enterText(field('startElevationMm'), '${text}1');
+        final controller = tester
+            .widget<TextFormField>(field('startElevationMm'))
+            .controller!;
+        controller.selection = const TextSelection.collapsed(offset: 3);
+        rebuild(() {
+          current = {...current, 'startElevationMm': echo};
+          revision++;
+        });
+        await tester.pump();
+        expect(controller.text, '${text}1');
+        expect(controller.selection.baseOffset, 3);
+        await settleEdit(tester);
+        expect(calls, hasLength(2));
+        final next = calls.last['startElevationMm'] as double;
+        rebuild(() {
+          current = {...current, 'startElevationMm': (next - 2600.0) + 2600.0};
+          revision++;
+        });
+        await tester.pump();
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await settleEdit(tester);
+        expect(
+          calls,
+          hasLength(2),
+          reason: 'rounding must not add another undo batch',
+        );
+        rebuild(() {
+          name = 'External edit';
+          revision++;
+        });
+        await tester.pump();
+        expect(
+          tester.widget<TextFormField>(field('name')).controller!.text,
+          'External edit',
+        );
+      },
+    );
+  }
+
   testWidgets('typing coalesces to one live edit without an Apply button', (
     tester,
   ) async {

@@ -23,6 +23,76 @@ fn info(path: &Path) -> Value {
 }
 
 #[test]
+fn invalid_stair_exports_keep_valid_stairs_and_report_the_same_omissions() {
+    use domowik_format::*;
+    use uuid::Uuid;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("invalid-stair.domo");
+    let mut d = Document::with_ground_floor();
+    let lower = d.levels[0].id;
+    let mut upper = Level::new("Upper");
+    upper.elevation_mm = 2600.0;
+    let high = upper.id;
+    d.levels.push(upper);
+    let connection = LevelConnection {
+        id: Uuid::now_v7(),
+        name: "Synthetic connection".into(),
+        from: ConnectionEndpoint {
+            level_id: lower,
+            position_mm: [0.0, 0.0],
+            offset_mm: 0.0,
+        },
+        to: ConnectionEndpoint {
+            level_id: high,
+            position_mm: [3780.0, 0.0],
+            offset_mm: 0.0,
+        },
+        unknown: Default::default(),
+    };
+    let valid = Staircase {
+        id: Uuid::now_v7(),
+        name: "Valid stair".into(),
+        connection_id: connection.id,
+        width_mm: 924.0,
+        risers: 15,
+        guard_height_mm: 1000.0,
+        opening_ids: vec![],
+        unknown: Default::default(),
+    };
+    let mut invalid = valid.clone();
+    invalid.id = Uuid::now_v7();
+    invalid.risers = 1;
+    d.level_connections.push(connection);
+    d.staircases = vec![invalid.clone(), valid.clone()];
+    let (svg, _, diagnostics) =
+        domowik_cli::svg::render_level_diagnostics(&d, lower, &Default::default());
+    assert!(svg.contains(&format!("data-entity=\"{}\"", valid.id)));
+    assert!(!svg.contains(&format!("data-entity=\"{}\"", invalid.id)));
+    let png = domowik_cli::png::render_level(&d, lower, 0.1).unwrap();
+    assert_eq!(png.construction_diagnostics, diagnostics);
+    assert!(png.png.len() > 100);
+    assert_eq!(diagnostics.len(), 1);
+    domowik_container::write_package(&path, &domowik_container::Package::new(d)).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    for kind in ["svg", "png"] {
+        let out = temp.path().join(format!("drawing.{kind}"));
+        let result = ok(
+            &path,
+            &format!("export-{kind}"),
+            None,
+            &[out.to_str().unwrap()],
+        );
+        assert!(result.contains(&diagnostics[0]));
+        assert!(std::fs::metadata(out).unwrap().len() > 100);
+    }
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "rendering must not repair the source"
+    );
+}
+
+#[test]
 fn stair_cli_reopens_exports_undoes_and_refuses_invalid_changes_without_writing() {
     let temp = tempfile::tempdir().unwrap();
     let p = temp.path().join("synthetic.domo");

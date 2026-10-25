@@ -233,6 +233,7 @@ class Derived {
     this.floorAreaMm2, {
     this.roomRecords = const [],
     this.construction = const [],
+    this.constructionDiagnostics = const [],
     this.floorSurfaces,
     List<Ring>? drawn,
   }) : _drawn = drawn;
@@ -255,6 +256,7 @@ class Derived {
   /// no record, and a record persists with no face.
   final List<RoomRecordView> roomRecords;
   final List<PlanConstruction> construction;
+  final List<String> constructionDiagnostics;
   final List<Ring>? floorSurfaces;
 
   static const empty = Derived([], [], [], 0.0);

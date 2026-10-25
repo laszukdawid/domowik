@@ -2294,6 +2294,9 @@ class _PlanPageState extends State<PlanPage>
         construction: ((j['construction'] as List<Object?>?) ?? const [])
             .map((e) => PlanConstruction.fromJson(e as Map<String, Object?>))
             .toList(),
+        constructionDiagnostics:
+            (j['constructionDiagnostics'] as List<Object?>? ?? const [])
+                .cast<String>(),
       );
     }
   }
@@ -2364,6 +2367,15 @@ class _PlanPageState extends State<PlanPage>
     _loadModelPreviews();
     _outstandingBuffers = bridge.outstandingBuffers();
   }
+
+  List<String> get _drawingWarnings => [
+    ..._warnings,
+    ...{
+      ..._derived.constructionDiagnostics,
+      for (final layer in _backgroundLevels)
+        ...layer.derived.constructionDiagnostics,
+    },
+  ];
 
   void _activateLevel(String id) {
     if (!_levels.any((level) => level.id == id)) return;
@@ -3066,7 +3078,7 @@ class _PlanPageState extends State<PlanPage>
                   ),
                 ),
               ),
-              if (_warnings.isNotEmpty)
+              if (_drawingWarnings.isNotEmpty)
                 Positioned(
                   top: 26,
                   left: 44,
@@ -3076,7 +3088,7 @@ class _PlanPageState extends State<PlanPage>
                   child: Align(
                     alignment: Alignment.topRight,
                     child: WarningsBanner(
-                      warnings: _warnings,
+                      warnings: _drawingWarnings,
                       wallOverlapCount: _wallOverlapCount,
                       warningTargets: _warningEntities,
                       onHighlightChanged: (ids) {

@@ -17,7 +17,8 @@ import 'package:flutter/widgets.dart';
 /// geometry; if resident resources are lost, retry a full load.
 /// Linux push updates carry mutable `meshes`, `nodes`, and the rebased camera
 /// (`matrix`, `width`, `height`) in one `scene` packet. The presenter validates
-/// before replacing anything and installs the packet under the render lock.
+/// and compares CPU snapshots outside the render lock before installing the
+/// complete packet under it. A stale mesh baseline refuses the whole packet.
 /// Separate `mesh` calls are only for immutable content-addressed model data;
 /// they must not replace visible geometry during a scene upload.
 abstract interface class ScenePresenter {

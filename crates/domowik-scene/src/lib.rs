@@ -710,9 +710,15 @@ pub fn build_with_floors(
         }
     }
     for s in &doc.staircases {
-        let c = doc
-            .connection(s.connection_id)
-            .ok_or("missing stair connection")?;
+        let Some(c) = doc.connection(s.connection_id) else {
+            b.scene
+                .diagnostics
+                .push(domowik_geometry::architecture::stair_diagnostic(
+                    s,
+                    "missing stair connection",
+                ));
+            continue;
+        };
         let visible: Vec<_> = [c.from.level_id, c.to.level_id]
             .into_iter()
             .filter(|id| ids.contains(id))
@@ -725,7 +731,15 @@ pub fn build_with_floors(
         } else {
             1.0
         };
-        let geometry = domowik_geometry::architecture::stair(doc, s)?;
+        let geometry = match domowik_geometry::architecture::stair(doc, s) {
+            Ok(geometry) => geometry,
+            Err(error) => {
+                b.scene
+                    .diagnostics
+                    .push(domowik_geometry::architecture::stair_diagnostic(s, &error));
+                continue;
+            }
+        };
         for (i, body) in geometry.bodies.iter().enumerate() {
             b.construction(doc, body, &format!("stair:{}:{i}", s.id), alpha, false)?;
         }

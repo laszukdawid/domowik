@@ -119,6 +119,8 @@ pub struct Raster {
     /// invisible to whoever receives the file, so the caller has to be able to
     /// say it happened.
     pub label_warnings: Vec<LabelWarning>,
+    /// Architectural assemblies omitted from an invalid document, in order.
+    pub construction_diagnostics: Vec<String>,
 }
 
 /// Renders `level_id` to a PNG at `scale` pixels per millimetre.
@@ -374,8 +376,8 @@ fn render(
         }
     }
 
-    let construction =
-        domowik_geometry::architecture::plan(doc, level_id).map_err(CliError::Failure)?;
+    let (construction, construction_diagnostics) =
+        domowik_geometry::architecture::plan_reporting(doc, level_id);
     let font = label::Annotator::new()?;
     for item in construction {
         let p = Polygon {
@@ -570,6 +572,7 @@ fn render(
         scale,
         origin_mm: [ox, oy],
         label_warnings: labels.warnings,
+        construction_diagnostics,
     })
 }
 

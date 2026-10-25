@@ -51,6 +51,9 @@ esac
 bin="$bundle/domowik_editor"
 core="$bundle/lib/libdomowik_bridge.so"
 
+echo "--- scene packet preparation regressions ---"
+bash "$spike/../scripts/check-linux-scene-packets.sh"
+
 echo "--- packaging assertions ---"
 
 # The core must be INSIDE the bundle. On macOS this needed a staticlib in a

@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -14,6 +15,8 @@
 namespace {
 using Clock = std::chrono::steady_clock;
 struct Mesh {
+  // CPU payload is immutable after publication. Only GL handles change on the
+  // render thread, so shared snapshots can compare payloads without its lock.
   std::vector<float> vertices; GLuint buffer=0;
   std::vector<float> coordinates; std::vector<uint8_t> rgba;
   int width=1,height=1,layers=1; GLuint uv_buffer=0,image=0;
@@ -23,7 +26,8 @@ struct Group { std::string mesh; bool transparent=false; std::vector<float> inst
 struct Renderer {
   std::mutex mutex;
   std::mutex camera_mutex;
-  std::map<std::string,Mesh> meshes;
+  std::map<std::string,std::shared_ptr<Mesh>> meshes;
+  uint64_t mesh_revision=0;
   std::vector<Group> groups;
   std::array<float,16> camera{};
   GLuint program=0,texture=0,framebuffer=0,depth=0;
@@ -44,7 +48,7 @@ std::mutex retired_mutex;
 std::vector<Renderer*> retired;
 
 void clear_gpu(Renderer* r) {
-  for(auto& [_,m]:r->meshes) {if(m.buffer)glDeleteBuffers(1,&m.buffer);if(m.uv_buffer)glDeleteBuffers(1,&m.uv_buffer);if(m.image)glDeleteTextures(1,&m.image);m.buffer=m.uv_buffer=m.image=0;}
+  for(auto& [_,mesh]:r->meshes) {auto& m=*mesh;if(m.buffer)glDeleteBuffers(1,&m.buffer);if(m.uv_buffer)glDeleteBuffers(1,&m.uv_buffer);if(m.image)glDeleteTextures(1,&m.image);m.buffer=m.uv_buffer=m.image=0;}
   for(auto& g:r->groups) {if(g.buffer)glDeleteBuffers(1,&g.buffer);if(g.vao)glDeleteVertexArrays(1,&g.vao);g.buffer=g.vao=0;}
   if(r->program)glDeleteProgram(r->program);
   if(r->texture)glDeleteTextures(1,&r->texture);
@@ -100,7 +104,7 @@ color=vec4(base.rgb*light,base.a);}
 void upload(Renderer* r) {
   glActiveTexture(GL_TEXTURE0);
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);glPixelStorei(GL_UNPACK_ALIGNMENT,1);glPixelStorei(GL_UNPACK_ROW_LENGTH,0);glPixelStorei(GL_UNPACK_IMAGE_HEIGHT,0);glPixelStorei(GL_UNPACK_SKIP_PIXELS,0);glPixelStorei(GL_UNPACK_SKIP_ROWS,0);glPixelStorei(GL_UNPACK_SKIP_IMAGES,0);
-  for(auto& [_,m]:r->meshes) {if(m.buffer==0){glGenBuffers(1,&m.buffer);glBindBuffer(GL_ARRAY_BUFFER,m.buffer);glBufferData(GL_ARRAY_BUFFER,m.vertices.size()*sizeof(float),m.vertices.data(),GL_STATIC_DRAW);r->mesh_uploads++;
+  for(auto& [_,mesh]:r->meshes) {auto& m=*mesh;if(m.buffer==0){glGenBuffers(1,&m.buffer);glBindBuffer(GL_ARRAY_BUFFER,m.buffer);glBufferData(GL_ARRAY_BUFFER,m.vertices.size()*sizeof(float),m.vertices.data(),GL_STATIC_DRAW);r->mesh_uploads++;
     std::vector<float> fallback;if(m.coordinates.empty()){for(size_t i=0;i<m.vertices.size()/10;i++)fallback.insert(fallback.end(),{0.f,0.f,-1.f,0.f,0.f});}
     const auto& coords=m.coordinates.empty()?fallback:m.coordinates;
     glGenBuffers(1,&m.uv_buffer);glBindBuffer(GL_ARRAY_BUFFER,m.uv_buffer);glBufferData(GL_ARRAY_BUFFER,coords.size()*sizeof(float),coords.data(),GL_STATIC_DRAW);
@@ -111,9 +115,9 @@ void upload(Renderer* r) {
     if(g.vao)glDeleteVertexArrays(1,&g.vao);if(g.buffer)glDeleteBuffers(1,&g.buffer);g.vao=g.buffer=0;
     glGenVertexArrays(1,&g.vao);glBindVertexArray(g.vao);
     auto mesh=r->meshes.find(g.mesh);if(mesh==r->meshes.end())continue;
-    glBindBuffer(GL_ARRAY_BUFFER,mesh->second.buffer);
+    glBindBuffer(GL_ARRAY_BUFFER,mesh->second->buffer);
     for(GLuint i=0;i<3;i++){glEnableVertexAttribArray(i);glVertexAttribPointer(i,i==2?4:3,GL_FLOAT,GL_FALSE,10*sizeof(float),reinterpret_cast<void*>((i==0?0:i==1?3:6)*sizeof(float)));}
-    glBindBuffer(GL_ARRAY_BUFFER,mesh->second.uv_buffer);glEnableVertexAttribArray(11);glVertexAttribPointer(11,3,GL_FLOAT,GL_FALSE,5*sizeof(float),nullptr);glEnableVertexAttribArray(12);glVertexAttribPointer(12,2,GL_FLOAT,GL_FALSE,5*sizeof(float),reinterpret_cast<void*>(3*sizeof(float)));
+    glBindBuffer(GL_ARRAY_BUFFER,mesh->second->uv_buffer);glEnableVertexAttribArray(11);glVertexAttribPointer(11,3,GL_FLOAT,GL_FALSE,5*sizeof(float),nullptr);glEnableVertexAttribArray(12);glVertexAttribPointer(12,2,GL_FLOAT,GL_FALSE,5*sizeof(float),reinterpret_cast<void*>(3*sizeof(float)));
     glGenBuffers(1,&g.buffer);glBindBuffer(GL_ARRAY_BUFFER,g.buffer);glBufferData(GL_ARRAY_BUFFER,g.instances.size()*sizeof(float),g.instances.data(),GL_STATIC_DRAW);
     for(GLuint i=3;i<11;i++){const int offset=i<7?(i-3)*4:i<10?16+(i-7)*3:25;glEnableVertexAttribArray(i);glVertexAttribPointer(i,i<7||i==10?4:3,GL_FLOAT,GL_FALSE,29*sizeof(float),reinterpret_cast<void*>(offset*sizeof(float)));glVertexAttribDivisor(i,1);}
     r->instance_uploads++;
@@ -157,7 +161,7 @@ static gboolean populate(FlTextureGL* base,uint32_t* target,uint32_t* name,uint3
   {std::lock_guard<std::mutex> camera_lock(r->camera_mutex);camera=r->camera;r->width=r->requested_width;r->height=r->requested_height;}
   GdkGLContext* current=gdk_gl_context_get_current();
   {std::lock_guard<std::mutex> retired_lock(retired_mutex);for(auto* old:retired){if(old->context==current)clear_gpu(old);delete old;}retired.clear();}
-  if(r->context!=current){r->context=current;r->program=r->texture=r->framebuffer=r->depth=0;r->allocated_width=0;for(auto& [_,m]:r->meshes)m.buffer=m.uv_buffer=m.image=0;for(auto& g:r->groups)g.vao=g.buffer=0;r->scene_dirty=true;}
+  if(r->context!=current){r->context=current;r->program=r->texture=r->framebuffer=r->depth=0;r->allocated_width=0;for(auto& [_,m]:r->meshes)m->buffer=m->uv_buffer=m->image=0;for(auto& g:r->groups)g.vao=g.buffer=0;r->scene_dirty=true;}
   const auto start=Clock::now();
   if(!r->program&&!initialize(r)){g_set_error_literal(error,g_quark_from_static_string("domowik-3d"),1,r->error.c_str());return FALSE;}
   if(r->allocated_width!=r->width||r->allocated_height!=r->height){
@@ -173,7 +177,7 @@ static gboolean populate(FlTextureGL* base,uint32_t* target,uint32_t* name,uint3
   for(bool transparent:{false,true}) {
     if(transparent){glEnable(GL_BLEND);glBlendFuncSeparate(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA,GL_ONE,GL_ONE_MINUS_SRC_ALPHA);glDepthMask(GL_FALSE);}
     for(auto& g:r->groups){if(g.transparent!=transparent)continue;auto m=r->meshes.find(g.mesh);if(m==r->meshes.end()||!g.vao)continue;
-      glBindTexture(GL_TEXTURE_2D_ARRAY,m->second.image);glBindVertexArray(g.vao);glDrawArraysInstanced(GL_TRIANGLES,0,m->second.vertices.size()/10,g.instances.size()/29);r->draw_calls++;r->triangles+=m->second.vertices.size()/30*(g.instances.size()/29);
+      glBindTexture(GL_TEXTURE_2D_ARRAY,m->second->image);glBindVertexArray(g.vao);glDrawArraysInstanced(GL_TRIANGLES,0,m->second->vertices.size()/10,g.instances.size()/29);r->draw_calls++;r->triangles+=m->second->vertices.size()/30*(g.instances.size()/29);
     }
   }
   // Readback exists only for an explicit diagnostic probe, never normal frames.
@@ -210,12 +214,67 @@ bool decode_mesh(FlValue* args,Mesh& incoming){
   const auto* bytes=fl_value_get_uint8_list(rgba);incoming.rgba.assign(bytes,bytes+size);return true;
 }
 bool same_mesh(const Mesh& a,const Mesh& b){return a.vertices==b.vertices&&a.coordinates==b.coordinates&&a.rgba==b.rgba&&a.width==b.width&&a.height==b.height&&a.layers==b.layers;}
+struct MeshSnapshot {
+  uint64_t revision;
+  std::map<std::string,std::shared_ptr<Mesh>> meshes;
+};
+MeshSnapshot snapshot_meshes(Renderer* r){
+  std::lock_guard<std::mutex> lock(r->mutex);
+  return {r->mesh_revision,r->meshes};
+}
+struct PreparedScene {
+  std::map<std::string,std::shared_ptr<Mesh>> meshes;
+  std::vector<Group> groups;
+  std::vector<float> camera;
+  int width=0,height=0;
+};
+// No renderer access or GPU calls: decoding, validation, allocation and full
+// payload comparisons run against an owning snapshot outside the render lock.
+bool prepare_scene(FlValue* args,const MeshSnapshot& snapshot,PreparedScene& out,std::string& error){
+  auto fail=[&](const char* why){error=why;return false;};
+  FlValue* nodes=field(args,"nodes");
+  if(!nodes||fl_value_get_type(nodes)!=FL_VALUE_TYPE_LIST||fl_value_get_length(nodes)>20000)return fail("Invalid scene instances");
+  FlValue* incoming=field(args,"meshes");
+  if(incoming){
+    if(fl_value_get_type(incoming)!=FL_VALUE_TYPE_MAP||fl_value_get_length(incoming)>20000)return fail("Invalid scene meshes");
+    for(size_t i=0;i<fl_value_get_length(incoming);i++){
+      FlValue* key=fl_value_get_map_key(incoming,i);auto mesh=std::make_shared<Mesh>();
+      if(fl_value_get_type(key)!=FL_VALUE_TYPE_STRING||!decode_mesh(fl_value_get_map_value(incoming,i),*mesh))return fail("Invalid scene mesh or texture");
+      out.meshes.emplace(fl_value_get_string(key),std::move(mesh));
+    }
+  }
+  uint64_t bytes=0;for(const auto& [key,m]:snapshot.meshes)if(!out.meshes.count(key))bytes+=m->rgba.size();for(const auto& [_,m]:out.meshes)bytes+=m->rgba.size();
+  if(bytes>128*1024*1024)return fail("Scene textures exceed 128 MiB");
+  FlValue* w=field(args,"width");FlValue* h=field(args,"height");
+  const bool has_camera=field(args,"matrix")!=nullptr;
+  if(incoming&&!has_camera)return fail("Scene meshes require a matching camera");
+  if(has_camera){
+    if(!floats(field(args,"matrix"),16,out.camera)||!w||!h||fl_value_get_type(w)!=FL_VALUE_TYPE_INT||fl_value_get_type(h)!=FL_VALUE_TYPE_INT)return fail("Invalid scene camera");
+    out.width=std::clamp<int64_t>(fl_value_get_int(w),32,4096);out.height=std::clamp<int64_t>(fl_value_get_int(h),32,4096);
+  }
+  std::map<std::pair<std::string,bool>,std::vector<float>> grouped;
+  for(size_t i=0;i<fl_value_get_length(nodes);i++){
+    FlValue* node=fl_value_get_list_value(nodes,i);FlValue* id=field(node,"mesh");FlValue* transparent=field(node,"transparent");std::vector<float> matrix,normal,color;
+    if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!floats(field(node,"matrix"),16,matrix)||!floats(field(node,"normalMatrix"),9,normal)||!floats(field(node,"color"),4,color))return fail("Invalid instance transform");
+    auto& group=grouped[{fl_value_get_string(id),transparent&&fl_value_get_type(transparent)==FL_VALUE_TYPE_BOOL&&fl_value_get_bool(transparent)}];group.insert(group.end(),matrix.begin(),matrix.end());group.insert(group.end(),normal.begin(),normal.end());group.insert(group.end(),color.begin(),color.end());
+  }
+  for(auto& [key,instances]:grouped){
+    if(!out.meshes.count(key.first)&&!snapshot.meshes.count(key.first))return fail("Missing scene mesh");
+    out.groups.push_back(Group{key.first,key.second,std::move(instances),0,0});
+  }
+  for(auto it=out.meshes.begin();it!=out.meshes.end();){
+    auto existing=snapshot.meshes.find(it->first);
+    if(existing!=snapshot.meshes.end()&&same_mesh(*existing->second,*it->second))it=out.meshes.erase(it);else ++it;
+  }
+  return true;
+}
 // The caller holds the scene mutex; all displaced GPU objects are retired on
 // the GL thread. Unchanged mesh buffers remain resident across scene commits.
-void install_mesh(Renderer* r,Renderer* old,const std::string& key,Mesh incoming){
+void install_mesh(Renderer* r,Renderer* old,const std::string& key,std::shared_ptr<Mesh> incoming){
   auto existing=r->meshes.find(key);
   if(existing==r->meshes.end()){r->meshes.emplace(key,std::move(incoming));r->scene_dirty=true;}
-  else if(!same_mesh(existing->second,incoming)){old->meshes.emplace(key,std::move(existing->second));existing->second=std::move(incoming);r->scene_dirty=true;}
+  else {old->meshes.emplace(key,std::move(existing->second));existing->second=std::move(incoming);r->scene_dirty=true;}
+  r->mesh_revision++;
 }
 void retire(Renderer* old){if(old->meshes.empty()&&old->groups.empty()){delete old;return;}std::lock_guard<std::mutex> lock(retired_mutex);retired.push_back(old);}
 void success(FlMethodCall* call,FlValue* value=nullptr){fl_method_call_respond_success(call,value,nullptr);}
@@ -231,6 +290,37 @@ void method(FlMethodChannel*,FlMethodCall* call,gpointer data){
   if(g_strcmp0(name,"destroy")==0){fl_texture_registrar_unregister_texture(c->registrar,FL_TEXTURE(c->texture));g_clear_object(&c->texture);success(call);return;}
   auto* r=c->texture->renderer;
   if(g_strcmp0(name,"camera")==0){std::vector<float> m;if(!floats(field(args,"matrix"),16,m)){reject(call,"Invalid camera matrix");return;}FlValue* w=field(args,"width");FlValue* h=field(args,"height");if(!w||!h||fl_value_get_type(w)!=FL_VALUE_TYPE_INT||fl_value_get_type(h)!=FL_VALUE_TYPE_INT){reject(call,"Invalid viewport");return;}{std::lock_guard<std::mutex> camera_lock(r->camera_mutex);r->requested_width=std::clamp<int64_t>(fl_value_get_int(w),32,4096);r->requested_height=std::clamp<int64_t>(fl_value_get_int(h),32,4096);std::copy(m.begin(),m.end(),r->camera.begin());r->camera_updates++;}notify(c);success(call);return;}
+  if(g_strcmp0(name,"scene")==0){
+    const auto snapshot=snapshot_meshes(r);PreparedScene packet;std::string error;
+    if(!prepare_scene(args,snapshot,packet,error)){reject(call,error.c_str());return;}
+    auto* old=new Renderer();
+    {
+      std::lock_guard<std::mutex> lock(r->mutex);
+      // Channel calls are serialized, but reject a stale preparation rather
+      // than ever committing comparisons against a different mesh baseline.
+      if(r->mesh_revision!=snapshot.revision){delete old;reject(call,"Scene mesh baseline changed");return;}
+      old->context=r->context;old->groups=std::move(r->groups);
+      for(auto& [key,m]:packet.meshes)install_mesh(r,old,key,std::move(m));
+      r->groups=std::move(packet.groups);
+      if(!packet.camera.empty()){std::lock_guard<std::mutex> camera_lock(r->camera_mutex);std::copy(packet.camera.begin(),packet.camera.end(),r->camera.begin());r->requested_width=packet.width;r->requested_height=packet.height;r->camera_updates++;}
+      r->scene_dirty=true;r->scene_updates++;
+    }
+    retire(old);notify(c);success(call);return;
+  }
+  if(g_strcmp0(name,"mesh")==0){
+    FlValue* id=field(args,"id");auto incoming=std::make_shared<Mesh>();
+    if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!decode_mesh(args,*incoming)){reject(call,"Invalid triangle mesh or texture");return;}
+    std::string key=fl_value_get_string(id);const auto snapshot=snapshot_meshes(r);
+    uint64_t total=incoming->rgba.size();for(const auto& [k,m]:snapshot.meshes)if(k!=key)total+=m->rgba.size();if(total>128*1024*1024){reject(call,"Scene textures exceed 128 MiB");return;}
+    auto existing=snapshot.meshes.find(key);const bool changed=existing==snapshot.meshes.end()||!same_mesh(*existing->second,*incoming);
+    auto* old=new Renderer();
+    {
+      std::lock_guard<std::mutex> lock(r->mutex);
+      if(r->mesh_revision!=snapshot.revision){delete old;reject(call,"Scene mesh baseline changed");return;}
+      old->context=r->context;if(changed)install_mesh(r,old,key,std::move(incoming));
+    }
+    retire(old);notify(c);success(call);return;
+  }
   std::lock_guard<std::mutex> lock(r->mutex);
   if(g_strcmp0(name,"orientationProbe")==0){
     // Original two-colour texture, world +Y red and -Y blue. White vertex and
@@ -240,53 +330,14 @@ void method(FlMethodChannel*,FlMethodCall* call,gpointer data){
     std::vector<float> coordinates;
     for(auto p:{std::array<float,3>{-0.8f,-0.8f,0.f},{0.8f,-0.8f,0.f},{0.8f,0.8f,0.f},{-0.8f,-0.8f,0.f},{0.8f,0.8f,0.f},{-0.8f,0.8f,0.f}}){vertices.insert(vertices.end(),p.begin(),p.end());vertices.insert(vertices.end(),{0.f,0.f,1.f,1.f,1.f,1.f,1.f});coordinates.insert(coordinates.end(),{0.5f,0.5f-p[1]/1.6f,0.f,1.f,1.f});}
     Mesh fixture{std::move(vertices),0};fixture.coordinates=std::move(coordinates);fixture.width=1;fixture.height=2;fixture.rgba={255,0,0,255,0,0,255,255};
-    r->meshes.emplace("diagnostic:orientation",std::move(fixture));
+    r->meshes.emplace("diagnostic:orientation",std::make_shared<Mesh>(std::move(fixture)));r->mesh_revision++;
     std::vector<float> instances;
     instances={1.f,0.f,0.f,0.f,0.f,1.f,0.f,0.f,0.f,0.f,1.f,0.f,0.f,0.f,0.f,1.f,1.f,0.f,0.f,0.f,1.f,0.f,0.f,0.f,1.f,1.f,1.f,1.f,1.f};
     r->groups.push_back(Group{"diagnostic:orientation",false,std::move(instances),0,0});r->scene_dirty=true;
     {std::lock_guard<std::mutex> camera_lock(r->camera_mutex);r->camera={1.f,0.f,0.f,0.f,0.f,1.f,0.f,0.f,0.f,0.f,1.f,0.f,0.f,0.f,0.f,1.f};}
     r->diagnostic_readback=true;notify(c);success(call);return;
   }
-  if(g_strcmp0(name,"reset")==0){auto* old=new Renderer();old->context=r->context;old->meshes=std::move(r->meshes);old->groups=std::move(r->groups);{std::lock_guard<std::mutex> retired_lock(retired_mutex);retired.push_back(old);}r->meshes.clear();r->groups.clear();r->scene_dirty=true;notify(c);success(call);return;}
-  if(g_strcmp0(name,"mesh")==0){
-    FlValue* id=field(args,"id");Mesh incoming;
-    if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!decode_mesh(args,incoming)){reject(call,"Invalid triangle mesh or texture");return;}
-    std::string key=fl_value_get_string(id);
-    uint64_t total=incoming.rgba.size();for(const auto& [k,m]:r->meshes)if(k!=key)total+=m.rgba.size();if(total>128*1024*1024){reject(call,"Scene textures exceed 128 MiB");return;}
-    auto* old=new Renderer();old->context=r->context;install_mesh(r,old,key,std::move(incoming));retire(old);
-    notify(c);success(call);return;
-  }
-  if(g_strcmp0(name,"scene")==0){FlValue* nodes=field(args,"nodes");if(!nodes||fl_value_get_type(nodes)!=FL_VALUE_TYPE_LIST||fl_value_get_length(nodes)>20000){reject(call,"Invalid scene instances");return;}
-    // Decode the complete packet before touching the visible scene. In
-    // particular, a new origin requires matching geometry AND camera together.
-    std::map<std::string,Mesh> meshes;
-    FlValue* incoming=field(args,"meshes");
-    if(incoming){
-      if(fl_value_get_type(incoming)!=FL_VALUE_TYPE_MAP||fl_value_get_length(incoming)>20000){reject(call,"Invalid scene meshes");return;}
-      for(size_t i=0;i<fl_value_get_length(incoming);i++){
-        FlValue* key=fl_value_get_map_key(incoming,i);Mesh mesh;
-        if(fl_value_get_type(key)!=FL_VALUE_TYPE_STRING||!decode_mesh(fl_value_get_map_value(incoming,i),mesh)){reject(call,"Invalid scene mesh or texture");return;}
-        meshes.emplace(fl_value_get_string(key),std::move(mesh));
-      }
-    }
-    uint64_t bytes=0;for(const auto& [key,m]:r->meshes)if(!meshes.count(key))bytes+=m.rgba.size();for(const auto& [_,m]:meshes)bytes+=m.rgba.size();
-    if(bytes>128*1024*1024){reject(call,"Scene textures exceed 128 MiB");return;}
-    std::vector<float> camera;FlValue* w=field(args,"width");FlValue* h=field(args,"height");
-    const bool has_camera=field(args,"matrix")!=nullptr;
-    if(incoming&&!has_camera){reject(call,"Scene meshes require a matching camera");return;}
-    if(has_camera&&(!floats(field(args,"matrix"),16,camera)||!w||!h||fl_value_get_type(w)!=FL_VALUE_TYPE_INT||fl_value_get_type(h)!=FL_VALUE_TYPE_INT)){reject(call,"Invalid scene camera");return;}
-    std::map<std::pair<std::string,bool>,std::vector<float>> grouped;
-    for(size_t i=0;i<fl_value_get_length(nodes);i++){FlValue* node=fl_value_get_list_value(nodes,i);FlValue* id=field(node,"mesh");FlValue* transparent=field(node,"transparent");std::vector<float> matrix,normal,color;if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!floats(field(node,"matrix"),16,matrix)||!floats(field(node,"normalMatrix"),9,normal)||!floats(field(node,"color"),4,color)){reject(call,"Invalid instance transform");return;}
-      auto& group=grouped[{fl_value_get_string(id),transparent&&fl_value_get_type(transparent)==FL_VALUE_TYPE_BOOL&&fl_value_get_bool(transparent)}];group.insert(group.end(),matrix.begin(),matrix.end());group.insert(group.end(),normal.begin(),normal.end());group.insert(group.end(),color.begin(),color.end());
-    }
-    for(const auto& [key,_]:grouped)if(!meshes.count(key.first)&&!r->meshes.count(key.first)){reject(call,"Missing scene mesh");return;}
-    // Old instance objects are retired on the GL thread, not deleted here.
-    auto* old=new Renderer();old->context=r->context;old->groups=std::move(r->groups);
-    for(auto& [key,m]:meshes)install_mesh(r,old,key,std::move(m));
-    retire(old);
-    if(has_camera){std::lock_guard<std::mutex> camera_lock(r->camera_mutex);std::copy(camera.begin(),camera.end(),r->camera.begin());r->requested_width=std::clamp<int64_t>(fl_value_get_int(w),32,4096);r->requested_height=std::clamp<int64_t>(fl_value_get_int(h),32,4096);r->camera_updates++;}
-    for(auto& [key,instances]:grouped)r->groups.push_back(Group{key.first,key.second,std::move(instances),0,0});r->scene_dirty=true;r->scene_updates++;notify(c);success(call);return;
-  }
+  if(g_strcmp0(name,"reset")==0){auto* old=new Renderer();old->context=r->context;old->meshes=std::move(r->meshes);old->groups=std::move(r->groups);{std::lock_guard<std::mutex> retired_lock(retired_mutex);retired.push_back(old);}r->meshes.clear();r->mesh_revision++;r->groups.clear();r->scene_dirty=true;notify(c);success(call);return;}
   if(g_strcmp0(name,"stats")==0){g_autoptr(FlValue) stats=fl_value_new_map();for(auto p:{std::pair<const char*,uint64_t>{"frames",r->frames},{"meshUploads",r->mesh_uploads},{"instanceUploads",r->instance_uploads},{"cameraUpdates",r->camera_updates},{"sceneUpdates",r->scene_updates},{"triangles",r->triangles},{"drawCalls",r->draw_calls},{"diagnosticPixels",r->diagnostic_pixels}})fl_value_set_string_take(stats,p.first,fl_value_new_int(p.second));fl_value_set_string_take(stats,"renderSubmitUs",fl_value_new_float(r->render_us));fl_value_set_string_take(stats,"driver",fl_value_new_string(r->driver.c_str()));fl_value_set_string_take(stats,"error",fl_value_new_string(r->error.c_str()));success(call,stats);return;}
   if(g_strcmp0(name,"diagnosticCapture")==0){r->diagnostic_readback=true;notify(c);success(call);return;}
   if(g_strcmp0(name,"orientationStats")==0){g_autoptr(FlValue) result=fl_value_new_map();fl_value_set_string_take(result,"topRedPixels",fl_value_new_int(r->orientation_top_red));fl_value_set_string_take(result,"bottomBluePixels",fl_value_new_int(r->orientation_bottom_blue));success(call,result);return;}

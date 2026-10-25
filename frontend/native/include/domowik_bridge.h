@@ -99,6 +99,9 @@ int32_t domowik_abi_version(void);
  * Same request is committed by edit {kind:"addDescendingStaircase",request:{...}}.
  * setStaircase additionally accepts name, startElevationMm (upper start) and
  * endElevationMm (lower end); absolute elevations become level-relative offsets.
+ * Derived plan responses also carry constructionDiagnostics: strings naming
+ * invalid stair assemblies omitted from the drawing. Other level geometry still
+ * renders; invalid editing requests continue to reject atomically.
  * Calls are synchronous and serialized per plan; no history on preview, no
  * callbacks or retained pointers, standard panic/status and buffer ownership.
  * Available on native and browser hosts. Invalid requests leave out untouched. */
