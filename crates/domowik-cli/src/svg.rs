@@ -163,7 +163,11 @@ pub fn render_level_reporting(
     let projection = rooms::project_against(doc, level_id, region, plan_rooms);
 
     // Rooms first, underneath: the floor a person would stand on.
-    for room in &projection.faces {
+    for room in &domowik_geometry::architecture::cut_surfaces(
+        doc,
+        domowik_format::OpeningHost::LevelFloor(level_id),
+        &projection.faces,
+    ) {
         let _ = writeln!(
             svg,
             r##"<path d="{d}" fill-rule="evenodd" fill="#ffffff"/>"##,
@@ -214,6 +218,58 @@ pub fn render_level_reporting(
             r##"<path d="{d}" fill-rule="evenodd" fill="#3c3a36" stroke="#1b1a18" stroke-width="4"/>"##,
             d = path_data(component)
         );
+    }
+
+    // Architectural bodies and stair graphics share Rust-derived geometry.
+    if let Ok(construction) = domowik_geometry::architecture::plan(doc, level_id) {
+        let font = label::Annotator::new().ok();
+        for item in construction {
+            let p = Polygon {
+                outer: item.outline_mm.iter().copied().map(Point::from).collect(),
+                holes: item
+                    .holes_mm
+                    .iter()
+                    .map(|h| h.iter().copied().map(Point::from).collect())
+                    .collect(),
+            };
+            let _ = writeln!(
+                svg,
+                r##"<path data-entity="{}" d="{}" fill-rule="evenodd" fill="#e6dfd2" stroke="#405363" stroke-width="12"><title>{}</title></path>"##,
+                item.id,
+                path_data(&p),
+                escape(&item.name)
+            );
+            for [a, b] in &item.segments_mm {
+                let _ = writeln!(
+                    svg,
+                    r##"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="#405363" stroke-width="12"/>"##,
+                    fmt(a[0]),
+                    fmt(a[1]),
+                    fmt(b[0]),
+                    fmt(b[1])
+                );
+            }
+            if !item.direction.is_empty() {
+                if let Some((contours, _)) = font.as_ref().and_then(|f| {
+                    f.text(
+                        item.direction,
+                        120.0,
+                        item.label_mm[0],
+                        item.label_mm[1] + 80.0,
+                    )
+                }) {
+                    for contour in contours {
+                        let p = Polygon::new(contour.into_iter().map(Point::from).collect());
+                        let _ = writeln!(
+                            svg,
+                            r##"<path d="{}" fill="#243b53"><title>{}</title></path>"##,
+                            path_data(&p),
+                            item.direction
+                        );
+                    }
+                }
+            }
+        }
     }
 
     // Door sills and swings over the wall mass.

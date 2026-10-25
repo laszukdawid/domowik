@@ -41,6 +41,12 @@ impl From<OpeningArg> for OpeningKind {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Author reusable construction bodies, hosted cuts and bare connections.
+    #[command(subcommand)]
+    Construction(ConstructionCommand),
+    /// Create and edit stair assemblies built on level connections and openings.
+    #[command(subcommand)]
+    Stair(StairCommand),
     /// Create a new plan with one ground-floor level.
     New {
         /// Path to create, conventionally ending in .domo
@@ -465,6 +471,124 @@ fn parse_point(s: &str) -> std::result::Result<(f64, f64), String> {
     Ok((x, y))
 }
 
+#[derive(Subcommand)]
+enum StairCommand {
+    /// Add a straight stair from a lower endpoint to an upper endpoint.
+    Add {
+        path: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        lower_level: String,
+        #[arg(long)]
+        upper_level: String,
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        start: (f64, f64),
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        end: (f64, f64),
+        #[arg(long)]
+        width: f64,
+        #[arg(long)]
+        risers: u16,
+        #[arg(long, default_value_t = 0.0)]
+        guard_height: f64,
+        #[arg(long)]
+        cut_upper_floor: bool,
+    },
+    /// Convert a rectangular placeholder room, preserving shared enclosure.
+    FromRoom {
+        path: PathBuf,
+        room: String,
+        #[arg(long)]
+        lower_level: String,
+        #[arg(long,value_parser=["east","west","north","south"])]
+        upper_edge: String,
+        #[arg(long)]
+        going: f64,
+        #[arg(long)]
+        risers: u16,
+        #[arg(long, default_value_t = 0.0)]
+        guard_height: f64,
+    },
+    /// Edit name, dimensions, count or absolute endpoint elevations (upper start, lower end).
+    Set {
+        path: PathBuf,
+        staircase: String,
+        #[arg(long)]
+        width: Option<f64>,
+        #[arg(long)]
+        risers: Option<u16>,
+        #[arg(long)]
+        guard_height: Option<f64>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        start_elevation: Option<f64>,
+        #[arg(long, allow_hyphen_values = true)]
+        end_elevation: Option<f64>,
+    },
+    /// Remove a stair and its connection, retaining independent associated cuts.
+    Remove { path: PathBuf, staircase: String },
+}
+
+#[derive(Subcommand)]
+enum ConstructionCommand {
+    /// Rectangular or longitudinally sloped prism; bottom offsets are level-relative.
+    AddBody {
+        path: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        level: String,
+        #[arg(long,value_parser=["slab","platform","column","beam","guard","generic"])]
+        role: String,
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        start: (f64, f64),
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        end: (f64, f64),
+        #[arg(long)]
+        width: f64,
+        #[arg(long)]
+        thickness: f64,
+        #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
+        bottom: f64,
+        #[arg(long, allow_hyphen_values = true)]
+        end_bottom: Option<f64>,
+    },
+    /// A through-cut in a construction body or a level's derived floor surfaces.
+    AddOpening {
+        path: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long, conflicts_with = "body", required_unless_present = "body")]
+        level: Option<String>,
+        #[arg(long, conflicts_with = "level")]
+        body: Option<String>,
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        start: (f64, f64),
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        end: (f64, f64),
+        #[arg(long)]
+        width: f64,
+    },
+    /// Connectivity only, without implying a stair, ramp or lift assembly.
+    AddConnection {
+        path: PathBuf,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        from_level: String,
+        #[arg(long)]
+        to_level: String,
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        start: (f64, f64),
+        #[arg(long,value_parser=parse_point,allow_hyphen_values=true)]
+        end: (f64, f64),
+    },
+    /// Remove a primitive; refuses while referenced by surviving construction.
+    Remove { path: PathBuf, reference: String },
+}
+
 /// `domowik room ...`
 ///
 /// A room RECORD is what these create and edit: the persistent metadata that
@@ -642,6 +766,156 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match &cli.command {
+        Command::Construction(command) => {
+            use domowik_format::{BodyRole, RectFootprint};
+            match command {
+                ConstructionCommand::AddBody {
+                    path,
+                    name,
+                    level,
+                    role,
+                    start,
+                    end,
+                    width,
+                    thickness,
+                    bottom,
+                    end_bottom,
+                } => {
+                    let role = match role.as_str() {
+                        "slab" => BodyRole::Slab,
+                        "platform" => BodyRole::Platform,
+                        "column" => BodyRole::Column,
+                        "beam" => BodyRole::Beam,
+                        "guard" => BodyRole::Guard,
+                        _ => BodyRole::Generic,
+                    };
+                    domowik_cli::architecture::add_body(
+                        path,
+                        level,
+                        name,
+                        role,
+                        RectFootprint {
+                            start_mm: [start.0, start.1],
+                            end_mm: [end.0, end.1],
+                            width_mm: *width,
+                        },
+                        [*bottom, end_bottom.unwrap_or(*bottom)],
+                        *thickness,
+                    )
+                }
+                ConstructionCommand::AddOpening {
+                    path,
+                    name,
+                    level,
+                    body,
+                    start,
+                    end,
+                    width,
+                } => domowik_cli::architecture::add_cut(
+                    path,
+                    name,
+                    level.as_deref(),
+                    body.as_deref(),
+                    RectFootprint {
+                        start_mm: [start.0, start.1],
+                        end_mm: [end.0, end.1],
+                        width_mm: *width,
+                    },
+                ),
+                ConstructionCommand::AddConnection {
+                    path,
+                    name,
+                    from_level,
+                    to_level,
+                    start,
+                    end,
+                } => domowik_cli::architecture::add_connection(
+                    path,
+                    name,
+                    from_level,
+                    to_level,
+                    [start.0, start.1],
+                    [end.0, end.1],
+                ),
+                ConstructionCommand::Remove { path, reference } => {
+                    domowik_cli::architecture::remove_primitive(path, reference)
+                }
+            }
+        }
+        Command::Stair(command) => match command {
+            StairCommand::Add {
+                path,
+                name,
+                lower_level,
+                upper_level,
+                start,
+                end,
+                width,
+                risers,
+                guard_height,
+                cut_upper_floor,
+            } => domowik_cli::architecture::add(
+                path,
+                name,
+                lower_level,
+                upper_level,
+                [start.0, start.1],
+                [end.0, end.1],
+                *width,
+                *risers,
+                *guard_height,
+                *cut_upper_floor,
+            ),
+            StairCommand::FromRoom {
+                path,
+                room,
+                lower_level,
+                upper_edge,
+                going,
+                risers,
+                guard_height,
+            } => {
+                let edge = match upper_edge.as_str() {
+                    "east" => domowik_edit::architecture::UpperEdge::East,
+                    "west" => domowik_edit::architecture::UpperEdge::West,
+                    "north" => domowik_edit::architecture::UpperEdge::North,
+                    _ => domowik_edit::architecture::UpperEdge::South,
+                };
+                domowik_cli::architecture::from_room(
+                    path,
+                    room,
+                    lower_level,
+                    edge,
+                    *going,
+                    *risers,
+                    *guard_height,
+                )
+            }
+            StairCommand::Set {
+                path,
+                staircase,
+                width,
+                risers,
+                guard_height,
+                name,
+                start_elevation,
+                end_elevation,
+            } => domowik_cli::architecture::set_properties(
+                path,
+                staircase,
+                &domowik_edit::architecture::StairFields {
+                    width_mm: *width,
+                    risers: *risers,
+                    guard_height_mm: *guard_height,
+                    name: name.clone(),
+                    start_elevation_mm: *start_elevation,
+                    end_elevation_mm: *end_elevation,
+                },
+            ),
+            StairCommand::Remove { path, staircase } => {
+                domowik_cli::architecture::remove(path, staircase)
+            }
+        },
         Command::New { path, force } => domowik_cli::cmd_new(path, *force),
         Command::ConvertDeveloperPackage {
             source,

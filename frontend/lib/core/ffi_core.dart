@@ -154,6 +154,10 @@ class FfiCore implements DomowikCore {
       _request(bridge.planSnap, handle, request);
 
   @override
+  CoreReply stairPreview(int handle, String request) =>
+      _request(bridge.planStairPreview, handle, request);
+
+  @override
   CoreReply sceneFrame(int handle, String request) =>
       _request(bridge.planSceneFrame, handle, request, binary: true);
 
@@ -207,10 +211,7 @@ class FfiCore implements DomowikCore {
   }
 
   @override
-  Future<Object?> assetsInBackground(
-    int handle,
-    Map<String, Object?> request,
-  ) {
+  Future<Object?> assetsInBackground(int handle, Map<String, Object?> request) {
     // The isolate binds its own copy of the bindings to the SAME loaded image,
     // so it reaches this process's plan registry rather than a second core.
     final image = bridge.loadedImagePath();

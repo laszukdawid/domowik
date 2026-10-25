@@ -291,6 +291,7 @@ class EditorShell extends StatelessWidget {
                     children: [
                       Expanded(
                         child: SingleChildScrollView(
+                          key: const ValueKey('drawing-toolbar-scroll'),
                           scrollDirection: Axis.horizontal,
                           child: tools,
                         ),

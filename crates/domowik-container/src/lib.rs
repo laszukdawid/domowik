@@ -285,7 +285,22 @@ pub const EMITTED_SCHEMA: &str = "0.1";
 /// migration can originate anywhere (§8.2 V4) and none is offered. Conflating
 /// the three is the defect issue 0031 fixed in the frozen Go tree under
 /// ED-0051; the Rust reader keeps them apart from the start.
-pub const SUPPORTED_SCHEMAS: &[&str] = &[EMITTED_SCHEMA];
+pub const ARCHITECTURE_SCHEMA: &str = "0.2";
+pub const SUPPORTED_SCHEMAS: &[&str] = &[EMITTED_SCHEMA, ARCHITECTURE_SCHEMA];
+
+fn architecture_used(snapshot: &Document, batches: &[Batch]) -> bool {
+    snapshot.has_architecture()
+        || batches.iter().any(|batch| {
+            batch.operations.iter().any(|op| {
+                matches!(&op.kind,
+        domowik_document::operation::OperationKind::CreateEntity { entity }
+            if matches!(entity, domowik_format::Entity::ConstructionBody(_)
+                | domowik_format::Entity::HostedOpening(_)
+                | domowik_format::Entity::LevelConnection(_)
+                | domowik_format::Entity::Staircase(_)))
+            })
+        })
+}
 
 /// FORMAT-SPEC §7.9: whether a package carries its own asset bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2062,6 +2077,13 @@ fn write_archive<W: Write + Seek>(
     // bytes are unchanged; when the bytes changed, their meaning for the new
     // bytes is unknown, so the write is refused rather than dropping them.
     let mut manifest = package.manifest.clone();
+    // Essential construction semantics must not be saved under the old schema,
+    // even when the entities survive only in undo/replay history.
+    if manifest.format_version == EMITTED_SCHEMA
+        && architecture_used(&package.snapshot, &package.batches)
+    {
+        manifest.format_version = ARCHITECTURE_SCHEMA.into();
+    }
     manifest.entries = entries
         .iter()
         .map(|(name, bytes)| {
@@ -2498,6 +2520,15 @@ fn read_package_from<R: Read + Seek>(
 
     let (batches, assets) = read_ops_and_blobs(&mut archive, &display, limits)?;
 
+    if manifest.format_version != ARCHITECTURE_SCHEMA
+        && architecture_used(&snapshot_section.document, &batches)
+    {
+        return Err(ContainerError::UnsupportedVersion {
+            path: display,
+            found: format!("{} with architectural entities", manifest.format_version),
+            supported: ARCHITECTURE_SCHEMA.into(),
+        });
+    }
     Ok(Package {
         manifest,
         snapshot: snapshot_section.document,
@@ -3335,6 +3366,48 @@ mod tests {
         assert!(!fresh.exists());
     }
 
+    #[test]
+    fn architectural_snapshot_uses_new_schema_and_mislabeled_old_schema_refuses() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("architecture.domo");
+        let mut pkg = sample();
+        pkg.snapshot
+            .construction_bodies
+            .push(domowik_format::ConstructionBody {
+                id: Uuid::now_v7(),
+                level_id: pkg.snapshot.levels[0].id,
+                name: "Synthetic platform".into(),
+                role: domowik_format::BodyRole::Platform,
+                footprint: domowik_format::RectFootprint {
+                    start_mm: [0.0, 0.0],
+                    end_mm: [2000.0, 0.0],
+                    width_mm: 1000.0,
+                },
+                bottom_offsets_mm: [-200.0, -200.0],
+                thickness_mm: 200.0,
+                unknown: Default::default(),
+            });
+        write_package(&path, &pkg).unwrap();
+        let reopened = read_package(&path).unwrap();
+        assert_eq!(reopened.manifest.format_version, ARCHITECTURE_SCHEMA);
+        assert_eq!(reopened.snapshot, pkg.snapshot);
+        let old = dir.path().join("mislabeled.domo");
+        write_raw_package(&old, &pkg);
+        assert!(matches!(
+            read_package(&old),
+            Err(ContainerError::UnsupportedVersion { .. })
+        ));
+        let mut future = pkg.clone();
+        future.manifest.format_version = "0.3".into();
+        let original = std::fs::read(&path).unwrap();
+        assert!(write_package(&path, &future).is_err());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            original,
+            "architecture must not downgrade an unsupported schema"
+        );
+    }
+
     fn sample() -> Package {
         let mut doc = Document::with_ground_floor();
         let level = doc.levels[0].id;
@@ -3500,7 +3573,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("future.domo");
         let mut pkg = sample();
-        pkg.manifest.format_version = "0.2".to_owned();
+        pkg.manifest.format_version = "0.3".to_owned();
 
         // Written by hand: `write_package` now REFUSES to produce a package
         // its own reader cannot read (§9.7 S2), so the artifact this test
@@ -3514,8 +3587,8 @@ mod tests {
                 // §8.2 V3 requires the diagnostic to name BOTH versions, so
                 // both are asserted; a message naming only one leaves its
                 // reader unable to tell which end is wrong.
-                assert_eq!(found, "0.2");
-                assert_eq!(supported, EMITTED_SCHEMA);
+                assert_eq!(found, "0.3");
+                assert_eq!(supported, SUPPORTED_SCHEMAS.join(", "));
             }
             other => panic!("expected UnsupportedVersion, got {other:?}"),
         }
@@ -3839,7 +3912,7 @@ mod tests {
         write_package(&path, &Package::new(Document::with_ground_floor())).expect("write");
 
         let mut future = Package::new(Document::default());
-        future.manifest.format_version = "0.2".to_owned();
+        future.manifest.format_version = "0.3".to_owned();
         let err = write_package(&path, &future).expect_err("must refuse");
         assert!(
             matches!(err, ContainerError::CandidateInvalid { .. }),

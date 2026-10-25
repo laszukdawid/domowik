@@ -6,6 +6,10 @@ Plain-language definitions used throughout Domowik.
 |---|---|
 | Actor | A single-writer replica epoch that creates one monotonic operation-counter stream. User identity is separate; one user may have several actors/devices. |
 | Asset | Non-geometric content such as a texture, image, font, furniture model, or Gaussian Splat dataset. |
+| Assembly | A meaningful architectural object coordinating primitives and generating dependent geometry; a staircase is an assembly, not a furniture asset. |
+| Construction body | Physical construction with a footprint and vertical extent, optionally sloping along its axis. |
+| Hosted opening | An explicit cut through a named construction body or a level's floor surfaces; it does not imply traversal. |
+| Level connection | Connectivity between positioned, elevation-referenced endpoints, independently of its physical assembly. |
 | Asset-root table | A stable package-level list of every referenced content digest, including those used by data a reader does not understand, so old readers can preserve them without interpreting them. |
 | Batch | A group of operations applied atomically: all succeed or none do. Order within a batch may be meaningful. |
 | CLI | Command-line interface. It runs without a graphical window and supports scripts and automation. |

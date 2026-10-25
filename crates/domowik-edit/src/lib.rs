@@ -34,6 +34,8 @@ use domowik_format::{
 use domowik_geometry::wall_contact::{axis_contact, crossing_point, AxisContact, AxisRole};
 use uuid::Uuid;
 
+pub mod architecture;
+
 /// Why an edit could not be built.
 #[derive(Debug, thiserror::Error)]
 pub enum EditError {

@@ -428,7 +428,7 @@ void main() {
       );
       expect(painter(tester).selectedIds, isEmpty);
       expect(painter(tester).walls.map((wall) => wall.id), scene.walls[0]);
-      await tap(tester, find.text('Door'));
+      await tap(tester, find.text('Doors'));
       await clickAt(
         tester,
         screenPoint(tester, const Offset(0, 1500)),
@@ -552,7 +552,7 @@ void main() {
           reason: 'an edit on another floor must not rederive this one',
         );
       }
-      await tap(tester, find.text('Door'));
+      await tap(tester, find.text('Doors'));
       final wall = moved.walls.single;
       await clickAt(
         tester,
@@ -1268,7 +1268,7 @@ void main() {
         tester.getTopLeft(getCanvas()) +
         camera(tester).toScreen(edge) -
         const Offset(0, 18);
-    await tap(tester, find.text('Door'));
+    await tap(tester, find.text('Doors'));
     await clickAt(tester, position, PointerDeviceKind.mouse);
     expect(painter(tester).derived.openings, isEmpty);
     expect(dirty(), isFalse);
@@ -1352,7 +1352,7 @@ void main() {
     dialog = (_) async => '${scratch.path}/opening-drag.domo';
     await tap(tester, find.text('Save'));
     final wall = painter(tester).walls.single;
-    await tap(tester, find.text('Door'));
+    await tap(tester, find.text('Doors'));
     final origin = tester.getTopLeft(getCanvas());
     for (final from in [
       camera(tester).toScreen(wall.start),
@@ -1377,7 +1377,7 @@ void main() {
       final top = tester.getTopLeft(getCanvas());
       final at = top + const Offset(225, 150);
       final wall = painter(tester).walls.single;
-      await tap(tester, find.text(kind));
+      await tap(tester, find.text('${kind}s'));
       await clickAt(tester, at, PointerDeviceKind.mouse);
       final opening = painter(tester).derived.openings.single;
       expect(opening.isDoor, kind == 'Door');
@@ -1407,7 +1407,7 @@ void main() {
     await start(tester);
     await draw(tester);
     final top = tester.getTopLeft(getCanvas());
-    await tap(tester, find.text('Door'));
+    await tap(tester, find.text('Doors'));
     await clickAt(
       tester,
       top + const Offset(225, 150),
@@ -1470,7 +1470,7 @@ void main() {
     await start(tester);
     await draw(tester);
     final top = tester.getTopLeft(getCanvas());
-    await tap(tester, find.text('Door'));
+    await tap(tester, find.text('Doors'));
     await clickAt(
       tester,
       top + const Offset(225, 150),
@@ -1522,7 +1522,7 @@ void main() {
         await start(tester);
         await draw(tester);
         final at = tester.getTopLeft(getCanvas()) + const Offset(225, 150);
-        await tap(tester, find.text(kind));
+        await tap(tester, find.text('${kind}s'));
         await clickAt(tester, at, PointerDeviceKind.mouse);
         await clickAt(tester, at, PointerDeviceKind.mouse);
         final opening = painter(tester).derived.openings.single;
@@ -1593,7 +1593,7 @@ void main() {
       await start(tester);
       await draw(tester);
       final at = tester.getTopLeft(getCanvas()) + const Offset(225, 150);
-      await tap(tester, find.text('Window'));
+      await tap(tester, find.text('Windows'));
       await clickAt(tester, at, PointerDeviceKind.mouse);
       await clickAt(tester, at, PointerDeviceKind.mouse);
       final opening = painter(tester).derived.openings.single;
@@ -1664,7 +1664,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         final initialWalls = painter(tester).walls.toList();
-        await tap(tester, find.text(kind));
+        await tap(tester, find.text('${kind}s'));
         final from = top + const Offset(225, 150);
         await clickAt(tester, from, PointerDeviceKind.mouse);
         await clickAt(tester, from, PointerDeviceKind.mouse);
@@ -1702,7 +1702,7 @@ void main() {
     final top = tester.getTopLeft(getCanvas());
     await tester.dragFrom(top + const Offset(200, 350), const Offset(50, 0));
     await tester.pumpAndSettle();
-    await tap(tester, find.text('Window'));
+    await tap(tester, find.text('Windows'));
     final from = top + const Offset(225, 150);
     await clickAt(tester, from, PointerDeviceKind.mouse);
     await clickAt(tester, from, PointerDeviceKind.mouse);
@@ -1727,7 +1727,7 @@ void main() {
     await start(tester);
     await draw(tester);
     final top = tester.getTopLeft(getCanvas());
-    await tap(tester, find.text('Window'));
+    await tap(tester, find.text('Windows'));
     await clickAt(
       tester,
       top + const Offset(225, 150),
@@ -1767,7 +1767,7 @@ void main() {
     await start(tester);
     await draw(tester);
     final top = tester.getTopLeft(getCanvas());
-    await tap(tester, find.text('Window'));
+    await tap(tester, find.text('Windows'));
     await clickAt(
       tester,
       top + const Offset(225, 150),
@@ -1795,7 +1795,7 @@ void main() {
       await start(tester);
       await draw(tester);
       final top = tester.getTopLeft(getCanvas());
-      await tap(tester, find.text('Door'));
+      await tap(tester, find.text('Doors'));
       await clickAt(
         tester,
         top + const Offset(225, 150),
@@ -2058,7 +2058,7 @@ void main() {
     'view changes stay clean; saved edits followed by undo become dirty',
     (tester) async {
       await start(tester);
-      await tap(tester, find.text('Door'));
+      await tap(tester, find.text('Doors'));
       await tap(tester, find.widgetWithText(ChoiceChip, 'Walls'));
       expect(dirty(), isFalse);
       await draw(tester);
@@ -3346,7 +3346,7 @@ void main() {
       expect(historyButton(tester, 'Undo').onPressed, isNull);
       gesture = await tester.startGesture(point);
       await gesture.moveBy(const Offset(200, 0));
-      await tap(tester, find.text('Door'));
+      await tap(tester, find.text('Doors'));
       await gesture.up();
       await tester.pumpAndSettle();
       expect(painter(tester).draft, isNull);

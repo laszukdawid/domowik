@@ -56,6 +56,7 @@ mod exact_det;
 mod wall_overlap_exact;
 
 pub mod aabb_tree;
+pub mod architecture;
 pub mod arrangement;
 pub mod boolean;
 pub mod cuts;

@@ -106,8 +106,10 @@ void main() {
     (tester) async {
       await start(tester);
       for (final key in ['snap-grid', 'snap-object', 'snap-angle']) {
+        await tester.ensureVisible(find.byKey(ValueKey(key)));
         await tester.tap(find.byKey(ValueKey(key)));
       }
+      await tester.ensureVisible(find.byKey(const ValueKey('wall-chain-tool')));
       await tester.tap(find.byKey(const ValueKey('wall-chain-tool')));
       await tester.pumpAndSettle();
       final top = tester.getTopLeft(canvas());

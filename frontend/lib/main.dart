@@ -15,6 +15,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -51,6 +52,8 @@ import 'warnings_banner.dart';
 import 'plan_painter.dart';
 import 'wall_chain_state.dart';
 import 'benchmark_stats.dart';
+import 'staircase_properties_form.dart';
+import 'live_property_edits.dart';
 
 // Preserve the editor's existing public imports while keeping scene payloads
 // and painting separate from the editor's input/file lifecycle.
@@ -80,7 +83,7 @@ bool get _firstFrameProbeRequested =>
 /// A mismatch is fatal on purpose. The header says a caller reading a
 /// different number must not proceed, and an app that proceeded anyway would
 /// be interpreting one struct layout as another.
-const int expectedAbi = 17;
+const int expectedAbi = 19;
 
 void main(List<String> arguments) {
   // Native builds may be launched as a headless probe; see platform/entry.dart.
@@ -120,6 +123,7 @@ class DomowikApp extends StatelessWidget {
 
 /// What a drag is doing, decided when it starts.
 enum _DragMode {
+  staircase,
   none,
   draw,
   endpoint,
@@ -193,6 +197,7 @@ class _PlanPageState extends State<PlanPage>
     with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   late final TabController _inspectorTabs;
   final ScrollController _selectionScroll = ScrollController();
+  final LivePropertyEdits _livePropertyEdits = LivePropertyEdits();
   DomowikCore? _bridge;
   String? _loadError;
   int _abi = 0;
@@ -213,6 +218,7 @@ class _PlanPageState extends State<PlanPage>
     askToLeave: _askToLeave,
     save: _saveFile,
     beforeAction: () {
+      _livePropertyEdits.flush();
       if (!_acceptAssetPose()) {
         throw StateError('Fix invalid placement values before continuing.');
       }
@@ -233,6 +239,11 @@ class _PlanPageState extends State<PlanPage>
   final PlanGeometryCache _geometryCache = PlanGeometryCache();
   Map<String, String> _currentGeometryKeys = const {};
   List<PlanLayer> _backgroundLevels = const [];
+  Offset? _stairStart;
+  List<PlanConstruction> _stairPreview = const [];
+  Offset? _stairHoverScreen;
+  bool _stairPreviewReevalScheduled = false;
+  String? _expandedStaircaseId;
 
   List<Wall> _walls = const [];
   List<AssetFootprint> _assetInstances = const [];
@@ -676,6 +687,12 @@ class _PlanPageState extends State<PlanPage>
           good = good && await _probeSceneFollowsHistory(view, after);
           good = good && await _probeHiddenLoadReloadsWhenShown(view);
           good = good && await _probeResizeKeepsPoolBounded(view);
+        } else {
+          // Linux's pushed scene packet must reject invalid instances without
+          // installing even its otherwise valid replacement meshes/camera.
+          good = good && await _probeRejectedScenePacket(view);
+          good =
+              good && await _probeSceneFollowsHistory(view, await view.stats());
         }
         if (hostEnvironment('DOMOWIK_3D_ORIENTATION_PROBE') == '1') {
           final orientation = await view.probeOrientation();
@@ -722,6 +739,47 @@ class _PlanPageState extends State<PlanPage>
       stats = await view.stats();
     }
     return stats;
+  }
+
+  Future<bool> _probeRejectedScenePacket(ThreeDViewState view) async {
+    final before = await view.stats();
+    var rejected = false;
+    try {
+      await ThreeDViewState.channel.invokeMethod<void>('scene', {
+        'session': view.session,
+        'meshes': {
+          'builtin:cube': {'vertices': Float32List(30)},
+        },
+        'matrix': Float64List.fromList(
+          List.generate(16, (i) => i % 5 == 0 ? 1.0 : 0.0),
+        ),
+        'width': 512,
+        'height': 512,
+        'nodes': [
+          {'mesh': 'builtin:cube', 'matrix': Float32List(1)},
+        ],
+      });
+    } on PlatformException {
+      rejected = true;
+    }
+    await view.diagnosticCapture();
+    final after = await _awaitStats(
+      view,
+      (s) => (s['frames'] as int) > (before['frames'] as int),
+    );
+    final good =
+        rejected &&
+        after['sceneUpdates'] == before['sceneUpdates'] &&
+        after['meshUploads'] == before['meshUploads'] &&
+        after['instanceUploads'] == before['instanceUploads'] &&
+        after['triangles'] == before['triangles'] &&
+        (after['diagnosticPixels'] as int) > 1000;
+    hostLog(
+      good
+          ? '3D SCENE ATOMICITY PROBE PASSED'
+          : '3D SCENE ATOMICITY PROBE FAILED',
+    );
+    return good;
   }
 
   /// Undoing the last placement must remove its geometry from the 3D scene
@@ -906,6 +964,7 @@ class _PlanPageState extends State<PlanPage>
 
   @override
   void dispose() {
+    _livePropertyEdits.cancel();
     _inspectorTabs.dispose();
     _selectionScroll.dispose();
     for (final image in _modelPreviews.values) {
@@ -1197,15 +1256,13 @@ class _PlanPageState extends State<PlanPage>
           if (!mounted || core == null || _handle != handle) {
             throw StateError('The plan is no longer open');
           }
-          final result =
-              await core.assetsInBackground(handle, {
-                    'kind': 'thumbnail',
-                    if (model.file != null) 'file': model.file,
-                    if (model.file != null && model.sourceDirectory != null)
-                      'sourceDirectory': model.sourceDirectory,
-                    if (model.file == null) 'digest': model.digest,
-                  })
-                  as Map<String, Object?>;
+          final result = await core.assetsInBackground(handle, {
+            'kind': 'thumbnail',
+            if (model.file != null) 'file': model.file,
+            if (model.file != null && model.sourceDirectory != null)
+              'sourceDirectory': model.sourceDirectory,
+            if (model.file == null) 'digest': model.digest,
+          }) as Map<String, Object?>;
           return Uint8List.fromList((result['png'] as List).cast<int>());
         },
         onUpload: _modelUploads ? () => _uploadModel(handle) : null,
@@ -1374,9 +1431,10 @@ class _PlanPageState extends State<PlanPage>
       _setStatus('Importing ${choice.model.name}…', isError: false);
       Map<String, Object?>? result;
       try {
-        result =
-            await core.assetsInBackground(_handle, request)
-                as Map<String, Object?>?;
+        result = await core.assetsInBackground(
+          _handle,
+          request,
+        ) as Map<String, Object?>?;
       } catch (e) {
         if (mounted)
           setState(() => _setStatus('Model import failed: $e', isError: true));
@@ -1452,12 +1510,10 @@ class _PlanPageState extends State<PlanPage>
     try {
       final core = _bridge;
       if (core != null) {
-        final size =
-            await core.assetsInBackground(_handle, {
-                  'kind': 'size',
-                  'digest': asset.digest,
-                })
-                as Map<String, Object?>;
+        final size = await core.assetsInBackground(_handle, {
+          'kind': 'size',
+          'digest': asset.digest,
+        }) as Map<String, Object?>;
         return math.max(
           1.0,
           asset.widthMm * (size['heightRatio'] as num).toDouble(),
@@ -1774,12 +1830,10 @@ class _PlanPageState extends State<PlanPage>
         ui.Image? image;
         String? error;
         try {
-          final payload =
-              await core.assetsInBackground(handle, {
-                    'kind': 'preview',
-                    'digest': asset.digest,
-                  })
-                  as Map<String, Object?>;
+          final payload = await core.assetsInBackground(handle, {
+            'kind': 'preview',
+            'digest': asset.digest,
+          }) as Map<String, Object?>;
           final png = Uint8List.fromList((payload['png'] as List).cast<int>());
           final codec = await ui.instantiateImageCodec(png);
           try {
@@ -2131,7 +2185,16 @@ class _PlanPageState extends State<PlanPage>
       // entities cover field edits; unrelated levels keep their cached result.
       final geometryKeys = {
         for (final entry in geometryInputs.entries)
-          entry.key: jsonEncode(entry.value),
+          entry.key: jsonEncode([
+            entry.value,
+            document['constructionBodies'],
+            document['hostedOpenings'],
+            document['levelConnections'],
+            document['staircases'],
+            if ((document['staircases'] as List<Object?>? ?? const [])
+                .isNotEmpty)
+              document['levels'],
+          ]),
       };
       setState(() {
         _dirty = state['dirty'] as bool;
@@ -2225,6 +2288,12 @@ class _PlanPageState extends State<PlanPage>
             .map((e) => RoomRecordView.fromJson(e as Map<String, Object?>))
             .toList(),
         drawn: j['drawn'] == null ? null : rings('drawn'),
+        floorSurfaces: j['floorSurfaces'] == null
+            ? null
+            : rings('floorSurfaces'),
+        construction: ((j['construction'] as List<Object?>?) ?? const [])
+            .map((e) => PlanConstruction.fromJson(e as Map<String, Object?>))
+            .toList(),
       );
     }
   }
@@ -2285,6 +2354,13 @@ class _PlanPageState extends State<PlanPage>
       if (next != null) bounds = bounds?.expandToInclude(next) ?? next;
     }
     _contentBounds = bounds;
+    if (_placing == 'staircase' && !_canAddStairs) {
+      _placing = null;
+      _stairStart = null;
+      _stairPreview = const [];
+      _stairHoverScreen = null;
+      _hoverCursor = SystemMouseCursors.basic;
+    }
     _loadModelPreviews();
     _outstandingBuffers = bridge.outstandingBuffers();
   }
@@ -2296,6 +2372,7 @@ class _PlanPageState extends State<PlanPage>
       return;
     }
     if (!_acceptAssetPose()) return;
+    _livePropertyEdits.flush();
     _cancelDrag();
     setState(() {
       if (!_levelView.activate(id)) return;
@@ -2726,6 +2803,7 @@ class _PlanPageState extends State<PlanPage>
 
   void _changeHistory({bool redo = false}) {
     if (_fileActionPending) return;
+    _livePropertyEdits.flush();
     if (!_acceptAssetPose()) return;
     _cancelDrag();
     final bridge = _bridge;
@@ -2843,7 +2921,9 @@ class _PlanPageState extends State<PlanPage>
             const SizedBox(width: 8),
             _wallsTool(),
             const SizedBox(width: 8),
-            _tool('Door', Icons.door_front_door_outlined, 'door'),
+            _stairsTool(),
+            const SizedBox(width: 8),
+            _tool('Doors', Icons.door_front_door_outlined, 'door'),
             PopupMenuButton<String>(
               key: const ValueKey('door-type-menu'),
               tooltip: 'Choose door type',
@@ -2867,7 +2947,7 @@ class _PlanPageState extends State<PlanPage>
               ],
             ),
             const SizedBox(width: 8),
-            _tool('Window', Icons.window_outlined, 'window'),
+            _tool('Windows', Icons.window_outlined, 'window'),
             PopupMenuButton<String>(
               key: const ValueKey('window-type-menu'),
               tooltip: 'Choose window type',
@@ -2958,9 +3038,8 @@ class _PlanPageState extends State<PlanPage>
                     alignment: Alignment.bottomLeft,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surface.withValues(alpha: 0.85),
+                        color: Theme.of(context).colorScheme.surface
+                            .withValues(alpha: 0.85),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Padding(
@@ -2977,6 +3056,8 @@ class _PlanPageState extends State<PlanPage>
                               ? 'Drag empty space to select · Shift-click to add · Drag selection to move'
                               : _placing == 'asset'
                               ? 'Click to place ${_assetChoice?.model.name ?? 'model'} · Esc to cancel'
+                              : _placing == 'staircase'
+                              ? 'Click or drag from this floor’s upper end toward the lower end · Esc to cancel'
                               : 'Click a wall to place a $_placing',
                           style: Theme.of(context).textTheme.labelSmall,
                         ),
@@ -3005,7 +3086,11 @@ class _PlanPageState extends State<PlanPage>
                     ),
                   ),
                 ),
-              if (_walls.isEmpty && _activeAssets.isEmpty)
+              if (_walls.isEmpty &&
+                  _activeAssets.isEmpty &&
+                  _derived.construction.isEmpty &&
+                  _stairPreview.isEmpty &&
+                  _placing != 'staircase')
                 const Center(
                   child: IgnorePointer(
                     child: Column(
@@ -3180,6 +3265,62 @@ class _PlanPageState extends State<PlanPage>
     );
   }
 
+  bool get _canAddStairs {
+    final active = _levels.where((l) => l.id == _levelId).firstOrNull;
+    return active != null &&
+        _levels.any((l) => l.elevationMm < active.elevationMm);
+  }
+
+  Widget _stairsTool() => ChoiceChip(
+    key: const ValueKey('add-stairs-tool'),
+    avatar: const Icon(Icons.stairs_outlined, size: 18),
+    label: const Text('Stairs'),
+    tooltip: _canAddStairs
+        ? 'Draw downstairs from this floor to the nearest level below'
+        : 'Add a level below this floor before drawing stairs',
+    selected: _placing == 'staircase',
+    showCheckmark: false,
+    onSelected: !_canAddStairs
+        ? null
+        : (_) {
+            if (!_acceptAssetPose()) return;
+            _cancelDrag();
+            setState(() {
+              _wallChainTool = false;
+              _chain.clear();
+              _placing = 'staircase';
+              _hoverCursor = SystemMouseCursors.precise;
+              _inspectorTabs.index = 1;
+            });
+            _canvasFocus.requestFocus();
+          },
+  );
+
+  Map<String, Object?> _stairDrawingRequest(Offset start, Offset end) => {
+    'upperLevelId': _levelId,
+    'startMm': [start.dx, start.dy],
+    'endMm': [end.dx, end.dy],
+  };
+
+  void _updateStairPreview(Offset end) {
+    final start = _stairStart ?? _dragFrom, core = _bridge;
+    if (start == null || core == null) return;
+    if (start == end) {
+      setState(() => _stairPreview = const []);
+      return;
+    }
+    final reply = core.stairPreview(
+      _handle,
+      jsonEncode(_stairDrawingRequest(start, end)),
+    );
+    final graphics = reply.succeeded
+        ? (jsonDecode(reply.text!) as List<Object?>)
+              .map((v) => PlanConstruction.fromJson(v as Map<String, Object?>))
+              .toList()
+        : <PlanConstruction>[];
+    setState(() => _stairPreview = graphics);
+  }
+
   /// Canvas navigation uses the same transform as painting and gestures.
   ///
   /// Coordinates are converted through the SAME transform the painter used, so
@@ -3202,6 +3343,7 @@ class _PlanPageState extends State<PlanPage>
         _pointerPosition != null) {
       _dragTo = view.toPlan(_pointerPosition!);
       if ((_mode == _DragMode.draw ||
+              _mode == _DragMode.staircase ||
               _editingDrag ||
               _mode == _DragMode.opening) &&
           _dragClassified &&
@@ -3213,6 +3355,8 @@ class _PlanPageState extends State<PlanPage>
           final cursor = _view.toPlan(_pointerPosition!);
           if (_mode == _DragMode.draw) {
             _evaluateCreationSnap(cursor);
+          } else if (_mode == _DragMode.staircase) {
+            _updateStairPreview(cursor);
           } else if (_editingDrag) {
             _evaluateEditSnap(cursor);
           } else if (_mode == _DragMode.opening) {
@@ -3235,6 +3379,22 @@ class _PlanPageState extends State<PlanPage>
             _chain.anchor != null &&
             _chainHoverScreen != null) {
           _evaluateChainHover(_chainHoverScreen!);
+        }
+      });
+    }
+    if (_placing == 'staircase' &&
+        _stairStart != null &&
+        _activePointer == null &&
+        _stairHoverScreen != null &&
+        !_stairPreviewReevalScheduled) {
+      _stairPreviewReevalScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _stairPreviewReevalScheduled = false;
+        if (mounted &&
+            _placing == 'staircase' &&
+            _stairStart != null &&
+            _stairHoverScreen != null) {
+          _updateStairPreview(_view.toPlan(_stairHoverScreen!));
         }
       });
     }
@@ -3275,7 +3435,9 @@ class _PlanPageState extends State<PlanPage>
     if (_activePointer == null &&
         _navigationStart == null &&
         !clearSelection &&
-        !chainPending) {
+        !chainPending &&
+        _stairStart == null &&
+        _stairPreview.isEmpty) {
       return;
     }
     final poseBeforeDrag = _poseDragInitial;
@@ -3299,6 +3461,9 @@ class _PlanPageState extends State<PlanPage>
       _activePointer = null;
       _dragFrom = null;
       _dragTo = null;
+      _stairStart = null;
+      _stairPreview = const [];
+      _stairHoverScreen = null;
       _dragWall = null;
       _dragOpening = null;
       _openingTargetHost = null;
@@ -3622,6 +3787,8 @@ class _PlanPageState extends State<PlanPage>
               if (_mode == _DragMode.assetRotate && _dragClassified)
                 _updateAssetRotation(_view.toPlan(event.localPosition));
               if (_dragClassified) _scheduleDragPreview();
+              if (_mode == _DragMode.staircase && _dragClassified)
+                _updateStairPreview(_view.toPlan(event.localPosition));
             },
             onPointerUp: (event) {
               if (!event.localPosition.dx.isFinite ||
@@ -3671,6 +3838,13 @@ class _PlanPageState extends State<PlanPage>
                 final at = _view.toPlan(event.localPosition);
                 if (!_finite(at)) return;
                 _hoverPlanMm = at;
+                if (_placing == 'staircase' &&
+                    _stairStart != null &&
+                    _activePointer == null) {
+                  _stairHoverScreen = event.localPosition;
+                  _updateStairPreview(at);
+                  return;
+                }
                 if (_poseAssetId != null) {
                   final next = _assetRotationHandleHit(event.localPosition)
                       ? SystemMouseCursors.grab
@@ -3714,7 +3888,10 @@ class _PlanPageState extends State<PlanPage>
                 }
                 if (next != _hoverCursor) setState(() => _hoverCursor = next);
               },
-              onExit: (_) => _hoverPlanMm = null,
+              onExit: (_) {
+                _hoverPlanMm = null;
+                _stairHoverScreen = null;
+              },
               child: ColoredBox(
                 color: const Color(0xFFFAFAF7),
                 child: CustomPaint(
@@ -3738,6 +3915,7 @@ class _PlanPageState extends State<PlanPage>
                         ? (_selection.ids, _dragTo! - _dragFrom!)
                         : null,
                     modelPreviews: _modelPreviews,
+                    constructionPreview: _stairPreview,
                     assetPreview:
                         _mode == _DragMode.asset &&
                             _dragClassified &&
@@ -3812,6 +3990,10 @@ class _PlanPageState extends State<PlanPage>
         _snapStartQueried = true;
       }
       return _DragMode.draw;
+    }
+    if (_placing == 'staircase') {
+      _dragFrom = _stairStart ?? at;
+      return _DragMode.staircase;
     }
     if (_placing != null) return _DragMode.place;
     if (_poseAssetId != null) {
@@ -3960,16 +4142,14 @@ class _PlanPageState extends State<PlanPage>
         _setStatus('hit test failed: ${_describe(reply.code)}', isError: true);
         return null;
       }
-      final assetHits =
-          _assetRequest({
-                'kind': 'hit',
-                'levelId': level,
-                'pointMm': [at.dx, at.dy],
-                'radiusMm':
-                    (_pointerKind == PointerDeviceKind.touch ? 24.0 : 12.0) /
-                    _view.zoom,
-              })
-              as List<Object?>?;
+      final assetHits = _assetRequest({
+        'kind': 'hit',
+        'levelId': level,
+        'pointMm': [at.dx, at.dy],
+        'radiusMm':
+            (_pointerKind == PointerDeviceKind.touch ? 24.0 : 12.0) /
+            _view.zoom,
+      }) as List<Object?>?;
       if (assetHits == null) return null;
       return [...(jsonDecode(reply.text!) as List<Object?>), ...assetHits].map((
         entry,
@@ -4599,6 +4779,32 @@ class _PlanPageState extends State<PlanPage>
     });
 
     // Releasing the handle keeps a draft only, including a click without drag.
+    if (mode == _DragMode.staircase) {
+      if (from == null || to == null) return;
+      if (!classified && _stairStart == null) {
+        setState(() => _stairStart = from);
+        return;
+      }
+      final existing = _derived.construction.map((s) => s.id).toSet();
+      final code = _gesture({
+        'kind': 'addDescendingStaircase',
+        'request': _stairDrawingRequest(from, to),
+      }, 'add staircase');
+      setState(() {
+        _stairStart = null;
+        _stairPreview = const [];
+        if (code == ok) {
+          _expandedStaircaseId = _derived.construction
+              .where((s) => s.kind == 'staircase' && !existing.contains(s.id))
+              .firstOrNull
+              ?.id;
+          _inspectorTabs.index = 1;
+        }
+      });
+      return;
+    }
+
+    // Releasing the handle keeps a draft only, including a click without drag.
     // In particular, it must not fall through to object selection or history.
     if (mode == _DragMode.assetRotate) return;
     if (mode == _DragMode.poseAccept) {
@@ -4629,6 +4835,8 @@ class _PlanPageState extends State<PlanPage>
     }
 
     switch (mode) {
+      case _DragMode.staircase:
+        return;
       case _DragMode.asset:
         final asset = _activeAssets.where((a) => a.id == wall).firstOrNull;
         if (asset != null && from != null && to != null && from != to) {
@@ -5033,13 +5241,11 @@ class _PlanPageState extends State<PlanPage>
     final anchor = assets.any((a) => a.id == primary)
         ? primary!
         : assets.first.id;
-    final result =
-        _assetMutation({
-              'kind': cut ? 'cut' : 'copy',
-              'instanceIds': [for (final a in assets) a.id],
-              'referenceId': anchor,
-            }, cut ? 'Cut model' : 'Copy model')
-            as Map<String, Object?>?;
+    final result = _assetMutation({
+      'kind': cut ? 'cut' : 'copy',
+      'instanceIds': [for (final a in assets) a.id],
+      'referenceId': anchor,
+    }, cut ? 'Cut model' : 'Copy model') as Map<String, Object?>?;
     if (result == null) return;
     final count = result['clipboardCount'] as int? ?? assets.length;
     final label = count == 1 ? '1 model' : '$count models';
@@ -5064,17 +5270,12 @@ class _PlanPageState extends State<PlanPage>
     if (levelId == null) return;
     final target = at ?? _hoverPlanMm ?? _viewportCentreMm;
     if (target == null) return;
-    final response =
-        _assetMutation({
-              'kind': 'paste',
-              'levelId': levelId,
-              // Whole-millimetre placement resolution (roundPositionMm).
-              'positionMm': [
-                roundPositionMm(target.dx),
-                roundPositionMm(target.dy),
-              ],
-            }, 'Paste')
-            as Map<String, Object?>?;
+    final response = _assetMutation({
+      'kind': 'paste',
+      'levelId': levelId,
+      // Whole-millimetre placement resolution (roundPositionMm).
+      'positionMm': [roundPositionMm(target.dx), roundPositionMm(target.dy)],
+    }, 'Paste') as Map<String, Object?>?;
     if (response == null) return;
     final id = response['instanceId'] as String?;
     if (id == null) return;
@@ -5177,6 +5378,68 @@ class _PlanPageState extends State<PlanPage>
         ),
     ];
   }
+
+  List<Widget> _staircasePanel(ThemeData theme) => [
+    const Divider(height: 24),
+    Text('Stairs', style: theme.textTheme.titleSmall),
+    if (_derived.construction.every((item) => item.kind != 'staircase'))
+      const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Text('Use Stairs to draw down to the level below.'),
+      ),
+    for (final item in _derived.construction.where(
+      (item) => item.kind == 'staircase',
+    ))
+      ExpansionTile(
+        // Expansion stores a bool; the inspector and text scrollables store
+        // doubles. Separate PageStorage paths prevent their values colliding.
+        key: PageStorageKey('stair-card-${item.id}'),
+        initiallyExpanded: _expandedStaircaseId == item.id,
+        maintainState: true,
+        childrenPadding: const EdgeInsets.symmetric(vertical: 8),
+        leading: const Icon(Icons.stairs),
+        title: Text(item.name),
+        subtitle: Text(item.direction),
+        onExpansionChanged: (expanded) =>
+            setState(() => _expandedStaircaseId = expanded ? item.id : null),
+        children: [
+          if (item.staircase != null)
+            StaircasePropertiesForm(
+              key: ValueKey('stair-properties-$_handle-$_levelId-${item.id}'),
+              name: item.name,
+              properties: item.staircase!,
+              revision: _documentRevision,
+              units: _userConfig.unitSystem,
+              enabled: !_fileActionPending,
+              liveEdits: _livePropertyEdits,
+              onChanged: (changes) =>
+                  _gesture({
+                    'kind': 'setStaircase',
+                    'staircaseId': item.id,
+                    ...changes,
+                  }, 'edit staircase') ==
+                  ok,
+            ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Tooltip(
+              message: 'Remove stairs; keep the independent floor opening',
+              child: TextButton.icon(
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Remove stairs'),
+                onPressed: () {
+                  _livePropertyEdits.cancel();
+                  _gesture({
+                    'kind': 'deleteStaircase',
+                    'staircaseId': item.id,
+                  }, 'remove staircase');
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+  ];
 
   /// Names or renames one room face.
   ///
@@ -5436,6 +5699,7 @@ class _PlanPageState extends State<PlanPage>
           'Floor area',
           _userConfig.unitSystem.area(_derived.floorAreaMm2),
         ),
+        ..._staircasePanel(theme),
         ..._roomPanel(theme),
       ],
     );

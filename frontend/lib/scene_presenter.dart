@@ -15,6 +15,11 @@ import 'package:flutter/widgets.dart';
 /// resident mesh buffers. A missing/stale baseline returns a full scene and
 /// a new token. Receivers must not upload the names-only mesh entries as empty
 /// geometry; if resident resources are lost, retry a full load.
+/// Linux push updates carry mutable `meshes`, `nodes`, and the rebased camera
+/// (`matrix`, `width`, `height`) in one `scene` packet. The presenter validates
+/// before replacing anything and installs the packet under the render lock.
+/// Separate `mesh` calls are only for immutable content-addressed model data;
+/// they must not replace visible geometry during a scene upload.
 abstract interface class ScenePresenter {
   Future<T?> invokeMethod<T>(String method, [Object? arguments]);
   Future<Map<K, V>?> invokeMapMethod<K, V>(String method, [Object? arguments]);

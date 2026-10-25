@@ -87,6 +87,9 @@ abstract interface class DomowikCore {
   CoreReply hitTest(int handle, String request);
   CoreReply marquee(int handle, String request);
   CoreReply snap(int handle, String request);
+
+  /// Read-only Rust-derived graphics for an upper-to-lower stair drawing.
+  CoreReply stairPreview(int handle, String request);
   CoreReply undo(int handle);
   CoreReply redo(int handle);
   CoreReply state(int handle);

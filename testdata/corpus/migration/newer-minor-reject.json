@@ -1,11 +1,11 @@
 {
- "formatVersion": "0.2",
+ "formatVersion": "0.3",
  "profile": "thin",
  "assetRoot": [],
  "entries": {},
  "expectedOutcome": {
   "outcome": "reject",
   "category": "unsupported-version",
-  "detail": "V3: reader supports minor 1; package minor 2 exceeds it; diagnostic names both versions; no best-effort parsing"
+  "detail": "V3: reader supports 0.1 and 0.2; package 0.3 is unsupported; diagnostic names supported versions; no best-effort parsing"
  }
 }

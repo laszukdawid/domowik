@@ -198,6 +198,26 @@ bool floats(FlValue* value,size_t expected,std::vector<float>& out){
   else return false;
   return std::all_of(out.begin(),out.end(),[](float v){return std::isfinite(v);});
 }
+bool decode_mesh(FlValue* args,Mesh& incoming){
+  if(!floats(field(args,"vertices"),0,incoming.vertices)||incoming.vertices.size()%30)return false;
+  FlValue* t=field(args,"texture");
+  if(!t)return true;
+  auto dimension=[&](const char* key,int max){FlValue* v=field(t,key);return v&&fl_value_get_type(v)==FL_VALUE_TYPE_INT&&fl_value_get_int(v)>0&&fl_value_get_int(v)<=max?static_cast<int>(fl_value_get_int(v)):0;};
+  incoming.width=dimension("width",2048);incoming.height=dimension("height",2048);incoming.layers=dimension("layers",16);
+  const uint64_t size=uint64_t(incoming.width)*incoming.height*incoming.layers*4;FlValue* rgba=field(t,"rgba");
+  if(!incoming.width||!incoming.height||!incoming.layers||size>64*1024*1024||!rgba||fl_value_get_type(rgba)!=FL_VALUE_TYPE_UINT8_LIST||fl_value_get_length(rgba)!=size||!floats(field(t,"coordinates"),incoming.vertices.size()/10*5,incoming.coordinates)||incoming.coordinates.size()!=incoming.vertices.size()/10*5)return false;
+  for(size_t i=0;i<incoming.coordinates.size();i+=5){const float* uv=&incoming.coordinates[i];if(std::abs(uv[0])>1e6f||std::abs(uv[1])>1e6f||uv[2]<-1||uv[2]>=incoming.layers||std::floor(uv[2])!=uv[2]||uv[3]<0||uv[3]>2||std::floor(uv[3])!=uv[3]||uv[4]<0||uv[4]>2||std::floor(uv[4])!=uv[4])return false;}
+  const auto* bytes=fl_value_get_uint8_list(rgba);incoming.rgba.assign(bytes,bytes+size);return true;
+}
+bool same_mesh(const Mesh& a,const Mesh& b){return a.vertices==b.vertices&&a.coordinates==b.coordinates&&a.rgba==b.rgba&&a.width==b.width&&a.height==b.height&&a.layers==b.layers;}
+// The caller holds the scene mutex; all displaced GPU objects are retired on
+// the GL thread. Unchanged mesh buffers remain resident across scene commits.
+void install_mesh(Renderer* r,Renderer* old,const std::string& key,Mesh incoming){
+  auto existing=r->meshes.find(key);
+  if(existing==r->meshes.end()){r->meshes.emplace(key,std::move(incoming));r->scene_dirty=true;}
+  else if(!same_mesh(existing->second,incoming)){old->meshes.emplace(key,std::move(existing->second));existing->second=std::move(incoming);r->scene_dirty=true;}
+}
+void retire(Renderer* old){if(old->meshes.empty()&&old->groups.empty()){delete old;return;}std::lock_guard<std::mutex> lock(retired_mutex);retired.push_back(old);}
 void success(FlMethodCall* call,FlValue* value=nullptr){fl_method_call_respond_success(call,value,nullptr);}
 void reject(FlMethodCall* call,const char* message){fl_method_call_respond_error(call,"3d-renderer",message,nullptr,nullptr);}
 void notify(Channel* c){fl_texture_registrar_mark_texture_frame_available(c->registrar,FL_TEXTURE(c->texture));}
@@ -230,29 +250,41 @@ void method(FlMethodChannel*,FlMethodCall* call,gpointer data){
   if(g_strcmp0(name,"reset")==0){auto* old=new Renderer();old->context=r->context;old->meshes=std::move(r->meshes);old->groups=std::move(r->groups);{std::lock_guard<std::mutex> retired_lock(retired_mutex);retired.push_back(old);}r->meshes.clear();r->groups.clear();r->scene_dirty=true;notify(c);success(call);return;}
   if(g_strcmp0(name,"mesh")==0){
     FlValue* id=field(args,"id");Mesh incoming;
-    if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!floats(field(args,"vertices"),0,incoming.vertices)||incoming.vertices.size()%30){reject(call,"Invalid triangle vertex buffer");return;}
-    FlValue* t=field(args,"texture");
-    if(t){
-      auto dimension=[&](const char* key,int max){FlValue* v=field(t,key);return v&&fl_value_get_type(v)==FL_VALUE_TYPE_INT&&fl_value_get_int(v)>0&&fl_value_get_int(v)<=max?static_cast<int>(fl_value_get_int(v)):0;};
-      incoming.width=dimension("width",2048);incoming.height=dimension("height",2048);incoming.layers=dimension("layers",16);
-      const uint64_t size=uint64_t(incoming.width)*incoming.height*incoming.layers*4;FlValue* rgba=field(t,"rgba");
-      if(!incoming.width||!incoming.height||!incoming.layers||size>64*1024*1024||!rgba||fl_value_get_type(rgba)!=FL_VALUE_TYPE_UINT8_LIST||fl_value_get_length(rgba)!=size||!floats(field(t,"coordinates"),incoming.vertices.size()/10*5,incoming.coordinates)||incoming.coordinates.size()!=incoming.vertices.size()/10*5){reject(call,"Invalid base-colour texture");return;}
-      for(size_t i=0;i<incoming.coordinates.size();i+=5){const float* uv=&incoming.coordinates[i];if(std::abs(uv[0])>1e6f||std::abs(uv[1])>1e6f||uv[2]<-1||uv[2]>=incoming.layers||std::floor(uv[2])!=uv[2]||uv[3]<0||uv[3]>2||std::floor(uv[3])!=uv[3]||uv[4]<0||uv[4]>2||std::floor(uv[4])!=uv[4]){reject(call,"Invalid UV coordinates/layer/wrap");return;}}
-      const auto* bytes=fl_value_get_uint8_list(rgba);incoming.rgba.assign(bytes,bytes+size);
-    }
-    std::string key=fl_value_get_string(id);auto existing=r->meshes.find(key);
+    if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!decode_mesh(args,incoming)){reject(call,"Invalid triangle mesh or texture");return;}
+    std::string key=fl_value_get_string(id);
     uint64_t total=incoming.rgba.size();for(const auto& [k,m]:r->meshes)if(k!=key)total+=m.rgba.size();if(total>128*1024*1024){reject(call,"Scene textures exceed 128 MiB");return;}
-    if(existing==r->meshes.end()){r->meshes.emplace(key,std::move(incoming));r->scene_dirty=true;}
-    else if(existing->second.vertices!=incoming.vertices||existing->second.coordinates!=incoming.coordinates||existing->second.rgba!=incoming.rgba||existing->second.width!=incoming.width||existing->second.height!=incoming.height||existing->second.layers!=incoming.layers){auto* old=new Renderer();old->context=r->context;old->meshes.emplace(key,std::move(existing->second));{std::lock_guard<std::mutex> retired_lock(retired_mutex);retired.push_back(old);}existing->second=std::move(incoming);r->scene_dirty=true;}
+    auto* old=new Renderer();old->context=r->context;install_mesh(r,old,key,std::move(incoming));retire(old);
     notify(c);success(call);return;
   }
   if(g_strcmp0(name,"scene")==0){FlValue* nodes=field(args,"nodes");if(!nodes||fl_value_get_type(nodes)!=FL_VALUE_TYPE_LIST||fl_value_get_length(nodes)>20000){reject(call,"Invalid scene instances");return;}
+    // Decode the complete packet before touching the visible scene. In
+    // particular, a new origin requires matching geometry AND camera together.
+    std::map<std::string,Mesh> meshes;
+    FlValue* incoming=field(args,"meshes");
+    if(incoming){
+      if(fl_value_get_type(incoming)!=FL_VALUE_TYPE_MAP||fl_value_get_length(incoming)>20000){reject(call,"Invalid scene meshes");return;}
+      for(size_t i=0;i<fl_value_get_length(incoming);i++){
+        FlValue* key=fl_value_get_map_key(incoming,i);Mesh mesh;
+        if(fl_value_get_type(key)!=FL_VALUE_TYPE_STRING||!decode_mesh(fl_value_get_map_value(incoming,i),mesh)){reject(call,"Invalid scene mesh or texture");return;}
+        meshes.emplace(fl_value_get_string(key),std::move(mesh));
+      }
+    }
+    uint64_t bytes=0;for(const auto& [key,m]:r->meshes)if(!meshes.count(key))bytes+=m.rgba.size();for(const auto& [_,m]:meshes)bytes+=m.rgba.size();
+    if(bytes>128*1024*1024){reject(call,"Scene textures exceed 128 MiB");return;}
+    std::vector<float> camera;FlValue* w=field(args,"width");FlValue* h=field(args,"height");
+    const bool has_camera=field(args,"matrix")!=nullptr;
+    if(incoming&&!has_camera){reject(call,"Scene meshes require a matching camera");return;}
+    if(has_camera&&(!floats(field(args,"matrix"),16,camera)||!w||!h||fl_value_get_type(w)!=FL_VALUE_TYPE_INT||fl_value_get_type(h)!=FL_VALUE_TYPE_INT)){reject(call,"Invalid scene camera");return;}
     std::map<std::pair<std::string,bool>,std::vector<float>> grouped;
     for(size_t i=0;i<fl_value_get_length(nodes);i++){FlValue* node=fl_value_get_list_value(nodes,i);FlValue* id=field(node,"mesh");FlValue* transparent=field(node,"transparent");std::vector<float> matrix,normal,color;if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!floats(field(node,"matrix"),16,matrix)||!floats(field(node,"normalMatrix"),9,normal)||!floats(field(node,"color"),4,color)){reject(call,"Invalid instance transform");return;}
       auto& group=grouped[{fl_value_get_string(id),transparent&&fl_value_get_type(transparent)==FL_VALUE_TYPE_BOOL&&fl_value_get_bool(transparent)}];group.insert(group.end(),matrix.begin(),matrix.end());group.insert(group.end(),normal.begin(),normal.end());group.insert(group.end(),color.begin(),color.end());
     }
+    for(const auto& [key,_]:grouped)if(!meshes.count(key.first)&&!r->meshes.count(key.first)){reject(call,"Missing scene mesh");return;}
     // Old instance objects are retired on the GL thread, not deleted here.
-    auto* old=new Renderer();old->context=r->context;old->groups=std::move(r->groups);{std::lock_guard<std::mutex> retired_lock(retired_mutex);retired.push_back(old);}
+    auto* old=new Renderer();old->context=r->context;old->groups=std::move(r->groups);
+    for(auto& [key,m]:meshes)install_mesh(r,old,key,std::move(m));
+    retire(old);
+    if(has_camera){std::lock_guard<std::mutex> camera_lock(r->camera_mutex);std::copy(camera.begin(),camera.end(),r->camera.begin());r->requested_width=std::clamp<int64_t>(fl_value_get_int(w),32,4096);r->requested_height=std::clamp<int64_t>(fl_value_get_int(h),32,4096);r->camera_updates++;}
     for(auto& [key,instances]:grouped)r->groups.push_back(Group{key.first,key.second,std::move(instances),0,0});r->scene_dirty=true;r->scene_updates++;notify(c);success(call);return;
   }
   if(g_strcmp0(name,"stats")==0){g_autoptr(FlValue) stats=fl_value_new_map();for(auto p:{std::pair<const char*,uint64_t>{"frames",r->frames},{"meshUploads",r->mesh_uploads},{"instanceUploads",r->instance_uploads},{"cameraUpdates",r->camera_updates},{"sceneUpdates",r->scene_updates},{"triangles",r->triangles},{"drawCalls",r->draw_calls},{"diagnosticPixels",r->diagnostic_pixels}})fl_value_set_string_take(stats,p.first,fl_value_new_int(p.second));fl_value_set_string_take(stats,"renderSubmitUs",fl_value_new_float(r->render_us));fl_value_set_string_take(stats,"driver",fl_value_new_string(r->driver.c_str()));fl_value_set_string_take(stats,"error",fl_value_new_string(r->error.c_str()));success(call,stats);return;}

@@ -26,6 +26,11 @@ while Rust validates and applies edits, derives geometry and reads or writes
 the plan. The core does not depend on Flutter, a window system, a GPU or a
 network service.
 
+Architectural construction separates physical bodies, hosted cuts and level
+connectivity. Straight stairs are assemblies over those primitives; their treads,
+guards and UP/DOWN graphics are derived in Rust, not saved as furniture meshes or
+reimplemented in Dart. See [Architectural primitives](ARCHITECTURAL-PRIMITIVES.md).
+
 ## Components and ownership
 
 | Component | Responsibility |
@@ -130,6 +135,11 @@ The 3D pipeline is separate from the document core:
 2. A presenter uploads scene data and owns GPU buffers and presentation
    surfaces.
 3. Camera movement updates the view without changing plan geometry.
+
+Linux installs mutable geometry, instances and their origin-matched camera as
+one validated scene packet under the render lock. The previous scene remains
+visible until that commit; individual mesh uploads are reserved for immutable
+content-addressed models. Displaced GPU objects are retired on the GL thread.
 
 The shared `wgpu` renderer is used on macOS through Metal and in browsers
 through WebGPU. Linux currently uses a separate native OpenGL presenter; it is

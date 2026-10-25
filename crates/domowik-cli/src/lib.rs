@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod architecture;
 pub mod check;
 pub mod label;
 pub mod png;
@@ -494,6 +495,11 @@ pub fn cmd_info(path: &Path) -> Result<String> {
         }
     }
 
+    for stair in &doc.staircases {
+        out.push('\n');
+        out.push_str(&architecture::describe(doc, stair)?);
+        out.push('\n');
+    }
     if let Some((min, max)) = doc.bounds() {
         out.push_str(&format!(
             "\n  extent: {:.0} x {:.0} mm  (x {:.0}..{:.0}, y {:.0}..{:.0})\n",

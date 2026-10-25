@@ -37,8 +37,10 @@ The owner-selected [evolution direction](decisions/0011-extensible-versioned-doc
 keeps `formatVersion` in the manifest and adopts a defined core with namespaced
 extensions. Incompatible development schemas use distinct version labels;
 there is no promise to migrate every unpublished revision. The extension wire
-contract is pending, and current readers still emit/support `"0.1"`. Updating
-a version string alone does not convert an incompatible document.
+contract is pending. Current readers support `"0.1"` and the architectural
+`"0.2"` supplement. Ordinary older plans retain `"0.1"`; adding bodies, hosted
+cuts, connections or stairs selects `"0.2"`, which older builds reject before
+editing. Updating a version string alone does not convert an incompatible document.
 
 Keep untouched backups before opening important plans in a newer development
 build. Do not assume an older build can read a newly saved file or interpret

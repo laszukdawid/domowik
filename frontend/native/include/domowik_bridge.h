@@ -70,7 +70,7 @@ typedef struct {
   uint64_t token;
 } domowik_buf;
 
-/* The ABI revision, currently 17. A caller reading a different number must
+/* The ABI revision, currently 19. A caller reading a different number must
  * not proceed.
  *
  * 10 is NOT backward-compatible, unlike every export- or field-only bump
@@ -91,6 +91,31 @@ typedef struct {
  * a parse rejection, and one reading rooms[i] without label draws an unnamed
  * plan that looks like a plan with no room records in it. */
 int32_t domowik_abi_version(void);
+
+/* ABI 19: read-only preview of a descending stair drawing. Request:
+ * {upperLevelId,startMm,endMm,name?,widthMm?,risers?,guardHeightMm?}.
+ * start is on the current floor, end targets the nearest strictly lower floor.
+ * Returns Rust-derived construction graphics with staircase inspector fields.
+ * Same request is committed by edit {kind:"addDescendingStaircase",request:{...}}.
+ * setStaircase additionally accepts name, startElevationMm (upper start) and
+ * endElevationMm (lower end); absolute elevations become level-relative offsets.
+ * Calls are synchronous and serialized per plan; no history on preview, no
+ * callbacks or retained pointers, standard panic/status and buffer ownership.
+ * Available on native and browser hosts. Invalid requests leave out untouched. */
+int32_t domowik_plan_stair_preview(uint64_t handle,const uint8_t *req,
+                                 uint64_t req_len,domowik_buf *out);
+
+/* ABI 18 adds architectural editing through domowik_plan_edit:
+ * addStaircase {request:{name,from,to,widthMm,risers,guardHeightMm,cutUpperFloor}},
+ * convertRoomToStaircase {roomId,lowerLevelId,upperEdge,goingMm,risers,guardHeightMm},
+ * setStaircase {staircaseId,widthMm?,risers?,guardHeightMm?},
+ * deleteStaircase {staircaseId}. Endpoints are {levelId,positionMm,offsetMm}.
+ * Derived responses add floorSurfaces (cut floors, not room topology) and
+ * construction (Rust-derived body/stair outlines, segments and UP/DOWN labels).
+ * Requests are synchronous, serialized per plan, atomic and undoable. Existing
+ * buffer ownership, panic/status transport and cancellation rules are unchanged;
+ * no callbacks, retained client pointers or GPU resources are introduced. The
+ * JSON contract is shared by the native and browser hosts. */
 
 /* Creates an internal empty builder; add a level before saving. */
 int32_t domowik_plan_create(uint64_t *out_handle);

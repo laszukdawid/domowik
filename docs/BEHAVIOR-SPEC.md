@@ -8,6 +8,11 @@ without prescribing source structure or copying another application's
 implementation. Draft TODOs are questions, not implementation instructions;
 conformance remains bounded by the current implementation and documented limits.
 
+The normative [architectural supplement](ARCHITECTURAL-PRIMITIVES.md) defines
+construction bodies, hosted floor/body openings, level connections and straight
+stair assemblies. It extends the experimental model without replacing existing
+wall enclosure, wall-opening or room-topology rules.
+
 Behavior may come from original product decisions, black-box observation of
 public applications, usability testing, and independently published
 references. Record necessary external-source and test-data provenance in

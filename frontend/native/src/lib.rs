@@ -178,7 +178,7 @@ pub mod status {
 /// `domowik_web_free`.
 /// **17** adds `setWalls`: one atomic height/thickness edit of same-level walls.
 /// Older libraries reject the new gesture; version checking catches that at load.
-const ABI_VERSION: i32 = 17;
+const ABI_VERSION: i32 = 19;
 
 /// An owned byte buffer handed to the caller.
 ///
@@ -1873,6 +1873,34 @@ fn opening_request_refusal(handle: u64, bytes: &[u8]) -> Option<RequestRefusal> 
 #[allow(clippy::enum_variant_names)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum EditRequest {
+    AddDescendingStaircase {
+        request: domowik_edit::architecture::DescendingStairRequest,
+    },
+    #[serde(rename_all = "camelCase")]
+    AddStaircase {
+        request: domowik_edit::architecture::StairRequest,
+    },
+    #[serde(rename_all = "camelCase")]
+    ConvertRoomToStaircase {
+        room_id: Uuid,
+        lower_level_id: Uuid,
+        upper_edge: domowik_edit::architecture::UpperEdge,
+        going_mm: f64,
+        risers: u16,
+        guard_height_mm: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    SetStaircase {
+        staircase_id: Uuid,
+        width_mm: Option<f64>,
+        risers: Option<u16>,
+        guard_height_mm: Option<f64>,
+        name: Option<String>,
+        start_elevation_mm: Option<f64>,
+        end_elevation_mm: Option<f64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    DeleteStaircase { staircase_id: Uuid },
     #[serde(rename_all = "camelCase")]
     TranslateSelection {
         entity_ids: Vec<Uuid>,
@@ -2055,6 +2083,51 @@ fn field_edit(value: &Option<Option<String>>) -> domowik_edit::FieldEdit<String>
 /// Turns a gesture into the batch the specification says it commits.
 fn build_edit(doc: &Document, request: &EditRequest) -> Result<Vec<Operation>, String> {
     match request {
+        EditRequest::AddDescendingStaircase { request } => {
+            domowik_edit::architecture::add_descending_stair_operations(doc, request)
+        }
+        EditRequest::AddStaircase { request } => {
+            domowik_edit::architecture::add_stair_operations(doc, request)
+        }
+        EditRequest::ConvertRoomToStaircase {
+            room_id,
+            lower_level_id,
+            upper_edge,
+            going_mm,
+            risers,
+            guard_height_mm,
+        } => domowik_edit::architecture::room_to_stair_operations(
+            doc,
+            *room_id,
+            *lower_level_id,
+            *upper_edge,
+            *going_mm,
+            *risers,
+            *guard_height_mm,
+        ),
+        EditRequest::SetStaircase {
+            staircase_id,
+            width_mm,
+            risers,
+            guard_height_mm,
+            name,
+            start_elevation_mm,
+            end_elevation_mm,
+        } => domowik_edit::architecture::set_stair_fields_operations(
+            doc,
+            *staircase_id,
+            &domowik_edit::architecture::StairFields {
+                width_mm: *width_mm,
+                risers: *risers,
+                guard_height_mm: *guard_height_mm,
+                name: name.clone(),
+                start_elevation_mm: *start_elevation_mm,
+                end_elevation_mm: *end_elevation_mm,
+            },
+        ),
+        EditRequest::DeleteStaircase { staircase_id } => {
+            domowik_edit::architecture::delete_stair_operations(doc, *staircase_id)
+        }
         EditRequest::TranslateSelection { entity_ids, delta } => {
             domowik_edit::translate_selection_operations(
                 doc,
@@ -2691,6 +2764,15 @@ pub unsafe extern "C" fn domowik_plan_derived(
                 Some((id, record.display_name().to_owned(), record.seed_mm))
             })
             .collect();
+        let floor_surfaces = domowik_geometry::architecture::cut_surfaces(
+            document,
+            domowik_format::OpeningHost::LevelFloor(level),
+            &projection.faces,
+        );
+        let construction = match domowik_geometry::architecture::plan(document, level) {
+            Ok(v) => v,
+            Err(_) => return status::REJECTED,
+        };
         let (occupied, rooms) = (projection.occupied, projection.faces);
         plan.levels.get_mut(&level).expect("synced above").apertures = cache;
         plan.aperture_builds = plan.aperture_builds.saturating_add(built);
@@ -2716,6 +2798,8 @@ pub unsafe extern "C" fn domowik_plan_derived(
 
         let payload = serde_json::json!({
             "levelId": level.to_string(),
+            "floorSurfaces":floor_surfaces.iter().map(to_json).collect::<Vec<_>>(),
+            "construction":construction,
             "openings": apertures,
             "occupied": occupied.iter().map(to_json).collect::<Vec<_>>(),
             // What to DRAW: the occupied region with opening cuts (R4.2.2).
@@ -2750,6 +2834,50 @@ pub unsafe extern "C" fn domowik_plan_derived(
         match serde_json::to_vec(&payload) {
             Ok(bytes) => release(bytes, out),
             Err(_) => status::REJECTED,
+        }
+    })
+}
+
+/// Read-only descending-stair preview, sharing the commit builder's level and
+/// default selection. Synchronous, serialized per handle, native and WASI;
+/// no callbacks, retained pointers, history, cancellation jobs or GPU resources.
+/// Errors leave `out` untouched; panics use the usual guarded status transport.
+/// # Safety
+/// `req` must be readable for `req_len`; `out` must point to a writable buffer.
+/// The request is borrowed only for this call; successful output is caller-owned
+/// and must be released by `domowik_buffer_free`, never by a client allocator.
+#[no_mangle]
+pub unsafe extern "C" fn domowik_plan_stair_preview(
+    handle: u64,
+    req: *const u8,
+    req_len: u64,
+    out: *mut DomowikBuf,
+) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return status::INVALID_ARGUMENT;
+        }
+        let Some((plan, _lease)) = resolve(handle) else {
+            return status::UNKNOWN_HANDLE;
+        };
+        let Some(bytes) = borrow(req, req_len) else {
+            return status::INVALID_ARGUMENT;
+        };
+        let request: domowik_edit::architecture::DescendingStairRequest =
+            match serde_json::from_slice(bytes) {
+                Ok(r) => r,
+                Err(e) => return fail(&plan, status::MALFORMED_REQUEST, e.to_string()),
+            };
+        let result = {
+            let locked = plan.lock().unwrap_or_else(|e| e.into_inner());
+            domowik_edit::architecture::preview_descending_stair(
+                locked.session().document(),
+                &request,
+            )
+        };
+        match result.and_then(|v| serde_json::to_vec(&v).map_err(|e| e.to_string())) {
+            Ok(bytes) => release(bytes, out),
+            Err(e) => fail(&plan, status::REJECTED, e),
         }
     })
 }
@@ -3770,6 +3898,166 @@ mod tests {
         let mut handle = 0u64;
         assert_eq!(unsafe { domowik_plan_create(&mut handle) }, status::OK);
         handle
+    }
+
+    #[test]
+    fn descending_stair_preview_and_endpoint_edits_are_read_only_or_one_undoable_command() {
+        let (h, lower) = plan_with_a_room();
+        let mut upper = Level::new("Upper");
+        upper.elevation_mm = 2600.0;
+        let high = upper.id;
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"operations":[Operation::create(Entity::Level(upper))]}),
+        )
+        .unwrap();
+        assert_eq!(
+            call_returning(|out| unsafe {
+                domowik_plan_execute(h, bytes.as_ptr(), bytes.len() as u64, out)
+            })
+            .0,
+            status::OK
+        );
+        let before = snapshot_json(h);
+        let state = state_of(h);
+        let request =
+            serde_json::json!({"upperLevelId":high,"startMm":[3780,1000],"endMm":[0,1000]});
+        let bytes = serde_json::to_vec(&request).unwrap();
+        let (code, body) = call_returning(|out| unsafe {
+            domowik_plan_stair_preview(h, bytes.as_ptr(), bytes.len() as u64, out)
+        });
+        assert_eq!(code, status::OK);
+        let preview: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(preview[0]["direction"], "DOWN");
+        assert_eq!(preview[0]["staircase"]["lowerLevelId"], lower.to_string());
+        assert_eq!(snapshot_json(h), before);
+        assert_eq!(state_of(h), state);
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({"kind":"addDescendingStaircase","request":request})
+            )
+            .0,
+            status::OK
+        );
+        let added = snapshot_json(h);
+        let id = added["staircases"][0]["id"].clone();
+        assert_eq!(edit_json(h,serde_json::json!({"kind":"setStaircase","staircaseId":id,"name":"Garden stairs","startElevationMm":2450,"endElevationMm":200,"risers":13})).0,status::OK);
+        let changed = snapshot_json(h);
+        assert_eq!(changed["staircases"][0]["name"], "Garden stairs");
+        assert_eq!(changed["levelConnections"][0]["to"]["offsetMm"], -150.0);
+        assert_eq!(changed["levelConnections"][0]["from"]["offsetMm"], 200.0);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), added);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_redo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), changed);
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({"kind":"setStaircase","staircaseId":id,"startElevationMm":100})
+            )
+            .0,
+            status::REJECTED
+        );
+        assert_eq!(snapshot_json(h), changed);
+        let invalid = serde_json::to_vec(
+            &serde_json::json!({"upperLevelId":lower,"startMm":[0,0],"endMm":[1000,0]}),
+        )
+        .unwrap();
+        let mut out = DomowikBuf {
+            data: std::ptr::null_mut(),
+            len: 987,
+            token: 654,
+        };
+        assert_eq!(
+            unsafe {
+                domowik_plan_stair_preview(h, invalid.as_ptr(), invalid.len() as u64, &mut out)
+            },
+            status::REJECTED
+        );
+        assert_eq!((out.len, out.token), (987, 654));
+        assert_eq!(snapshot_json(h), changed);
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn staircase_gestures_and_both_level_graphics_cross_the_bridge_atomically() {
+        let (h, lower) = plan_with_a_room();
+        let mut upper = Level::new("Synthetic upper");
+        upper.elevation_mm = 2600.0;
+        let upper_id = upper.id;
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"operations":[Operation::create(Entity::Level(upper))]}),
+        )
+        .unwrap();
+        assert_eq!(
+            call_returning(|out| unsafe {
+                domowik_plan_execute(h, bytes.as_ptr(), bytes.len() as u64, out)
+            })
+            .0,
+            status::OK
+        );
+        let before = snapshot_json(h);
+        assert_eq!(edit_json(h,serde_json::json!({"kind":"addStaircase","request":{"name":"Synthetic stair","from":{"levelId":lower,"positionMm":[0,1000],"offsetMm":0},"to":{"levelId":upper_id,"positionMm":[3780,1000],"offsetMm":0},"widthMm":924,"risers":15,"guardHeightMm":1000,"cutUpperFloor":true}})).0,status::OK);
+        let after = snapshot_json(h);
+        let stair_id = after["staircases"][0]["id"].clone();
+        for (level, direction) in [(lower, "UP"), (upper_id, "DOWN")] {
+            let id = std::ffi::CString::new(level.to_string()).unwrap();
+            let (code, bytes) =
+                call_returning(|out| unsafe { domowik_plan_derived(h, id.as_ptr(), out) });
+            assert_eq!(code, status::OK);
+            let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(v["construction"][0]["id"], stair_id);
+            assert_eq!(v["construction"][0]["direction"], direction);
+            assert!(!v["construction"][0]["segmentsMm"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+        }
+        let state = state_of(h);
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({"kind":"setStaircase","staircaseId":stair_id,"risers":1})
+            )
+            .0,
+            status::REJECTED
+        );
+        assert_eq!(snapshot_json(h), after);
+        assert_eq!(state_of(h), state);
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({"kind":"setStaircase","staircaseId":stair_id,"widthMm":1000})
+            )
+            .0,
+            status::OK
+        );
+        assert_eq!(
+            snapshot_json(h)["hostedOpenings"][0]["footprint"]["widthMm"],
+            1000.0
+        );
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), after);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), before);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_redo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), after);
+        assert_eq!(domowik_plan_close(h), status::OK);
     }
 
     /// Builds a closed 4000x3000 room and returns (handle, levelId).

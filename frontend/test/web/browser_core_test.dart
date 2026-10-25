@@ -13,8 +13,8 @@ void main() {
     core = await WebCore.instantiate(await fetchBytes('domowik_bridge.wasm'));
   });
 
-  test('the browser core is the ABI 17 bridge and round-trips a plan', () {
-    expect(core.abiVersion(), 17);
+  test('the browser core is the ABI 19 bridge and round-trips a plan', () {
+    expect(core.abiVersion(), 19);
     final plan = core.createDefault();
     expect(plan.code, ok);
     final snapshot = jsonDecode(core.snapshot(plan.handle).text!) as Map;

@@ -76,6 +76,10 @@ pub struct LevelReport {
     /// these are the authoritative records, which persist whether or not any
     /// face contains their seed.
     pub room_records: Vec<RoomRecordReport>,
+    pub construction_bodies: Vec<domowik_format::ConstructionBody>,
+    pub hosted_openings: Vec<domowik_format::HostedOpening>,
+    pub level_connections: Vec<domowik_format::LevelConnection>,
+    pub staircases: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -286,6 +290,51 @@ pub fn build(
                 walls,
                 rooms,
                 room_records,
+                construction_bodies: doc
+                    .construction_bodies
+                    .iter()
+                    .filter(|b| b.level_id == level.id)
+                    .cloned()
+                    .collect(),
+                hosted_openings: doc
+                    .hosted_openings
+                    .iter()
+                    .filter(|o| doc.opening_host_level(o.host) == Some(level.id))
+                    .cloned()
+                    .collect(),
+                level_connections: doc
+                    .level_connections
+                    .iter()
+                    .filter(|c| c.from.level_id == level.id || c.to.level_id == level.id)
+                    .cloned()
+                    .collect(),
+                staircases: doc
+                    .staircases
+                    .iter()
+                    .filter_map(|s| {
+                        let c = doc.connection(s.connection_id)?;
+                        if c.from.level_id != level.id && c.to.level_id != level.id {
+                            return None;
+                        }
+                        let mut v = serde_json::to_value(s).ok()?;
+                        if let Ok(g) = domowik_geometry::architecture::stair(doc, s) {
+                            v["riseMm"] = serde_json::json!(g.rise_mm);
+                            v["startElevationMm"] = serde_json::json!(g.upper_elevation_mm);
+                            v["endElevationMm"] = serde_json::json!(g.lower_elevation_mm);
+                            v["riserMm"] = serde_json::json!(g.riser_mm);
+                            v["goingMm"] = serde_json::json!(g.going_mm);
+                            v["inclineDeg"] = serde_json::json!(g.incline_deg);
+                            v["lowerLevelId"] = serde_json::json!(g.lower_level_id);
+                            v["upperLevelId"] = serde_json::json!(g.upper_level_id);
+                            v["direction"] = serde_json::json!(if c.from.level_id == level.id {
+                                "UP"
+                            } else {
+                                "DOWN"
+                            });
+                        }
+                        Some(v)
+                    })
+                    .collect(),
             }
         })
         .collect();

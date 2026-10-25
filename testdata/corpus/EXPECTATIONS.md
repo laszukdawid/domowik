@@ -912,7 +912,7 @@ covered — the substitution issue 0018's release audit condemned.
    "FS §8.2 V3"
   ],
   "notes": "unrecognized required construct under a newer label refuses before any effect",
-  "sha256": "73872df5969f114869479e7ee1a45c13df774c1a5350f25f5f895ec2cca7fcf6",
+   "sha256": "9a8734a6de445a5246f052c065cc50be0c05347634dbe1ffefb038a8726516ed",
   "assert": {
    "outcome": "reject"
   }
@@ -971,7 +971,7 @@ covered — the substitution issue 0018's release audit condemned.
    "FS §8.2 V3"
   ],
   "notes": "minor above supported; actionable diagnostic names BOTH versions; guessing forbidden",
-  "sha256": "3d8d1e6354b61c346ce4c7bf8816e33e55a2f92850d91f8bfc0c6ab6f48e0268",
+   "sha256": "c10626da876f2d33b4d63a078d99a4637ff5a2344ffc7be92ec9a5c7fa458873",
   "assert": {
    "outcome": "reject"
   }
