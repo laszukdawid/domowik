@@ -20,11 +20,46 @@ model library; selecting a placed object exposes its size and placement.
 
 ## Your first plan
 
+### Stairs and construction
+
+Choose **Stairs** in the drawing toolbar. Start on the current floor at the
+upper end, then drag toward the lower end—or click the two endpoints. A preview
+shows the flight descending to the nearest strictly lower level. Release or
+complete the second click to create it; **Escape** cancels an unfinished flight.
+No temporary room or walls are needed. The tool is disabled when there is no
+lower level. Creation adds the connection, staircase and associated upper-floor
+opening in one undoable edit.
+The drawing toolbar scrolls horizontally when the window is too narrow for all
+controls; scroll it to reach the snap and navigation controls at its right end.
+
+Stairs appear on both endpoint levels with UP/DOWN arrows and in 3D. In the
+**Floor** panel, expand a staircase to edit its **name**, **starting elevation**
+(upper end), **ending elevation** (lower end), **steps (risers)**, width or guard
+height. Elevations are signed plan-datum millimetres and default to the two floor
+elevations. Edit them to begin or finish above/below a floor. Valid edits apply
+automatically after a short typing pause, or immediately on Enter or leaving a
+field. Undo reverses an applied edit; invalid input stays local with an inline
+error. There is no Apply button. Offsets from floors are retained when
+a level elevation changes. N risers generate N−1 treads plus the upper landing.
+
+Removing a stair retains its independent floor cut; use the construction CLI to
+remove that cut explicitly when appropriate. Inverted or collapsed stairs are
+refused. Defaults—900 mm width, 1000 mm guards and a count targeting 175 mm
+risers—are draft assumptions, not measured values or code approval. Verify access
+clearance, surrounding geometry and actual measurements.
+
+The CLI also authors rectangular/sloped construction bodies and independent
+openings/connections (`domowik construction --help`). This is not yet a full
+roof, ramp, lift or multi-flight stair design tool. Plans using these primitives
+save as schema `0.2`; older builds cannot open them. Keep an original copy.
+
+### Drawing and opening a plan
+
 1. The editor starts with an untitled plan. Choose **Walls**, then drag on
    empty canvas to draw a wall. Draw a closed outline to obtain a derived room.
 2. Select a wall or an endpoint to move it. The inspector exposes wall
    thickness, height and centreline length editing.
-3. Choose **Door** or **Window**, then click a host wall. Select an opening to
+3. Choose **Doors** or **Windows**, then click a host wall. Select an opening to
    edit its position, size and mechanism. Its handles support movement,
    resizing and rehosting; door controls depend on the selected mechanism.
 4. Use the level controls to switch the active level and adjust its properties.

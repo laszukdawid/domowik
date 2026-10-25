@@ -15,7 +15,10 @@ values are tracked and replaceable via the
 feature extensions, selected by the existing manifest `formatVersion`.
 [ADR 0011](decisions/0011-extensible-versioned-document-format.md) records the owner decision and
 §8.5 distinguishes it from pending extension wire design. Current readers
-still emit/support `"0.1"`; no extension wire capability is activated here.
+support `"0.1"` and `"0.2"`; new architectural entities require `"0.2"`, while
+ordinary `"0.1"` plans retain their label. The normative
+[architectural supplement](ARCHITECTURAL-PRIMITIVES.md) defines that addition;
+no namespaced-extension wire capability is activated here.
 
 ## 1. What the format must provide
 

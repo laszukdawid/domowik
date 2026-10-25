@@ -3,6 +3,19 @@ import 'dart:typed_data';
 
 /// Local camera state in renderer metres. No document or mesh dependency.
 class Camera3D {
+  Camera3D();
+
+  /// Snapshot for a pending scene's coordinate system, without moving the
+  /// camera used to navigate the scene that is still on screen.
+  Camera3D.copy(Camera3D other)
+    : target = List.of(other.target),
+      walkEye = List.of(other.walkEye),
+      yaw = other.yaw,
+      pitch = other.pitch,
+      distance = other.distance,
+      radius = other.radius,
+      walking = other.walking;
+
   List<double> target = [0, 1, 0];
   List<double> walkEye = [0, 1.65, 10];
   double yaw = 0.65, pitch = 0.9, distance = 15, radius = 5;

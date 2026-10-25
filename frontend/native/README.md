@@ -20,7 +20,7 @@ See [Getting started](../../docs/GETTING-STARTED.md),
 ## ABI summary (internal, not a stable product contract)
 
 ```c
-int32_t domowik_abi_version(void); /* 17 */
+int32_t domowik_abi_version(void); /* 19 */
 int32_t domowik_plan_create(uint64_t* out_handle);
 int32_t domowik_plan_create_default(uint64_t* out_handle);
 int32_t domowik_plan_execute(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
@@ -32,6 +32,7 @@ int32_t domowik_plan_snapshot(uint64_t, domowik_buf*);
 int32_t domowik_plan_hit_test(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
 int32_t domowik_plan_marquee(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
 int32_t domowik_plan_snap(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
+int32_t domowik_plan_stair_preview(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
 int32_t domowik_plan_edit(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
 int32_t domowik_plan_derived(uint64_t, const char*, domowik_buf*);
 int32_t domowik_plan_open(const char*, uint64_t* out_handle);
@@ -59,7 +60,7 @@ int64_t domowik_debug_snap_index_builds(uint64_t);
 int64_t domowik_debug_warnings_computations(uint64_t);
 ```
 
-All 36 declared exports are checked against the implementation and header by
+All 37 declared exports are checked against the implementation and header by
 `tests/abi_documentation.rs`. The two `domowik_web_*` exports exist only in the
 browser module. Read the header for complete parameter and failure contracts;
 this summary does not replace its pointer-validity preconditions.
@@ -95,6 +96,13 @@ The bridge forwards accepted edits as atomic batches to the authoritative core.
 Undo/redo, warnings, hit/snap queries and derived geometry are core behavior;
 selection, clipboard and camera state remain editor-session concerns. Save
 clears dirty only after success; opening does not restore a GUI undo stack.
+
+`domowik_plan_stair_preview` is read-only. It derives the same upper-to-lower
+drawing request committed by `addDescendingStaircase`, including nearest-lower-
+level selection and draft defaults. The returned construction graphics include
+Rust-derived Floor-panel properties. `setStaircase` applies name, count and
+absolute endpoint elevations atomically, storing elevations as offsets from the
+existing level datums. Preview never changes the document or undo history.
 
 The plan-local model library embeds placed content by digest. Model decoding,
 texturing and preview limits are described in [Compatibility](../../docs/COMPATIBILITY.md).

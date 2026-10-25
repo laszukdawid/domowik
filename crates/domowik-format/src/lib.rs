@@ -16,6 +16,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod architecture;
+pub use architecture::*;
+
 /// Ceiling on any coordinate magnitude, in millimetres.
 ///
 /// **RATIFIED** at 10^7 mm (±10 km, a 20 km span) by ED-0100, closing the
@@ -970,6 +973,10 @@ pub enum Entity {
     Label(Label),
     Dimension(Dimension),
     AssetInstance(AssetInstance),
+    ConstructionBody(ConstructionBody),
+    HostedOpening(HostedOpening),
+    LevelConnection(LevelConnection),
+    Staircase(Staircase),
 }
 
 impl Entity {
@@ -984,6 +991,10 @@ impl Entity {
             Entity::Label(l) => l.id,
             Entity::Dimension(d) => d.id,
             Entity::AssetInstance(a) => a.id,
+            Entity::ConstructionBody(b) => b.id,
+            Entity::HostedOpening(o) => o.id,
+            Entity::LevelConnection(c) => c.id,
+            Entity::Staircase(s) => s.id,
         }
     }
 
@@ -998,6 +1009,10 @@ impl Entity {
             Entity::Label(_) => "label",
             Entity::Dimension(_) => "dimension",
             Entity::AssetInstance(_) => "assetInstance",
+            Entity::ConstructionBody(_) => "constructionBody",
+            Entity::HostedOpening(_) => "hostedOpening",
+            Entity::LevelConnection(_) => "levelConnection",
+            Entity::Staircase(_) => "staircase",
         }
     }
 }
@@ -1186,6 +1201,8 @@ pub fn remap_u(u: f64, length: f64, s: f64, e: f64) -> f64 {
 /// says only "invalid" makes the user hunt for what it already knew.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ValidationError {
+    #[error("architecture {id}: {reason}")]
+    Architecture { id: Uuid, reason: String },
     /// A materialized user plan, unlike an internal builder, needs a level.
     #[error("a plan must contain at least one level; create a level before saving")]
     NoLevels,
@@ -1454,6 +1471,14 @@ pub struct Document {
     /// record persists whether or not any face contains its seed.
     #[serde(default)]
     pub room_records: Vec<RoomRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub construction_bodies: Vec<ConstructionBody>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosted_openings: Vec<HostedOpening>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub level_connections: Vec<LevelConnection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub staircases: Vec<Staircase>,
     /// Unrecognised top-level document fields, carried verbatim.
     ///
     /// FORMAT-SPEC §8.4 U2, at the level the entity types already honour. The
@@ -1502,6 +1527,10 @@ impl Document {
             + self.labels.len()
             + self.dimensions.len()
             + self.asset_instances.len()
+            + self.construction_bodies.len()
+            + self.hosted_openings.len()
+            + self.level_connections.len()
+            + self.staircases.len()
     }
 
     pub fn level(&self, id: Uuid) -> Option<&Level> {
@@ -1676,6 +1705,10 @@ impl Document {
             .chain(self.labels.iter().map(|l| l.id))
             .chain(self.dimensions.iter().map(|d| d.id))
             .chain(self.asset_instances.iter().map(|a| a.id))
+            .chain(self.construction_bodies.iter().map(|b| b.id))
+            .chain(self.hosted_openings.iter().map(|o| o.id))
+            .chain(self.level_connections.iter().map(|c| c.id))
+            .chain(self.staircases.iter().map(|s| s.id))
         {
             if !seen.insert(id) {
                 errors.push(ValidationError::DuplicateId { id });
@@ -2201,6 +2234,7 @@ impl Document {
             }
         }
 
+        self.validate_architecture(&mut errors);
         errors
     }
 
@@ -2230,6 +2264,16 @@ impl Document {
             Entity::AssetInstance(a) => {
                 replace_or_push(&mut self.asset_instances, a, |x| x.id == id)
             }
+            Entity::ConstructionBody(b) => {
+                replace_or_push(&mut self.construction_bodies, b, |x| x.id == id)
+            }
+            Entity::HostedOpening(o) => {
+                replace_or_push(&mut self.hosted_openings, o, |x| x.id == id)
+            }
+            Entity::LevelConnection(c) => {
+                replace_or_push(&mut self.level_connections, c, |x| x.id == id)
+            }
+            Entity::Staircase(s) => replace_or_push(&mut self.staircases, s, |x| x.id == id),
         }
     }
 
@@ -2240,6 +2284,18 @@ impl Document {
     /// concern, because the operation log records each effect explicitly and a
     /// hidden cascade would produce state no operation describes.
     pub fn remove_entity(&mut self, id: Uuid) -> Option<Entity> {
+        if let Some(i) = self.construction_bodies.iter().position(|b| b.id == id) {
+            return Some(Entity::ConstructionBody(self.construction_bodies.remove(i)));
+        }
+        if let Some(i) = self.hosted_openings.iter().position(|o| o.id == id) {
+            return Some(Entity::HostedOpening(self.hosted_openings.remove(i)));
+        }
+        if let Some(i) = self.level_connections.iter().position(|c| c.id == id) {
+            return Some(Entity::LevelConnection(self.level_connections.remove(i)));
+        }
+        if let Some(i) = self.staircases.iter().position(|s| s.id == id) {
+            return Some(Entity::Staircase(self.staircases.remove(i)));
+        }
         if let Some(i) = self.levels.iter().position(|l| l.id == id) {
             return Some(Entity::Level(self.levels.remove(i)));
         }
@@ -2269,6 +2325,18 @@ impl Document {
 
     /// The entity with `id`, cloned out of whichever collection holds it.
     pub fn entity(&self, id: Uuid) -> Option<Entity> {
+        if let Some(b) = self.construction_bodies.iter().find(|b| b.id == id) {
+            return Some(Entity::ConstructionBody(b.clone()));
+        }
+        if let Some(o) = self.hosted_openings.iter().find(|o| o.id == id) {
+            return Some(Entity::HostedOpening(o.clone()));
+        }
+        if let Some(c) = self.level_connections.iter().find(|c| c.id == id) {
+            return Some(Entity::LevelConnection(c.clone()));
+        }
+        if let Some(s) = self.staircases.iter().find(|s| s.id == id) {
+            return Some(Entity::Staircase(s.clone()));
+        }
         if let Some(l) = self.levels.iter().find(|l| l.id == id) {
             return Some(Entity::Level(l.clone()));
         }
@@ -2357,25 +2425,41 @@ impl Document {
     }
 
     /// Axis-aligned bounding box of every wall centre line, expanded by half
-    /// thickness. `None` when the document has no walls.
+    /// thickness, including construction bodies, cuts and stair footprints.
+    /// `None` when there is no bounded architectural geometry.
     pub fn bounds(&self) -> Option<(Point, Point)> {
-        let mut it = self.walls.iter();
-        let first = it.next()?;
-        let half = first.thickness_mm / 2.0;
-        let (mut min_x, mut min_y) = (
-            first.start().x.min(first.end().x) - half,
-            first.start().y.min(first.end().y) - half,
-        );
-        let (mut max_x, mut max_y) = (
-            first.start().x.max(first.end().x) + half,
-            first.start().y.max(first.end().y) + half,
-        );
-        for w in it {
+        let (mut min_x, mut min_y) = (f64::INFINITY, f64::INFINITY);
+        let (mut max_x, mut max_y) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for w in &self.walls {
             let half = w.thickness_mm / 2.0;
             min_x = min_x.min(w.start().x.min(w.end().x) - half);
             min_y = min_y.min(w.start().y.min(w.end().y) - half);
             max_x = max_x.max(w.start().x.max(w.end().x) + half);
             max_y = max_y.max(w.start().y.max(w.end().y) + half);
+        }
+        let footprints = self
+            .construction_bodies
+            .iter()
+            .map(|b| b.footprint.clone())
+            .chain(self.hosted_openings.iter().map(|o| o.footprint.clone()))
+            .chain(self.staircases.iter().filter_map(|s| {
+                let c = self.connection(s.connection_id)?;
+                Some(RectFootprint {
+                    start_mm: c.from.position_mm,
+                    end_mm: c.to.position_mm,
+                    width_mm: s.width_mm,
+                })
+            }));
+        for f in footprints.filter(RectFootprint::valid) {
+            for [x, y] in f.corners() {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+        if !min_x.is_finite() {
+            return None;
         }
         Some((Point::new(min_x, min_y), Point::new(max_x, max_y)))
     }

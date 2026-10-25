@@ -95,6 +95,7 @@ void main() {
       await start(tester);
       for (final key in ['snap-grid', 'snap-object', 'snap-angle']) {
         expect(snapButton(tester, key).isSelected, isTrue);
+        await tester.ensureVisible(find.byKey(ValueKey(key)));
         await tester.tap(find.byKey(ValueKey(key)));
         await tester.pumpAndSettle();
         expect(snapButton(tester, key).isSelected, isFalse);

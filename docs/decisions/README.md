@@ -16,6 +16,7 @@ review histories.
 | [0010](0010-native-3d-texture-experiment.md) | Proposed | Linux native texture experiment; portable renderer gates remain open |
 | [0011](0011-extensible-versioned-document-format.md) | Accepted (extension wire design pending) | Versioned core with namespaced feature extensions |
 | [0012](0012-browser-editor.md) | Accepted | The editor in a browser: the core as WASI WebAssembly, the shared renderer on WebGPU |
+| [0013](0013-architectural-primitives.md) | Accepted (initial straight-stair slice) | Construction bodies, hosted cuts and level connections underpin architectural assemblies |
 
 Statuses:
 

@@ -207,7 +207,7 @@ fn a_candidate_that_fails_validation_leaves_the_old_plan_and_no_litter() {
     write_package(&path, &plan()).expect("the original save");
 
     let mut future = plan();
-    future.manifest.format_version = "0.2".to_owned();
+    future.manifest.format_version = "0.3".to_owned();
     let error = write_package(&path, &future).expect_err("must refuse");
     assert!(
         matches!(error, ContainerError::CandidateInvalid { .. }),
@@ -321,7 +321,7 @@ fn no_save_outcome_ever_leaves_the_plan_unopenable() {
         let mut candidate = plan();
         if round % 2 == 0 {
             // Every other round, hand the writer something it must refuse.
-            candidate.manifest.format_version = "0.2".to_owned();
+            candidate.manifest.format_version = "0.3".to_owned();
         }
         let _ = write_package(&path, &candidate);
 

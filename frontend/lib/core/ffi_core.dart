@@ -12,6 +12,7 @@ import 'dart:typed_data';
 
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart' as native;
 
+import '../scene_packet_data.dart';
 import 'domowik_core.dart';
 
 /// Opens the core packaged with this application.
@@ -154,6 +155,10 @@ class FfiCore implements DomowikCore {
       _request(bridge.planSnap, handle, request);
 
   @override
+  CoreReply stairPreview(int handle, String request) =>
+      _request(bridge.planStairPreview, handle, request);
+
+  @override
   CoreReply sceneFrame(int handle, String request) =>
       _request(bridge.planSceneFrame, handle, request, binary: true);
 
@@ -207,10 +212,7 @@ class FfiCore implements DomowikCore {
   }
 
   @override
-  Future<Object?> assetsInBackground(
-    int handle,
-    Map<String, Object?> request,
-  ) {
+  Future<Object?> assetsInBackground(int handle, Map<String, Object?> request) {
     // The isolate binds its own copy of the bindings to the SAME loaded image,
     // so it reaches this process's plan registry rather than a second core.
     final image = bridge.loadedImagePath();
@@ -219,7 +221,16 @@ class FfiCore implements DomowikCore {
     }
     return Isolate.run(() {
       try {
-        return native.assetRequest(native.Bridge(image), handle, request);
+        final result = native.assetRequest(
+          native.Bridge(image),
+          handle,
+          request,
+        );
+        // Return compact arrays from this existing worker, rather than copying
+        // decoded scene-number lists back to convert on the UI isolate.
+        return request['kind'] == 'scene'
+            ? prepareSceneArrays(result as Map<String, Object?>)
+            : result;
       } on native.BridgeException catch (e) {
         throw CoreException(e.code, e.detail);
       }

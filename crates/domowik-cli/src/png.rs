@@ -119,6 +119,8 @@ pub struct Raster {
     /// invisible to whoever receives the file, so the caller has to be able to
     /// say it happened.
     pub label_warnings: Vec<LabelWarning>,
+    /// Architectural assemblies omitted from an invalid document, in order.
+    pub construction_diagnostics: Vec<String>,
 }
 
 /// Renders `level_id` to a PNG at `scale` pixels per millimetre.
@@ -296,7 +298,11 @@ fn render(
     };
 
     // Rooms first, underneath: the floor a person would stand on.
-    for room in &projection.faces {
+    for room in &domowik_geometry::architecture::cut_surfaces(
+        doc,
+        domowik_format::OpeningHost::LevelFloor(level_id),
+        &projection.faces,
+    ) {
         if let Some(path) = polygon_path(room, &to_px) {
             paint.set_color(rgb(ROOM_FILL));
             pixmap.fill_path(
@@ -366,6 +372,91 @@ fn render(
             if stroke.width > 0.0 {
                 paint.set_color(rgb(WALL_STROKE));
                 pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            }
+        }
+    }
+
+    let (construction, construction_diagnostics) =
+        domowik_geometry::architecture::plan_reporting(doc, level_id);
+    let font = label::Annotator::new()?;
+    for item in construction {
+        let p = Polygon {
+            outer: item.outline_mm.iter().copied().map(Point::from).collect(),
+            holes: item
+                .holes_mm
+                .iter()
+                .map(|h| h.iter().copied().map(Point::from).collect())
+                .collect(),
+        };
+        if let Some(path) = polygon_path(&p, &to_px) {
+            paint.set_color(rgb((0xe6, 0xdf, 0xd2)));
+            pixmap.fill_path(
+                &path,
+                &paint,
+                FillRule::EvenOdd,
+                Transform::identity(),
+                None,
+            );
+            paint.set_color(rgb((0x40, 0x53, 0x63)));
+            pixmap.stroke_path(
+                &path,
+                &paint,
+                &Stroke {
+                    width: (12.0 * scale).max(1.0) as f32,
+                    ..Stroke::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+        paint.set_color(rgb((0x40, 0x53, 0x63)));
+        for [a, b] in item.segments_mm {
+            let (ax, ay) = to_px(a.into());
+            let (bx, by) = to_px(b.into());
+            let mut pb = PathBuilder::new();
+            pb.move_to(ax, ay);
+            pb.line_to(bx, by);
+            if let Some(path) = pb.finish() {
+                pixmap.stroke_path(
+                    &path,
+                    &paint,
+                    &Stroke {
+                        width: (12.0 * scale).max(1.0) as f32,
+                        ..Stroke::default()
+                    },
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+        if !item.direction.is_empty() {
+            if let Some((contours, _)) = font.text(
+                item.direction,
+                120.0,
+                item.label_mm[0],
+                item.label_mm[1] + 80.0,
+            ) {
+                let mut pb = PathBuilder::new();
+                for ring in contours {
+                    for (i, p) in ring.iter().enumerate() {
+                        let (x, y) = to_px((*p).into());
+                        if i == 0 {
+                            pb.move_to(x, y);
+                        } else {
+                            pb.line_to(x, y);
+                        }
+                    }
+                    pb.close();
+                }
+                if let Some(path) = pb.finish() {
+                    pixmap.fill_path(
+                        &path,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
+                }
             }
         }
     }
@@ -481,6 +572,7 @@ fn render(
         scale,
         origin_mm: [ox, oy],
         label_warnings: labels.warnings,
+        construction_diagnostics,
     })
 }
 

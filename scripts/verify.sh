@@ -822,6 +822,7 @@ if [ "$(uname -s)" = Linux ] && bash "$REPO_ROOT/scripts/check-linux-editor-prer
   (
     cd frontend
     flutter build linux --release
+    bash "$REPO_ROOT/scripts/check-linux-scene-packets.sh"
     BIN=build/linux/x64/release/bundle/domowik_editor
     test -x "$BIN"
     # Software/Xvfb probes exercise packaging and first-frame correctness,

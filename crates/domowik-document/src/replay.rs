@@ -238,6 +238,10 @@ fn baseline_ids(document: &Document) -> Vec<Uuid> {
         .chain(document.labels.iter().map(|l| l.id))
         .chain(document.dimensions.iter().map(|d| d.id))
         .chain(document.asset_instances.iter().map(|a| a.id))
+        .chain(document.construction_bodies.iter().map(|b| b.id))
+        .chain(document.hosted_openings.iter().map(|o| o.id))
+        .chain(document.level_connections.iter().map(|c| c.id))
+        .chain(document.staircases.iter().map(|s| s.id))
         .collect()
 }
 
@@ -369,6 +373,40 @@ pub fn level_deletion_refusals(document: &Document, level_id: Uuid) -> Vec<Level
             kind: "room record(s)",
             count: rooms,
         });
+    }
+    for (kind, count) in [
+        (
+            "construction body(s)",
+            document
+                .construction_bodies
+                .iter()
+                .filter(|b| b.level_id == level_id)
+                .count(),
+        ),
+        (
+            "hosted opening(s)",
+            document
+                .hosted_openings
+                .iter()
+                .filter(|o| document.opening_host_level(o.host) == Some(level_id))
+                .count(),
+        ),
+        (
+            "level connection(s)",
+            document
+                .level_connections
+                .iter()
+                .filter(|c| c.from.level_id == level_id || c.to.level_id == level_id)
+                .count(),
+        ),
+    ] {
+        if count > 0 {
+            blocks.push(LevelDeletionBlock::Occupied {
+                level: level_id,
+                kind,
+                count,
+            });
+        }
     }
     if !level.background_images.is_empty() {
         blocks.push(LevelDeletionBlock::BackgroundImages {
@@ -777,6 +815,10 @@ fn restore_at(document: &mut Document, entity: Entity, index: usize) {
         Entity::Label(l) => document.labels.insert(index, l),
         Entity::Dimension(d) => document.dimensions.insert(index, d),
         Entity::AssetInstance(a) => document.asset_instances.insert(index, a),
+        Entity::ConstructionBody(b) => document.construction_bodies.insert(index, b),
+        Entity::HostedOpening(o) => document.hosted_openings.insert(index, o),
+        Entity::LevelConnection(c) => document.level_connections.insert(index, c),
+        Entity::Staircase(s) => document.staircases.insert(index, s),
     }
 }
 
@@ -817,6 +859,10 @@ fn position_of(document: &Document, id: Uuid) -> Option<usize> {
         .or_else(|| document.labels.iter().position(|x| x.id == id))
         .or_else(|| document.dimensions.iter().position(|x| x.id == id))
         .or_else(|| document.asset_instances.iter().position(|x| x.id == id))
+        .or_else(|| document.construction_bodies.iter().position(|x| x.id == id))
+        .or_else(|| document.hosted_openings.iter().position(|x| x.id == id))
+        .or_else(|| document.level_connections.iter().position(|x| x.id == id))
+        .or_else(|| document.staircases.iter().position(|x| x.id == id))
 }
 
 /// I5's three-branch classification, evaluated at `at` rather than "now".

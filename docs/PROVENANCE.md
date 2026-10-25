@@ -7,6 +7,28 @@ It is not a development diary or a claim of legal clearance. Follow the
 Dependency notices remain in [NOTICE](../NOTICE), the
 [Rust dependency inventory](RUST-DEPENDENCIES.md) and [third-party records](third-party/).
 
+## Architectural primitives and straight stairs
+
+The body/opening/connection distinction and straight-stair assembly are original
+Domowik product choices, specified in [Architectural primitives](ARCHITECTURAL-PRIMITIVES.md).
+Geometry uses elementary rectangle offsets and linear interpolation, together
+with the existing reviewed overlay and scene triangulation implementations. No
+new external publication, source artifact, algorithm implementation or asset was
+consulted or adapted. Tests and benchmarks use original synthetic geometry;
+personal plans are local acceptance inputs only, never committed fixtures.
+No dependencies, distributed content or notice obligations were added. Future-
+schema rejection fixtures use the still-unsupported `0.3` label now that the
+explicit architectural `0.2` schema is supported; their refusal guarantees remain.
+
+The direct descending stairs tool and Floor-panel name/count/elevation controls
+are original owner-requested interactions. Nearest-lower-level/default selection,
+read-only preview and offset conversion are implemented in the shared Rust edit
+layer. Tests use synthetic plans and real bridge-driven UI gestures, not personal
+plan fixtures. No additional external sources, dependencies or content were used.
+Live stair-field updates, typing coalescing and the compact inspector layout are
+original owner-requested interactions. Their regression tests use synthetic data
+and existing Flutter/core APIs; no new sources, content or dependencies were added.
+
 ## Active floor on reopen
 
 The first-listed default, per-device last-active-floor memory for legacy files,

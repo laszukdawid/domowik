@@ -232,6 +232,9 @@ class Derived {
     this.openings,
     this.floorAreaMm2, {
     this.roomRecords = const [],
+    this.construction = const [],
+    this.constructionDiagnostics = const [],
+    this.floorSurfaces,
     List<Ring>? drawn,
   }) : _drawn = drawn;
 
@@ -252,8 +255,55 @@ class Derived {
   /// `rooms` because faces and records are separate things: a face exists with
   /// no record, and a record persists with no face.
   final List<RoomRecordView> roomRecords;
+  final List<PlanConstruction> construction;
+  final List<String> constructionDiagnostics;
+  final List<Ring>? floorSurfaces;
 
   static const empty = Derived([], [], [], 0.0);
+}
+
+/// Paint-only architectural geometry supplied by Rust, on either stair level.
+class PlanConstruction {
+  const PlanConstruction({
+    required this.id,
+    required this.kind,
+    required this.name,
+    required this.outline,
+    required this.holes,
+    required this.segments,
+    required this.labelAt,
+    required this.direction,
+    this.staircase,
+  });
+  final String id, kind, name, direction;
+  final List<Offset> outline;
+  final List<List<Offset>> holes;
+  final List<(Offset, Offset)> segments;
+  final Offset labelAt;
+  final Map<String, Object?>? staircase;
+  factory PlanConstruction.fromJson(Map<String, Object?> j) {
+    Offset pt(Object? p) {
+      final a = p as List<Object?>;
+      return Offset((a[0] as num).toDouble(), (a[1] as num).toDouble());
+    }
+
+    return PlanConstruction(
+      id: j['id'] as String,
+      kind: j['kind'] as String,
+      name: j['name'] as String,
+      outline: (j['outlineMm'] as List<Object?>).map(pt).toList(),
+      holes: (j['holesMm'] as List<Object?>)
+          .map((h) => (h as List<Object?>).map(pt).toList())
+          .toList(),
+      segments: (j['segmentsMm'] as List<Object?>).map((s) {
+        final a = s as List<Object?>;
+        return (pt(a[0]), pt(a[1]));
+      }).toList(),
+      labelAt: pt(j['labelMm']),
+      direction: j['direction'] as String,
+      staircase: j['staircase'] as Map<String, Object?>?,
+    );
+  }
 }
 
 /// One NON-ACTIVE level, drawn beneath the active one (BEHAVIOR-SPEC §2.4).
@@ -330,6 +380,7 @@ class PlanPainter extends CustomPainter {
     this.rotatingAssetId,
     this.groupPreview,
     this.modelPreviews = const {},
+    this.constructionPreview = const [],
   });
 
   final List<Wall> walls;
@@ -346,6 +397,7 @@ class PlanPainter extends CustomPainter {
 
   final (Set<String>, Offset)? groupPreview;
   final Map<String, ui.Image> modelPreviews;
+  final List<PlanConstruction> constructionPreview;
 
   final PlanViewport view;
   final UnitSystem units;
@@ -443,6 +495,13 @@ class PlanPainter extends CustomPainter {
     for (final r in derived.occupied) {
       r.outer.forEach(see);
     }
+    for (final item in derived.construction) {
+      item.outline.forEach(see);
+      for (final segment in item.segments) {
+        see(segment.$1);
+        see(segment.$2);
+      }
+    }
     for (final opening in derived.openings) {
       opening.cut.forEach(see);
       for (final segment in opening.glyphSegments) {
@@ -516,6 +575,21 @@ class PlanPainter extends CustomPainter {
     // The active level, at full emphasis, above every passive one.
     _paintLevel(canvas, walls, derived, opacity: 1.0, countWalls: true);
     _paintAssets(canvas, assets, opacity: 1.0, active: true);
+    if (constructionPreview.isNotEmpty) {
+      _paintLevel(
+        canvas,
+        const [],
+        Derived(
+          const [],
+          const [],
+          const [],
+          0,
+          construction: constructionPreview,
+        ),
+        opacity: 0.65,
+        countWalls: false,
+      );
+    }
 
     _paintSelectionAndDraft(canvas);
 
@@ -665,7 +739,7 @@ class PlanPainter extends CustomPainter {
     // Rooms first, beneath the walls, each labelled with the area the CORE
     // measured.
     final roomFill = Paint()..color = _fade(const Color(0xFFEFF3F7), opacity);
-    for (final room in levelDerived.rooms) {
+    for (final room in levelDerived.floorSurfaces ?? levelDerived.rooms) {
       canvas.drawPath(_pathOf(room), roomFill);
     }
     for (final room in levelDerived.rooms) {
@@ -697,6 +771,48 @@ class PlanPainter extends CustomPainter {
     final wallFill = Paint()..color = _fade(const Color(0xFF33475B), opacity);
     for (final part in levelDerived.drawn) {
       canvas.drawPath(_pathOf(part), wallFill);
+    }
+
+    for (final item in levelDerived.construction) {
+      final path = Path()..fillType = PathFillType.evenOdd;
+      for (final ring in [item.outline, ...item.holes]) {
+        if (ring.isEmpty) continue;
+        final first = toScreen(ring.first);
+        path.moveTo(first.dx, first.dy);
+        for (final p in ring.skip(1)) {
+          final s = toScreen(p);
+          path.lineTo(s.dx, s.dy);
+        }
+        path.close();
+      }
+      canvas.drawPath(
+        path,
+        Paint()..color = _fade(const Color(0xFFE6DFD2), opacity),
+      );
+      final ink = Paint()
+        ..color = _fade(const Color(0xFF405363), opacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.0, 12 * scale);
+      canvas.drawPath(path, ink);
+      for (final segment in item.segments) {
+        canvas.drawLine(toScreen(segment.$1), toScreen(segment.$2), ink);
+      }
+      if (item.direction.isNotEmpty) {
+        final text = TextPainter(
+          text: TextSpan(
+            text: item.direction,
+            style: TextStyle(
+              fontSize: 11,
+              color: _fade(const Color(0xFF243B53), opacity),
+              backgroundColor: _fade(const Color(0xFFE6DFD2), opacity),
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final at = toScreen(item.labelAt);
+        text.paint(canvas, at - Offset(text.width / 2, text.height + 3));
+        text.dispose();
+      }
     }
 
     // Centre lines are drawn only when the core has not produced a region yet
@@ -1042,6 +1158,7 @@ class PlanPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(PlanPainter old) =>
+      old.constructionPreview != constructionPreview ||
       old.units != units ||
       old.assets != assets ||
       old.assetPreview != assetPreview ||

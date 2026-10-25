@@ -220,6 +220,8 @@ class Bridge {
   /// property is first used, consistently with the other bridge bindings.
   late final planSnap =
       _lib.lookupFunction<_ExecuteC, _Execute>('domowik_plan_snap');
+  late final planStairPreview =
+      _lib.lookupFunction<_ExecuteC, _Execute>('domowik_plan_stair_preview');
   late final lastError =
       _lib.lookupFunction<_HandleBufC, _HandleBuf>('domowik_last_error');
   late final bufferFree =

@@ -215,6 +215,36 @@ fn plain(rings: &[Vec<Point>]) -> Vec<InputRing> {
         .collect()
 }
 
+/// Regularized polygon difference, using the existing filtered/exact,
+/// snap-rounded overlay contract. Holes retain their negative winding.
+/// Deterministic canonical components; empty when cuts consume all material.
+pub fn difference(polygons: &[Polygon], cuts: &[Polygon]) -> Vec<Polygon> {
+    if cuts.is_empty() {
+        return polygons.to_vec();
+    }
+    let rings: Vec<_> = [(polygons, 0), (cuts, 1)]
+        .into_iter()
+        .flat_map(|(ps, label)| {
+            ps.iter().flat_map(move |p| {
+                std::iter::once(&p.outer)
+                    .chain(p.holes.iter())
+                    .map(move |r| InputRing {
+                        points: r.clone(),
+                        label,
+                        tag: 0,
+                    })
+            })
+        })
+        .collect();
+    let arr = Arrangement::build(&rings, false);
+    assemble(arr.boundary(arr.all_half_edges(), |f| {
+        arr.winding(f, 0) > 0 && arr.winding(f, 1) == 0
+    }))
+    .iter()
+    .map(CellPolygon::to_polygon)
+    .collect()
+}
+
 fn runs_of(ring: &CellRing) -> Vec<BoundaryRun> {
     ring.runs
         .iter()

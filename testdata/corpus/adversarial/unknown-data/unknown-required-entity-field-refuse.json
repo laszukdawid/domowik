@@ -15,7 +15,7 @@
   "thicknessMm": 120,
   "heightMm": 2500
  },
- "manifestFormatVersion": "0.2",
+ "manifestFormatVersion": "0.3",
  "expectedOutcome": {
   "outcome": "reject",
   "category": "unsupported-version",

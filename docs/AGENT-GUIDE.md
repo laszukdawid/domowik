@@ -139,6 +139,38 @@ Instead, name things by:
 
 ## Command reference (drafting subset)
 
+### Architectural construction
+
+Use dedicated commands, not raw operation batches, for stairs and construction.
+`domowik stair add --help` authors a straight flight from explicit lower/upper
+level endpoints, width and riser count. `--cut-upper-floor` explicitly requests
+an associated floor opening; it is optional for exterior stairs. Rise comes from
+the levels. Guard height defaults to zero unless requested. `stair set` changes
+parameters, and `stair remove` retains independently editable floor openings.
+`stair set PLAN STAIR --name NAME --start-elevation MM --end-elevation MM`
+uses the same fields as the editor's Floor panel: start is the upper end and end
+is the lower end. Values are absolute plan elevations; the core stores offsets
+from the referenced floors. Either endpoint may differ from its floor, but the
+start must remain above the end. The editor's **Stairs** tool draws directly
+upper-to-lower and automatically chooses the nearest level below.
+
+`domowik stair from-room PLAN ROOM --lower-level NAME --upper-edge east|west|north|south
+--going MM --risers N [--guard-height MM]` converts an explicitly selected,
+named, axis-aligned rectangular placeholder room. The upper endpoint stays fixed;
+the lower end uses `(N-1)*going`, potentially extending beyond the old footprint.
+Shared room walls and doors survive. Review both levels and access clearances.
+Do not infer real riser counts or dimensions from a room name or image: record
+draft assumptions and ask before changing the measured footprint.
+
+`domowik construction --help` exposes reusable bodies, hosted openings and bare
+connections. A bare connection creates no physical stairs or ramp. `info --json`
+reports these separately and includes stair rise, going, pitch and direction on
+each endpoint level. Room areas remain gross enclosure areas; floor cuts do not
+change room topology. Construction-bearing plans require schema `0.2` and cannot
+be opened by older builds. Keep an untouched backup.
+
+### Walls, openings and rooms
+
 ```sh
 domowik new PLAN
 domowik add-wall PLAN X1 Y1 X2 Y2 --thickness MM [--height MM] [--level NAME]

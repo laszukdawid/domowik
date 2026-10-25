@@ -6,6 +6,14 @@ later phase does not imply that earlier exit criteria are complete.
 
 ## Current product
 
+- **Architectural foundations:** rectangular/sloped construction bodies, hosted
+  body/floor cuts and explicit level connections. Straight stair assemblies share
+  one identity across both levels, with direct **Stairs** click/drag drawing,
+  Floor-panel name/count/elevation editing, CLI creation/conversion, undo,
+  2D/export symbols and derived 3D treads/guards. Other assembly
+  tools and general-profile construction remain future work; see
+  [Architectural primitives](ARCHITECTURAL-PRIMITIVES.md).
+
 - **Core and CLI:** a Rust document engine and headless `domowik` CLI create,
   edit, validate, inspect, pack and export plans. The CLI is usable by people,
   scripts and AI agents.

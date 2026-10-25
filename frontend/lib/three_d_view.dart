@@ -2,16 +2,19 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+
 import 'camera_3d.dart';
 import 'core/domowik_core.dart';
 import 'editor_workflows.dart';
 import 'platform/scene_presenter_host.dart';
 import 'scene_presenter.dart';
+import 'scene_packet.dart';
 
 /// Monotonic clock for scene-load instrumentation; benchmarks share it.
 final Stopwatch sceneClock = Stopwatch()..start();
@@ -115,6 +118,7 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
   bool _presenterLoadsScene = false;
   bool _hasScene = false, _poseOnly = false;
   int? _sceneToken, _poseVersion;
+  bool _installingScene = false;
   final GlobalKey _textureBoundary = GlobalKey();
   int _loadNumber = 0;
   bool _creating = false,
@@ -292,28 +296,28 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
       sceneRequests++;
       final Map<String, Object?> scene;
       if (_presenterLoadsScene) {
-        scene = (await _presenter
-            .invokeMapMethod<String, Object?>('loadScene', {
-              'session': surface,
-              'plan': handle,
-              'generation': ++_loadNumber,
-              'levelIds': widget.levelIds,
-              'ghostedIds': widget.ghostedIds,
-              'selectedIds': widget.selectedIds,
-              'poseOnly': poseOnly,
-              'sceneToken': _sceneToken,
-            }))!;
+        scene = (await _presenter.invokeMapMethod<String, Object?>(
+          'loadScene',
+          {
+            'session': surface,
+            'plan': handle,
+            'generation': ++_loadNumber,
+            'levelIds': widget.levelIds,
+            'ghostedIds': widget.ghostedIds,
+            'selectedIds': widget.selectedIds,
+            'poseOnly': poseOnly,
+            'sceneToken': _sceneToken,
+          },
+        ))!;
       } else {
-        scene =
-            (await widget.core.assetsInBackground(handle, {
-                  'kind': 'scene',
-                  'levelIds': widget.levelIds,
-                  'ghostedIds': widget.ghostedIds,
-                  'selectedIds': widget.selectedIds,
-                  'poseOnly': poseOnly,
-                  'sceneToken': _sceneToken,
-                }))
-                as Map<String, Object?>;
+        scene = (await widget.core.assetsInBackground(handle, {
+          'kind': 'scene',
+          'levelIds': widget.levelIds,
+          'ghostedIds': widget.ghostedIds,
+          'selectedIds': widget.selectedIds,
+          'poseOnly': poseOnly,
+          'sceneToken': _sceneToken,
+        })) as Map<String, Object?>;
       }
       if (!current()) {
         // A presenter that loads in Rust has already installed this scene,
@@ -321,56 +325,23 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
         _sceneDirty = true;
         return;
       }
-      final origin = (scene['originMm'] as List)
-          .cast<num>()
-          .map((v) => v.toDouble())
-          .toList();
-      final shiftX = (_origin[0] - origin[0]) / 1000;
-      final shiftZ = -(_origin[1] - origin[1]) / 1000;
-      camera.rebase(shiftX, shiftZ);
-      // An animated framing continues in the new origin's coordinates.
-      for (final point in [_flightFrom, _flightTo]) {
-        if (point.length == 3) {
-          point[0] += shiftX;
-          point[2] += shiftZ;
-        }
-      }
-      _origin = origin;
-      _center = (scene['center'] as List)
-          .cast<num>()
-          .map((v) => v.toDouble())
-          .toList();
-      _radius = (scene['radius'] as num).toDouble();
-      // Zoom limits, clipping and framing follow the scene as it grows.
-      camera.radius = math.max(1, _radius);
       if (_presenterLoadsScene) {
         _finishScene(scene);
         installed = true;
         return;
       }
-      final meshes = scene['instanceOnly'] == true
-          ? <String, Object?>{}
-          : scene['meshes'] as Map<String, Object?>;
-      for (final entry in meshes.entries) {
-        if (!current()) return;
-        await _presenter.invokeMethod<void>('mesh', {
-          'session': surface,
-          'id': entry.key,
-          'vertices': Float32List.fromList(
-            (entry.value as List).cast<num>().map((v) => v.toDouble()).toList(),
-          ),
-        });
-      }
+      // Mutable geometry must not replace resident meshes individually: old
+      // nodes/camera could render with only some meshes rebased to a new origin.
+      final packet = await prepareScenePacket(scene, current: current);
+      if (packet == null) return;
       for (final digest in (scene['requiredModels'] as List).cast<String>()) {
         if (_uploadedModels.contains(digest)) continue;
         if (!current()) return;
         meshRequests++;
-        final mesh =
-            (await widget.core.assetsInBackground(handle, {
-                  'kind': 'mesh',
-                  'digest': digest,
-                }))
-                as Map<String, Object?>;
+        final mesh = (await widget.core.assetsInBackground(handle, {
+          'kind': 'mesh',
+          'digest': digest,
+        })) as Map<String, Object?>;
         if (!current()) return;
         final texture = mesh['texture'] as Map<String, Object?>?;
         await _presenter.invokeMethod<void>('mesh', {
@@ -399,27 +370,38 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
         _uploadedModels.add(digest);
       }
       if (!current()) return;
-      final nodes = [
-        for (final item in scene['nodes'] as List)
-          {
-            'mesh': item['mesh'],
-            'transparent': item['transparent'],
-            for (final key in ['matrix', 'normalMatrix', 'color'])
-              key: Float32List.fromList(
-                (item[key] as List)
-                    .cast<num>()
-                    .map((v) => v.toDouble())
-                    .toList(),
-              ),
-          },
-      ];
-      await _presenter.invokeMethod<void>('scene', {
-        'session': surface,
-        'nodes': nodes,
-      });
+      final nextCamera = Camera3D.copy(camera);
+      _rebaseCamera(nextCamera, scene);
+      nextCamera.radius = math.max(1, (scene['radius'] as num).toDouble());
+      if (_fitNext) {
+        nextCamera.fit(
+          (scene['center'] as List)
+              .cast<num>()
+              .map((v) => v.toDouble())
+              .toList(),
+          (scene['radius'] as num).toDouble(),
+        );
+      }
+      _installingScene = true;
+      _pendingCamera = null;
+      try {
+        await _presenter.invokeMethod<void>('scene', {
+          ..._cameraPacket(nextCamera),
+          'session': surface,
+          'meshes': packet.meshes,
+          'nodes': packet.nodes,
+        });
+        // Even if a newer revision arrived during commit, this is the scene
+        // now on screen. Adopt its origin before navigation or the next load.
+        if (mounted && session == surface && widget.handle == handle) {
+          _finishScene(scene);
+          installed = true;
+        }
+      } finally {
+        _installingScene = false;
+        if (mounted && _pendingCamera != null) _sendCamera();
+      }
       if (!current()) return;
-      _finishScene(scene);
-      installed = true;
     } catch (e) {
       if (current()) {
         if (poseOnly) {
@@ -451,6 +433,27 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
   }
 
   void _finishScene(Map<String, Object?> scene) {
+    final nextOrigin = (scene['originMm'] as List).cast<num>();
+    final shiftX = (_origin[0] - nextOrigin[0]) / 1000;
+    final shiftZ = -(_origin[1] - nextOrigin[1]) / 1000;
+    _rebaseCamera(camera, scene);
+    // Framing animation and camera adopt the committed origin together.
+    for (final point in [_flightFrom, _flightTo]) {
+      if (point.length == 3) {
+        point[0] += shiftX;
+        point[2] += shiftZ;
+      }
+    }
+    _origin = (scene['originMm'] as List)
+        .cast<num>()
+        .map((v) => v.toDouble())
+        .toList();
+    _center = (scene['center'] as List)
+        .cast<num>()
+        .map((v) => v.toDouble())
+        .toList();
+    _radius = (scene['radius'] as num).toDouble();
+    camera.radius = math.max(1, _radius);
     _hasScene = true;
     _sceneToken = (scene['sceneToken'] as num?)?.toInt();
     _poseVersion = (scene['poseVersion'] as num?)?.toInt();
@@ -475,15 +478,27 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
     _sendCamera();
   }
 
-  void _sendCamera() {
-    if (!mounted || !widget.active || session == null) return;
+  void _rebaseCamera(Camera3D target, Map<String, Object?> scene) {
+    final origin = (scene['originMm'] as List).cast<num>();
+    target.rebase(
+      (_origin[0] - origin[0]) / 1000,
+      -(_origin[1] - origin[1]) / 1000,
+    );
+  }
+
+  Map<String, Object?> _cameraPacket(Camera3D target) {
     final ratio = MediaQuery.devicePixelRatioOf(context);
-    _pendingCamera = {
+    return {
       'session': session,
-      'matrix': camera.matrix(_size.width / math.max(1, _size.height)),
+      'matrix': target.matrix(_size.width / math.max(1, _size.height)),
       'width': (_size.width * ratio).round().clamp(32, 4096),
       'height': (_size.height * ratio).round().clamp(32, 4096),
     };
+  }
+
+  void _sendCamera() {
+    if (!mounted || !widget.active || session == null) return;
+    _pendingCamera = _cameraPacket(camera);
     if (_cameraScheduled) return;
     _cameraScheduled = true;
     SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -494,7 +509,7 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
   }
 
   Future<void> _flushCamera() async {
-    if (_cameraInFlight || !mounted) return;
+    if (_cameraInFlight || _installingScene || !mounted) return;
     final packet = _pendingCamera;
     if (packet == null) return;
     _pendingCamera = null;
@@ -1060,15 +1075,14 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
                                       );
                                     } catch (_) {
                                       if (!context.mounted) return;
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            'Could not copy the 3D error. Select the text and copy it manually.',
-                                          ),
-                                        ),
-                                      );
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Could not copy the 3D error. Select the text and copy it manually.',
+                                              ),
+                                            ),
+                                          );
                                     }
                                   },
                                   icon: const Icon(Icons.copy_outlined),

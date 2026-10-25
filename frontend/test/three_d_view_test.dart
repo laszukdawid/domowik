@@ -4,6 +4,7 @@ import 'dart:ffi' hide Size;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
 import 'package:domowik_editor/core/ffi_core.dart';
 import 'package:domowik_editor/core/domowik_core.dart' show DomowikCore;
@@ -14,6 +15,212 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'a long stair installs rebased geometry and camera in one scene packet',
+    (tester) async {
+      final suffix = Platform.isMacOS ? 'dylib' : 'so';
+      final bridge = Bridge(
+        File('target/release/libdomowik_bridge.$suffix').absolute.path,
+      );
+      final real = FfiCore(bridge);
+      final opened = real.createDefault();
+      final handle = opened.handle;
+      addTearDown(() => real.close(handle));
+      final document = jsonDecode(real.snapshot(handle).text!) as Map;
+      final lower = document['levels'][0]['id'] as String;
+      const upper = '01950000-0000-7000-8000-000000000602';
+      expect(
+        real
+            .execute(
+              handle,
+              jsonEncode({
+                'operations': [
+                  {
+                    'operationId': '01950000-0000-7000-8000-000000000601',
+                    'entityId': upper,
+                    'kind': 'createEntity',
+                    'entity': {
+                      'type': 'level',
+                      'id': upper,
+                      'name': 'Upper',
+                      'elevationMm': 2600,
+                      'floorThicknessMm': 200,
+                      'defaultWallHeightMm': 2500,
+                      'defaultCeilingHeightMm': 2500,
+                    },
+                  },
+                ],
+              }),
+            )
+            .succeeded,
+        isTrue,
+      );
+      void addStair(List<int> end) {
+        expect(
+          real
+              .edit(
+                handle,
+                jsonEncode({
+                  'kind': 'addDescendingStaircase',
+                  'request': {
+                    'upperLevelId': upper,
+                    'startMm': [0, 0],
+                    'endMm': end,
+                  },
+                }),
+              )
+              .succeeded,
+          isTrue,
+        );
+      }
+
+      Map<String, Object?> scene() => jsonDecode(
+        real
+            .assets(
+              handle,
+              jsonEncode({
+                'kind': 'scene',
+                'levelIds': [lower, upper],
+                'ghostedIds': [],
+              }),
+            )
+            .text!,
+      ) as Map<String, Object?>;
+      addStair([3780, 0]);
+      final first = scene();
+      final background = await tester.runAsync(
+        () => real.assetsInBackground(handle, {
+          'kind': 'scene',
+          'levelIds': [lower, upper],
+          'ghostedIds': [],
+        }),
+      );
+      final prepared = background as Map<String, Object?>;
+      expect((prepared['meshes'] as Map).values.first, isA<Float32List>());
+      expect((prepared['nodes'] as List).first['matrix'], isA<Float32List>());
+      expect(prepared['originMm'], first['originMm']);
+      addStair([40000, 20000]);
+      final second = scene();
+      expect(first['originMm'], isNot(second['originMm']));
+      final core = _SceneCore(first);
+      final key = GlobalKey<ThreeDViewState>();
+      final packets = <Map>[];
+      final cameraPackets = <MethodCall>[];
+      final commit = Completer<void>();
+      var reject = false;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (call) async {
+          if (call.method == 'create') return {'textureId': 77, 'session': 11};
+          if (call.method == 'mesh')
+            fail('mutable geometry must not be installed piecemeal');
+          if (call.method == 'camera') cameraPackets.add(call);
+          if (call.method == 'scene') {
+            if (reject) throw PlatformException(code: 'invalid-scene');
+            packets.add(call.arguments as Map);
+            if (packets.length == 2) await commit.future;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        ),
+      );
+      Future<void> build(int revision) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: ThreeDView(
+                key: key,
+                core: core,
+                handle: handle,
+                revision: revision,
+                levelIds: [lower, upper],
+                ghostedIds: const [],
+                floorElevationMm: 2600,
+                active: true,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await build(1);
+      final oldTarget = List.of(key.currentState!.camera.target);
+      final oldDistance = key.currentState!.camera.distance;
+      core.scene = second;
+      await build(2);
+      expect(packets, hasLength(2));
+      expect(
+        key.currentState!.camera.target,
+        oldTarget,
+        reason: 'do not adopt pending scene metadata',
+      );
+      final camerasBefore = cameraPackets.length;
+      key.currentState!.cameraChanged();
+      await tester.pump();
+      expect(
+        cameraPackets,
+        hasLength(camerasBefore),
+        reason: 'no old-origin camera may race the scene commit',
+      );
+      for (var i = 0; i < 2; i++) {
+        expect(
+          (packets[i]['meshes'] as Map).keys,
+          ((i == 0 ? first : second)['meshes'] as Map).keys,
+        );
+        expect(packets[i]['matrix'], isA<Float64List>());
+      }
+      // Check projected vertices of every existing stair mesh, not just stored
+      // run lengths. They must stay in place even though the scene origin moves.
+      List<double> project(List<num> matrix, List<num> vertices, int at) {
+        final point = [vertices[at], vertices[at + 1], vertices[at + 2], 1];
+        final clip = List.generate(
+          4,
+          (r) => List.generate(
+            4,
+            (c) => matrix[c * 4 + r] * point[c],
+          ).reduce((a, b) => a + b),
+        );
+        return [clip[0] / clip[3], clip[1] / clip[3]];
+      }
+
+      final oldMeshes = packets[0]['meshes'] as Map,
+          newMeshes = packets[1]['meshes'] as Map;
+      for (final id in oldMeshes.keys.where((id) => '$id'.contains('stair:'))) {
+        final a = oldMeshes[id]['vertices'] as List<num>,
+            b = newMeshes[id]['vertices'] as List<num>;
+        expect(a.length, b.length);
+        for (var j = 0; j < a.length; j += 10) {
+          final before = project(packets[0]['matrix'] as List<num>, a, j),
+              after = project(packets[1]['matrix'] as List<num>, b, j);
+          for (var k = 0; k < 2; k++) {
+            expect(after[k], closeTo(before[k], 0.00001));
+          }
+        }
+      }
+      expect(oldMeshes.keys.any((id) => '$id'.contains('stair:')), isTrue);
+      commit.complete();
+      await tester.pumpAndSettle();
+      expect(key.currentState!.camera.distance, oldDistance);
+      final installedTarget = List.of(key.currentState!.camera.target);
+      expect(installedTarget, isNot(oldTarget));
+      // Rejection must leave the displayed scene's camera/coordinate system alone.
+      reject = true;
+      core.scene = first;
+      await build(3);
+      expect(key.currentState!.camera.target, installedTarget);
+      expect(key.currentState!.diagnosticError, contains('invalid-scene'));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(real.outstandingBuffers(), 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets('embedded texture bytes cross the Linux presenter channel once', (
     tester,
   ) async {
@@ -184,9 +391,9 @@ void main() {
     'navigation uploads only cameras; revisions rebuild the same plan scene',
     (tester) async {
       final suffix = Platform.isMacOS ? 'dylib' : 'so';
-      final image = File(
-        'target/release/libdomowik_bridge.$suffix',
-      ).absolute.path;
+      final image = File('target/release/libdomowik_bridge.$suffix')
+          .absolute
+          .path;
       final bridge = Bridge(image);
       final output = alloc<Uint64>(sizeOf<Uint64>());
       expect(bridge.planCreateDefault(output), ok);
@@ -464,8 +671,7 @@ void main() {
       expect(
         loads,
         hasLength(3),
-        reason:
-            'one new request delivers the latest pose, not every intermediate angle',
+        reason: 'one new request delivers the latest pose, not every intermediate angle',
       );
       final beforeDocumentChange = cameras;
       await build(21, revision: 2);
@@ -877,4 +1083,14 @@ class _TextureCore extends _UnusedCore {
       'diagnostics': <String>[],
     };
   }
+}
+
+class _SceneCore extends _UnusedCore {
+  _SceneCore(this.scene);
+  Map<String, Object?> scene;
+  @override
+  Future<Object?> assetsInBackground(
+    int handle,
+    Map<String, Object?> request,
+  ) async => scene;
 }

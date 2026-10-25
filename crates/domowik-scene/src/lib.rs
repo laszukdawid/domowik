@@ -119,6 +119,70 @@ struct Builder {
     high: [f64; 3],
 }
 impl Builder {
+    /// Render a reusable rectangular/sloped prism, with only its own cuts.
+    fn construction(
+        &mut self,
+        doc: &Document,
+        body: &domowik_format::ConstructionBody,
+        id: &str,
+        alpha: f32,
+        cut: bool,
+    ) -> Result<(), String> {
+        use domowik_geometry::architecture::{cut_surfaces, rectangle};
+        let surfaces = if cut {
+            cut_surfaces(
+                doc,
+                domowik_format::OpeningHost::ConstructionBody(body.id),
+                &[rectangle(&body.footprint)],
+            )
+        } else {
+            vec![rectangle(&body.footprint)]
+        };
+        let level = doc
+            .level(body.level_id)
+            .ok_or("missing construction level")?;
+        let [ax, ay] = body.footprint.start_mm;
+        let [bx, by] = body.footprint.end_mm;
+        let dx = bx - ax;
+        let dy = by - ay;
+        let len2 = dx * dx + dy * dy;
+        let delta = body.bottom_offsets_mm[1] - body.bottom_offsets_mm[0];
+        let gx = delta * dx / len2;
+        let gz = -delta * dy / len2;
+        for (i, p) in surfaces.iter().enumerate() {
+            let id = format!("{id}:{i}");
+            let color = if body.role == domowik_format::BodyRole::Guard {
+                [0.36, 0.4, 0.43, alpha]
+            } else {
+                [0.65, 0.56, 0.43, alpha]
+            };
+            self.polygon(id.clone(), p, 0.0, body.thickness_mm, color)?;
+            let key = format!("geometry:{id}");
+            if let Some(vertices) = self.scene.meshes.get_mut(&key) {
+                for v in vertices.as_chunks_mut::<10>().0 {
+                    let x = f64::from(v[0]) * 1000.0 + self.scene.origin_mm[0];
+                    let y = -f64::from(v[2]) * 1000.0 + self.scene.origin_mm[1];
+                    let t = ((x - ax) * dx + (y - ay) * dy) / len2;
+                    v[1] += ((level.elevation_mm + body.bottom_offsets_mm[0] + delta * t) / 1000.0)
+                        as f32;
+                    let n = [
+                        f64::from(v[3]) - gx * f64::from(v[4]),
+                        f64::from(v[4]),
+                        f64::from(v[5]) - gz * f64::from(v[4]),
+                    ];
+                    let length = n[0].hypot(n[1]).hypot(n[2]);
+                    for k in 0..3 {
+                        v[k + 3] = (n[k] / length) as f32;
+                    }
+                    for (k, value) in v.iter().take(3).enumerate() {
+                        self.low[k] = self.low[k].min(f64::from(*value));
+                        self.high[k] = self.high[k].max(f64::from(*value));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     #[allow(clippy::too_many_arguments)]
     fn asset_node(
         &mut self,
@@ -381,6 +445,29 @@ pub fn build_with_floors(
             }
         }
     }
+    for f in doc
+        .construction_bodies
+        .iter()
+        .filter(|b| ids.contains(&b.level_id))
+        .map(|b| b.footprint.clone())
+        .chain(doc.staircases.iter().filter_map(|s| {
+            let c = doc.connection(s.connection_id)?;
+            (ids.contains(&c.from.level_id) || ids.contains(&c.to.level_id)).then_some(
+                domowik_format::RectFootprint {
+                    start_mm: c.from.position_mm,
+                    end_mm: c.to.position_mm,
+                    width_mm: s.width_mm,
+                },
+            )
+        }))
+    {
+        for p in f.corners() {
+            for k in 0..2 {
+                low[k] = low[k].min(p[k]);
+                high[k] = high[k].max(p[k]);
+            }
+        }
+    }
     let origin_mm = std::array::from_fn(|k| {
         if low[k].is_finite() {
             (low[k] + high[k]) / 2.
@@ -415,13 +502,33 @@ pub fn build_with_floors(
             .get(&level.id)
             .ok_or_else(|| format!("no floor geometry supplied for level {}", level.id))?;
         for (i, room) in rooms.iter().enumerate() {
-            b.polygon(
-                format!("floor:{}:{i}", level.id),
-                room,
-                level.elevation_mm - level.floor_thickness_mm,
-                level.floor_thickness_mm.max(1.),
-                [0.72, 0.67, 0.57, alpha],
-            )?;
+            for (part, p) in domowik_geometry::architecture::cut_surfaces(
+                doc,
+                domowik_format::OpeningHost::LevelFloor(level.id),
+                std::slice::from_ref(room),
+            )
+            .iter()
+            .enumerate()
+            {
+                b.polygon(
+                    if part == 0 {
+                        format!("floor:{}:{i}", level.id)
+                    } else {
+                        format!("floor:{}:{i}:{part}", level.id)
+                    },
+                    p,
+                    level.elevation_mm - level.floor_thickness_mm,
+                    level.floor_thickness_mm.max(1.),
+                    [0.72, 0.67, 0.57, alpha],
+                )?;
+            }
+        }
+        for body in doc
+            .construction_bodies
+            .iter()
+            .filter(|body| body.level_id == level.id)
+        {
+            b.construction(doc, body, &format!("body:{}", body.id), alpha, true)?;
         }
         for w in doc.walls_on_level(level.id) {
             let a = w.start();
@@ -600,6 +707,41 @@ pub fn build_with_floors(
                 [1., 1., 1., alpha],
                 height_ratio,
             );
+        }
+    }
+    for s in &doc.staircases {
+        let Some(c) = doc.connection(s.connection_id) else {
+            b.scene
+                .diagnostics
+                .push(domowik_geometry::architecture::stair_diagnostic(
+                    s,
+                    "missing stair connection",
+                ));
+            continue;
+        };
+        let visible: Vec<_> = [c.from.level_id, c.to.level_id]
+            .into_iter()
+            .filter(|id| ids.contains(id))
+            .collect();
+        if visible.is_empty() {
+            continue;
+        }
+        let alpha = if visible.iter().all(|id| ghosted.contains(id)) {
+            0.3
+        } else {
+            1.0
+        };
+        let geometry = match domowik_geometry::architecture::stair(doc, s) {
+            Ok(geometry) => geometry,
+            Err(error) => {
+                b.scene
+                    .diagnostics
+                    .push(domowik_geometry::architecture::stair_diagnostic(s, &error));
+                continue;
+            }
+        };
+        for (i, body) in geometry.bodies.iter().enumerate() {
+            b.construction(doc, body, &format!("stair:{}:{i}", s.id), alpha, false)?;
         }
     }
     if b.low[0].is_finite() {

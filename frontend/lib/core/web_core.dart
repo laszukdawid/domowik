@@ -177,11 +177,7 @@ class WebCore implements DomowikCore {
   }
 
   /// A call whose last argument is a `domowik_buf*`; reads and frees it.
-  CoreReply _withBuf(
-    String name,
-    List<JSAny?> args, {
-    bool binary = false,
-  }) {
+  CoreReply _withBuf(String name, List<JSAny?> args, {bool binary = false}) {
     if (_failure != null) return const CoreReply.failed(panicContained);
     const size = 24; // data (u32, padded), len (u64), token (u64)
     final buf = _alloc(size);
@@ -325,6 +321,10 @@ class WebCore implements DomowikCore {
       _request('domowik_plan_snap', handle, request);
 
   @override
+  CoreReply stairPreview(int handle, String request) =>
+      _request('domowik_plan_stair_preview', handle, request);
+
+  @override
   CoreReply sceneFrame(int handle, String request) =>
       _request('domowik_plan_scene_frame', handle, request, binary: true);
 
@@ -335,8 +335,7 @@ class WebCore implements DomowikCore {
   CoreReply redo(int handle) => _withBuf('domowik_plan_redo', [_big(handle)]);
 
   @override
-  CoreReply state(int handle) =>
-      _withBuf('domowik_plan_state', [_big(handle)]);
+  CoreReply state(int handle) => _withBuf('domowik_plan_state', [_big(handle)]);
 
   @override
   CoreReply snapshot(int handle) =>
@@ -432,9 +431,7 @@ class WebCore implements DomowikCore {
         // getRandomValues fills at most 65,536 bytes per call.
         for (var at = 0; at < length; at += 65536) {
           final n = length - at < 65536 ? length - at : 65536;
-          _getRandomValues(
-            _memory.buffer.toDart.asUint8List(ptr + at, n).toJS,
-          );
+          _getRandomValues(_memory.buffer.toDart.asUint8List(ptr + at, n).toJS);
         }
         return _success;
       }).toJS,
@@ -468,8 +465,12 @@ class WebCore implements DomowikCore {
         for (var i = 0; i < count; i++) {
           final ptr = _view.getUint32(iovs + 8 * i, Endian.little);
           final length = _view.getUint32(iovs + 8 * i + 4, Endian.little);
-          text.write(utf8.decode(_bytes.sublist(ptr, ptr + length),
-              allowMalformed: true));
+          text.write(
+            utf8.decode(
+              _bytes.sublist(ptr, ptr + length),
+              allowMalformed: true,
+            ),
+          );
           total += length;
         }
         if (fd == 2) {
