@@ -1,6 +1,8 @@
 import 'dart:typed_data';
+import 'dart:isolate';
 
 import 'package:domowik_editor/scene_packet.dart';
+import 'package:domowik_editor/scene_packet_data.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -79,6 +81,30 @@ void main() {
       );
       expect(packet, isNull);
       expect(yields, 2);
+    },
+  );
+
+  test(
+    'native worker arrays cross isolates and are reused without UI copies',
+    () async {
+      final input = scene();
+      final prepared = await Isolate.run(() => prepareSceneArrays(input));
+      final vertices = (prepared['meshes'] as Map)['large'];
+      final matrix = (prepared['nodes'] as List).single['matrix'];
+      expect(vertices, isA<Float32List>());
+      expect(matrix, isA<Float32List>());
+      expect((input['meshes'] as Map)['large'], isNot(isA<Float32List>()));
+      final packet = await prepareScenePacket(
+        prepared,
+        current: () => true,
+        workBudget: const Duration(days: 1),
+        yieldFrame: () async {
+          fail('prepared arrays must not need conversion');
+        },
+      );
+      expect(packet!.meshes, same(prepared['presenterMeshes']));
+      expect((packet.meshes['large'] as Map)['vertices'], same(vertices));
+      expect(packet.nodes.single['matrix'], same(matrix));
     },
   );
 

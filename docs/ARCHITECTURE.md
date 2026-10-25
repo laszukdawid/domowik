@@ -137,8 +137,9 @@ The 3D pipeline is separate from the document core:
 3. Camera movement updates the view without changing plan geometry.
 
 Linux installs mutable geometry, instances and their origin-matched camera as
-one validated scene packet under the render lock. CPU conversion yields between
-short work slices; native decoding and mesh comparisons use owning CPU snapshots
+one validated scene packet under the render lock. Native scene workers prepare
+compact presentation arrays before returning them to the UI; other hosts convert
+in short, frame-yielding slices. Native decoding and mesh comparisons use owning CPU snapshots
 outside the lock. A baseline revision check protects the final commit, and
 unchanged meshes keep their GPU allocations. The previous scene remains
 visible until that commit; individual mesh uploads are reserved for immutable

@@ -88,6 +88,17 @@ void main() {
       ) as Map<String, Object?>;
       addStair([3780, 0]);
       final first = scene();
+      final background = await tester.runAsync(
+        () => real.assetsInBackground(handle, {
+          'kind': 'scene',
+          'levelIds': [lower, upper],
+          'ghostedIds': [],
+        }),
+      );
+      final prepared = background as Map<String, Object?>;
+      expect((prepared['meshes'] as Map).values.first, isA<Float32List>());
+      expect((prepared['nodes'] as List).first['matrix'], isA<Float32List>());
+      expect(prepared['originMm'], first['originMm']);
       addStair([40000, 20000]);
       final second = scene();
       expect(first['originMm'], isNot(second['originMm']));

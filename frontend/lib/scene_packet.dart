@@ -9,8 +9,10 @@ class PreparedScenePacket {
   final List<Map<String, Object?>> nodes;
 }
 
-/// Converts full-scene geometry and instance data in short CPU slices. Checks
-/// elapsed work at most every 8192 floats and yields to an actual Flutter frame
+/// Reuses arrays already prepared by the native worker. Other hosts convert
+/// geometry and instance data in short CPU slices, without a Future per array.
+/// Checks elapsed work every conversion block (at most 8192 floats) and yields
+/// to an actual Flutter frame
 /// after [workBudget]; even a single very large mesh cannot monopolize a frame.
 /// Cancellation discards the partial packet without touching the presenter.
 /// Budgets are cooperative, not a hard real-time guarantee. Camera derivation
@@ -21,50 +23,63 @@ Future<PreparedScenePacket?> prepareScenePacket(
   Duration workBudget = const Duration(milliseconds: 2),
   Future<void> Function()? yieldFrame,
 }) async {
-  final clock = Stopwatch()..start();
-  Future<bool> checkpoint() async {
-    if (!current()) return false;
-    if (clock.elapsed >= workBudget) {
-      await (yieldFrame?.call() ?? SchedulerBinding.instance.endOfFrame);
-      clock.reset();
-    }
-    return current();
+  if (!current()) return null;
+  final prepared = scene['presenterMeshes'];
+  if (prepared is Map<String, Object?>) {
+    return PreparedScenePacket(
+      prepared,
+      (scene['nodes'] as List).cast<Map<String, Object?>>(),
+    );
   }
+  final clock = Stopwatch()..start();
+  final meshes = <String, Object?>{};
+  final nodes = <Map<String, Object?>>[];
 
-  Future<Float32List?> floats(List values) async {
-    if (!await checkpoint()) return null;
+  Iterable<void> floats(List values, void Function(Float32List) put) sync* {
+    if (values is Float32List) {
+      put(values);
+      return;
+    }
     final result = Float32List(values.length);
     for (var offset = 0; offset < values.length;) {
       final end = (offset + 8192).clamp(0, values.length);
       for (; offset < end; offset++) {
         result[offset] = (values[offset] as num).toDouble();
       }
-      if (!await checkpoint()) return null;
+      yield null;
     }
-    return result;
+    put(result);
   }
 
-  if (!current()) return null;
-  final meshes = <String, Object?>{};
-  if (scene['instanceOnly'] != true) {
-    for (final entry in (scene['meshes'] as Map<String, Object?>).entries) {
-      final vertices = await floats(entry.value as List);
-      if (vertices == null) return null;
-      meshes[entry.key] = {'vertices': vertices};
+  Iterable<void> convert() sync* {
+    if (scene['instanceOnly'] != true) {
+      for (final entry in (scene['meshes'] as Map<String, Object?>).entries) {
+        yield* floats(
+          entry.value as List,
+          (v) => meshes[entry.key] = {'vertices': v},
+        );
+        yield null;
+      }
+    }
+    for (final item in scene['nodes'] as List) {
+      final node = <String, Object?>{
+        'mesh': item['mesh'],
+        'transparent': item['transparent'],
+      };
+      for (final key in ['matrix', 'normalMatrix', 'color']) {
+        yield* floats(item[key] as List, (v) => node[key] = v);
+      }
+      nodes.add(node);
+      yield null;
     }
   }
-  final nodes = <Map<String, Object?>>[];
-  for (final item in scene['nodes'] as List) {
-    final node = <String, Object?>{
-      'mesh': item['mesh'],
-      'transparent': item['transparent'],
-    };
-    for (final key in ['matrix', 'normalMatrix', 'color']) {
-      final values = await floats(item[key] as List);
-      if (values == null) return null;
-      node[key] = values;
+
+  for (final _ in convert()) {
+    if (!current()) return null;
+    if (clock.elapsed >= workBudget) {
+      await (yieldFrame?.call() ?? SchedulerBinding.instance.endOfFrame);
+      clock.reset();
     }
-    nodes.add(node);
   }
   return current() ? PreparedScenePacket(meshes, nodes) : null;
 }

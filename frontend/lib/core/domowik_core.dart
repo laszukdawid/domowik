@@ -103,7 +103,9 @@ abstract interface class DomowikCore {
 
   /// Runs an asset request away from the UI where the platform can (a native
   /// isolate) and inline where it cannot (the browser's single thread).
-  /// Completes with the decoded JSON, or throws [CoreException].
+  /// Completes with decoded JSON-shaped data, or throws [CoreException]. Native
+  /// scene workers may prepare mesh/instance number lists as Float32 arrays for
+  /// presentation; document/camera metadata retain their original precision.
   Future<Object?> assetsInBackground(int handle, Map<String, Object?> request);
 
   /// The handle's sticky diagnostic, or null when the core has none.

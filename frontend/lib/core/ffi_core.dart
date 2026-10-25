@@ -12,6 +12,7 @@ import 'dart:typed_data';
 
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart' as native;
 
+import '../scene_packet_data.dart';
 import 'domowik_core.dart';
 
 /// Opens the core packaged with this application.
@@ -220,7 +221,16 @@ class FfiCore implements DomowikCore {
     }
     return Isolate.run(() {
       try {
-        return native.assetRequest(native.Bridge(image), handle, request);
+        final result = native.assetRequest(
+          native.Bridge(image),
+          handle,
+          request,
+        );
+        // Return compact arrays from this existing worker, rather than copying
+        // decoded scene-number lists back to convert on the UI isolate.
+        return request['kind'] == 'scene'
+            ? prepareSceneArrays(result as Map<String, Object?>)
+            : result;
       } on native.BridgeException catch (e) {
         throw CoreException(e.code, e.detail);
       }
