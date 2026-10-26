@@ -26,19 +26,17 @@ AccountClient? createAccountClient() {
 /// Opens `url` in the system browser.
 typedef BrowserOpener = Future<void> Function(Uri url);
 
+/// Launches the browser without waiting for it: on some systems the launcher
+/// stays in the foreground for as long as the browser runs.
 Future<void> openSystemBrowser(Uri url) async {
-  final ProcessResult result;
-  if (Platform.isMacOS) {
-    result = await Process.run('open', [url.toString()]);
-  } else if (Platform.isWindows) {
-    result = await Process.run('rundll32', [
-      'url.dll,FileProtocolHandler',
-      url.toString(),
-    ]);
-  } else {
-    result = await Process.run('xdg-open', [url.toString()]);
-  }
-  if (result.exitCode != 0) {
+  final (command, arguments) = Platform.isMacOS
+      ? ('open', [url.toString()])
+      : Platform.isWindows
+      ? ('rundll32', ['url.dll,FileProtocolHandler', url.toString()])
+      : ('xdg-open', [url.toString()]);
+  try {
+    await Process.start(command, arguments, mode: ProcessStartMode.detached);
+  } on ProcessException {
     throw const AccountException('Could not open the web browser');
   }
 }
@@ -65,9 +63,14 @@ class NativeAccountClient implements AccountClient {
     final listener = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final redirect = 'http://127.0.0.1:${listener.port}/callback';
     try {
-      // Observed even if opening the browser fails before it is awaited.
-      final code = _awaitCode(listener, state)..ignore();
-      await openBrowser(
+      // The deadline runs from here, and the code is used as soon as it
+      // arrives, whether or not the browser launch has returned.
+      final code = _awaitCode(listener, state).timeout(
+        timeout,
+        onTimeout: () =>
+            throw const AccountException('Signing in took too long'),
+      );
+      final launched = openBrowser(
         server.api('auth/desktop', {
           'redirect_uri': redirect,
           'state': state,
@@ -75,15 +78,12 @@ class NativeAccountClient implements AccountClient {
           'code_challenge_method': 'S256',
         }),
       );
+      final received = await Future.any([code, launched.then((_) => code)]);
       final issued = await _send(
         'POST',
         server.api('auth/desktop/token'),
         body: {
-          'code': await code.timeout(
-            timeout,
-            onTimeout: () =>
-                throw const AccountException('Signing in took too long'),
-          ),
+          'code': received,
           'codeVerifier': pkce.verifier,
           'redirectUri': redirect,
         },

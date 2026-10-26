@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -165,6 +166,27 @@ void main() {
         await expectLater(client.signIn(), throwsA(isA<AccountException>()));
       },
     );
+
+    test('uses the code while the browser launcher is still running', () async {
+      final client = NativeAccountClient(
+        ServerEndpoint(server.origin.toString()),
+        openBrowser: (url) async {
+          await followingBrowser(url);
+          await Completer<void>().future; // never returns
+        },
+      );
+      final session = await client.signIn();
+      expect(session.username, 'ann@example.com');
+    });
+
+    test('times out even if the browser launcher never returns', () async {
+      final client = NativeAccountClient(
+        ServerEndpoint(server.origin.toString()),
+        timeout: const Duration(milliseconds: 300),
+        openBrowser: (_) => Completer<void>().future,
+      );
+      await expectLater(client.signIn(), throwsA(isA<AccountException>()));
+    });
 
     test('reports a browser that cannot be opened', () async {
       final client = NativeAccountClient(
