@@ -101,6 +101,14 @@ batch, so the plan state carries a separate `asset_revision`: the hit,
 footprint and resolution caches key on it, and the editor and 3D view reload
 on it.
 
+The owner-approved [first-party furniture catalog](../../catalog/README.md)
+adds a separate optional same-origin host service (2026-10-26). Opening
+Furniture discovers bounded metadata and visible preview PNGs, never all model
+bytes; explicit Place in plan verifies and imports the chosen GLB through the
+same core API. No catalog request occurs on startup, and catalog files are not
+part of the Flutter bundle. Embedded bytes keep saved plans self-contained.
+This is not automatic retrieval of URLs or missing references from a plan.
+
 ### 6. Rendering and input
 
 2D is the same Flutter painting on CanvasKit. CanvasKit, the core and the

@@ -711,6 +711,9 @@ stage "frontend bridge build and tests"
   cargo build --release
 )
 
+stage "hosted catalog generation and Rust model validation"
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s catalog -p 'test_*.py'
+
 # THE BROWSER BUILDS (issue 0088, ADR 0012): the same bridge crate for
 # wasm32-wasip1 and the WebGPU renderer for wasm32-unknown-unknown, linted as
 # strictly as the native build (the Flutter browser stages below build them).

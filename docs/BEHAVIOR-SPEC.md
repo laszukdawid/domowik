@@ -4380,6 +4380,30 @@ section 9.
   attribution/license fields are preserved; importing user content does not
   assign Domowik's license to it. No network retrieval is implied.
 
+### 10.3 Optional first-party browser catalog
+
+**Normative experimental-browser behavior, owner-approved 2026-10-26.** The
+deployed browser may offer the separate original Apache-2.0 furniture catalog
+described in [the catalog contract](../catalog/README.md). No catalog index,
+thumbnail or model request occurs on page startup. Opening Furniture initiates
+bounded metadata discovery from the fixed same-origin `/catalog/v1/index.json`;
+search is local, and only displayed entries request serialized thumbnails.
+Highlighting an entry downloads no model. Explicit Place in plan downloads and
+verifies the selected GLB's exact size and SHA-256 before calling the existing
+core import API and entering placement mode. Import retains self-contained
+library bytes like a manual upload; cancelling later placement does not erase
+them. Rust still owns decoding, dimensions, embedding and placement semantics.
+
+Requests omit ambient credentials, reject redirects, have a 15-second deadline,
+and accept only validated fixed same-origin hash-addressed paths. Indexes are
+limited to 128 KiB and 500 entries, models to 256 KiB, and preview PNGs to 64 KiB
+and 256 pixels on each axis. A catalog error has an explicit retry action and
+must not disable embedded models or uploads. Merely browsing never dirties the
+plan. A placed model's embedded bytes reopen offline. No URL from a user plan
+is fetched and no missing-reference remote resolver is enabled; the existing
+asset-retrieval requirements remain unchanged. This is a separate hosted
+catalog, never 100 models added to the browser's initial bundle.
+
 ### 10.4 Model dimensions and resizing (issue 0082)
 
 **Normative experimental-editor behavior.** Placement has no manual fixed-size

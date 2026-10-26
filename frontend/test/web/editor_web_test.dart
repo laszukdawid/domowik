@@ -11,6 +11,8 @@ import 'dart:typed_data';
 
 import 'package:domowik_editor/core/domowik_core.dart';
 import 'package:domowik_editor/core/web_core.dart';
+import 'package:domowik_editor/catalog.dart';
+import 'package:domowik_editor/platform/catalog_host_web.dart';
 import 'package:domowik_editor/file_workflows.dart';
 import 'package:domowik_editor/main.dart';
 import 'package:domowik_editor/plan_session.dart';
@@ -55,6 +57,127 @@ const _cube =
     'v -1 0 -1\nv 1 0 -1\nv 1 1 -1\nv -1 1 -1\nv -1 0 1\nv 1 0 1\nv 1 1 1\n'
     'v -1 1 1\nf 1 4 3 2\nf 5 6 7 8\nf 1 5 8 4\nf 2 3 7 6\nf 4 8 7 3\nf 1 2 6 5\n';
 
+// Original synthetic triangle GLB: 450 x 500 x 850 mm. No catalog artwork.
+Uint8List _catalogGlb() {
+  final doc = {
+    'asset': {'version': '2.0'},
+    'buffers': [
+      {'byteLength': 36},
+    ],
+    'bufferViews': [
+      {'buffer': 0, 'byteLength': 36},
+    ],
+    'accessors': [
+      {
+        'bufferView': 0,
+        'componentType': 5126,
+        'count': 3,
+        'type': 'VEC3',
+        'min': [0, 0, 0],
+        'max': [.45, .85, .5],
+      },
+    ],
+    'meshes': [
+      {
+        'primitives': [
+          {
+            'attributes': {'POSITION': 0},
+          },
+        ],
+      },
+    ],
+    'nodes': [
+      {'mesh': 0},
+    ],
+    'scenes': [
+      {
+        'nodes': [0],
+      },
+    ],
+    'scene': 0,
+  };
+  final text = utf8.encode(jsonEncode(doc));
+  final padded = (text.length + 3) ~/ 4 * 4;
+  final result = Uint8List(28 + padded + 36);
+  result.setAll(0, ascii.encode('glTF'));
+  final data = ByteData.sublistView(result);
+  data
+    ..setUint32(4, 2, Endian.little)
+    ..setUint32(8, result.length, Endian.little)
+    ..setUint32(12, padded, Endian.little)
+    ..setUint32(16, 0x4e4f534a, Endian.little);
+  result.fillRange(20, 20 + padded, 32);
+  result.setAll(20, text);
+  data
+    ..setUint32(20 + padded, 36, Endian.little)
+    ..setUint32(24 + padded, 0x004e4942, Endian.little);
+  final coordinates = [0.0, 0.0, 0.0, .45, 0.0, 0.0, 0.0, .85, .5];
+  for (var i = 0; i < coordinates.length; i++) {
+    data.setFloat32(28 + padded + i * 4, coordinates[i], Endian.little);
+  }
+  return result;
+}
+
+class _CatalogTransport implements CatalogTransport {
+  final hashing = createCatalogClient();
+  final paths = <String>[];
+  final glb = _catalogGlb();
+  final png = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVR4nGNImXbiPwgzwBgAXzALBcb8yfgAAAAASUVORK5CYII=',
+  );
+  late Uint8List metadata;
+  late String modelHash, pngHash;
+  bool offline = false;
+  Future<void> prepare() async {
+    modelHash = await hashing.transport.sha256(glb);
+    pngHash = await hashing.transport.sha256(png);
+    metadata = Uint8List.fromList(
+      utf8.encode(
+        jsonEncode({
+          'catalogVersion': 1,
+          'id': 'domowik-common-furniture-v1',
+          'models': [
+            {
+              'id': 'synthetic-chair',
+              'name': 'Synthetic catalog chair',
+              'category': 'Seating',
+              'dimensionsMm': [450, 500, 850],
+              'license': 'Apache-2.0',
+              'model': {
+                'path': 'models/synthetic-chair.$modelHash.glb',
+                'sha256': modelHash,
+                'bytes': glb.length,
+              },
+              'thumbnail': {
+                'path': 'thumbnails/synthetic-chair.$pngHash.png',
+                'sha256': pngHash,
+                'bytes': png.length,
+              },
+            },
+          ],
+        }),
+      ),
+    );
+  }
+
+  @override
+  Future<Uint8List> fetch(String path, int limit) async {
+    paths.add(path);
+    if (offline) throw StateError('Synthetic offline condition');
+    return path.endsWith('.json')
+        ? metadata
+        : path.endsWith('.png')
+        ? png
+        : glb;
+  }
+
+  @override
+  Future<String> sha256(Uint8List bytes) async =>
+      identical(bytes, glb) ? modelHash : pngHash;
+  @override
+  void close() => hashing.close();
+}
+
 void main() {
   late WebCore core;
   setUpAll(() async {
@@ -73,6 +196,7 @@ void main() {
     UserConfigStore? config,
     Future<(String, Uint8List)?> Function()? picker,
     Future<PickedModelDirectory?> Function()? directoryPicker,
+    CatalogClient? catalog,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -85,6 +209,7 @@ void main() {
           modelPicker: picker,
           modelDirectoryPicker: directoryPicker,
           modelUploads: true,
+          catalogClient: catalog,
         ),
       ),
     );
@@ -348,6 +473,55 @@ void main() {
     expect(scene(tester).assets.single.rotationXDeg, 0);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'catalog browse is lazy, selected model embeds and saved bytes reopen offline',
+    (tester) async {
+      final transport = _CatalogTransport();
+      await tester.runAsync(transport.prepare);
+      final dialogs = _ByteDialogs();
+      await start(tester, dialogs: dialogs, catalog: CatalogClient(transport));
+      expect(transport.paths, isEmpty);
+      await tester.tap(find.byKey(const ValueKey('asset-library')));
+      await tester.pumpAndSettle();
+      expect(transport.paths.where((p) => p.endsWith('.json')), hasLength(1));
+      expect(transport.paths.where((p) => p.endsWith('.png')), hasLength(1));
+      expect(transport.paths.where((p) => p.endsWith('.glb')), isEmpty);
+      expect(find.textContaining('Unsaved'), findsNothing);
+      await tester.tap(find.text('Synthetic catalog chair'));
+      await tester.pumpAndSettle();
+      expect(transport.paths.where((p) => p.endsWith('.glb')), isEmpty);
+      await tester.tap(find.byKey(const ValueKey('choose-asset')));
+      await tester.pumpAndSettle();
+      expect(transport.paths.where((p) => p.endsWith('.glb')), hasLength(1));
+      await tester.tapAt(tester.getTopLeft(canvas()) + const Offset(400, 400));
+      await tester.pumpAndSettle();
+      expect(scene(tester).assets, hasLength(1));
+      expect(scene(tester).assets.single.widthMm, closeTo(450, .01));
+      expect(scene(tester).assets.single.depthMm, closeTo(500, .01));
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(dialogs.saved, hasLength(1));
+      final requests = transport.paths.length;
+      transport.offline = true;
+      await tester.tap(find.text('New'));
+      await tester.pumpAndSettle();
+      dialogs.opening = PlanBytes(
+        'offline-furniture.domo',
+        dialogs.saved.single,
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      expect(scene(tester).assets.single.name, 'Synthetic catalog chair');
+      expect(scene(tester).assets.single.widthMm, closeTo(450, .01));
+      expect(
+        transport.paths.length,
+        requests,
+        reason: 'Reopening uses embedded bytes, never the catalog',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('preferences persist in browser storage', (tester) async {
     final key = 'domowik.test.${DateTime.now().microsecondsSinceEpoch}';
