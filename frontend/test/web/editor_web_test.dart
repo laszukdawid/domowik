@@ -119,7 +119,7 @@ Uint8List _catalogGlb() {
 }
 
 class _CatalogTransport implements CatalogTransport {
-  final hashing = createCatalogClient();
+  final hashing = createCatalogClient()!;
   final paths = <String>[];
   final glb = _catalogGlb();
   final png = base64Decode(

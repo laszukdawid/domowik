@@ -1,13 +1,59 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-/// Fixed first-party catalog discovery, not a resolver for URLs in user plans.
+/// Configured catalog discovery, not a resolver for URLs in user plans.
 /// No request is made by construction. Network work starts on explicit browse;
 /// models are downloaded only on an explicit import action. All sizes are bytes.
 abstract interface class CatalogTransport {
   Future<Uint8List> fetch(String path, int maxBytes);
   Future<String> sha256(Uint8List bytes);
   void close();
+}
+
+const defaultCatalogManifestUrl =
+    'https://planner.homehero.pro/catalog/v1/index.json';
+
+/// A host-selected HTTPS manifest and hash-addressed files beside it. HTTP is
+/// accepted only on loopback for local development. No credentials, queries,
+/// fragments, encoded paths or directory traversal are accepted.
+class CatalogEndpoint {
+  CatalogEndpoint(String url) : manifest = Uri.parse(url) {
+    final local = const [
+      'localhost',
+      '127.0.0.1',
+      '::1',
+    ].contains(manifest.host);
+    if (!(manifest.scheme == 'https' || (manifest.scheme == 'http' && local)) ||
+        manifest.host.isEmpty ||
+        manifest.userInfo.isNotEmpty ||
+        manifest.hasQuery ||
+        manifest.hasFragment ||
+        !RegExp(r'^/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.json$')
+            .hasMatch(manifest.path) ||
+        url.contains('%') ||
+        url.contains('\\') ||
+        url.contains('/../') ||
+        url.contains('/./')) {
+      throw const FormatException('Invalid catalog manifest URL');
+    }
+  }
+
+  final Uri manifest;
+  static final _asset = RegExp(
+    r'^(?:models/[a-z0-9-]+\.[0-9a-f]{64}\.glb|thumbnails/[a-z0-9-]+\.[0-9a-f]{64}\.png)$',
+  );
+
+  String asset(String path) {
+    if (!_asset.hasMatch(path))
+      throw const FormatException('Invalid catalog asset path');
+    return manifest.resolve(path).toString();
+  }
+
+  bool permits(String url) {
+    if (url == manifest.toString()) return true;
+    final root = manifest.resolve('.').toString();
+    return url.startsWith(root) && _asset.hasMatch(url.substring(root.length));
+  }
 }
 
 class CatalogFile {
@@ -36,9 +82,10 @@ class CatalogModel {
 class CatalogClient {
   /// Takes ownership of [transport]. Concurrent discovery calls share one
   /// result; failed discovery is retryable. [close] aborts host network work.
-  CatalogClient(this.transport);
+  CatalogClient(this.transport, {CatalogEndpoint? endpoint})
+    : endpoint = endpoint ?? CatalogEndpoint(defaultCatalogManifestUrl);
   final CatalogTransport transport;
-  static const root = '/catalog/v1/';
+  final CatalogEndpoint endpoint;
   static const maxIndexBytes = 128 * 1024;
   static const maxModelBytes = 256 * 1024;
   static const maxThumbnailBytes = 64 * 1024;
@@ -50,7 +97,10 @@ class CatalogClient {
   Future<List<CatalogModel>> _discover() async {
     try {
       _checkOpen();
-      final bytes = await transport.fetch('${root}index.json', maxIndexBytes);
+      final bytes = await transport.fetch(
+        endpoint.manifest.toString(),
+        maxIndexBytes,
+      );
       _checkOpen();
       if (bytes.length > maxIndexBytes)
         throw const FormatException('Catalog index is too large');
@@ -68,7 +118,10 @@ class CatalogClient {
     final value = jsonDecode(utf8.decode(bytes));
     if (value is! Map ||
         value['catalogVersion'] != 1 ||
-        value['id'] != 'domowik-common-furniture-v1') {
+        value['id'] is! String ||
+        !RegExp(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
+            .hasMatch(value['id'] as String) ||
+        (value['id'] as String).length > 80) {
       throw const FormatException('Unsupported furniture catalog');
     }
     final entries = value['models'];
@@ -140,7 +193,7 @@ class CatalogClient {
 
   Future<Uint8List> _read(CatalogFile file, int limit) async {
     _checkOpen();
-    final bytes = await transport.fetch('$root${file.path}', limit);
+    final bytes = await transport.fetch(endpoint.asset(file.path), limit);
     _checkOpen();
     if (bytes.length != file.bytes ||
         bytes.length > limit ||

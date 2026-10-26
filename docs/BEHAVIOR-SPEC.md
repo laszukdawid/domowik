@@ -4386,7 +4386,10 @@ section 9.
 deployed browser may offer the separate original Apache-2.0 furniture catalog
 described in [the catalog contract](../catalog/README.md). No catalog index,
 thumbnail or model request occurs on page startup. Opening Furniture initiates
-bounded metadata discovery from the fixed same-origin `/catalog/v1/index.json`;
+bounded metadata discovery from the host-configured manifest URL, defaulting to
+`https://planner.homehero.pro/catalog/v1/index.json`. An empty deployment/build
+setting disables discovery. Deployment HTML may override the build setting
+without another startup request;
 search is local, and only displayed entries request serialized thumbnails.
 Highlighting an entry downloads no model. Explicit Place in plan downloads and
 verifies the selected GLB's exact size and SHA-256 before calling the existing
@@ -4395,7 +4398,11 @@ library bytes like a manual upload; cancelling later placement does not erase
 them. Rust still owns decoding, dimensions, embedding and placement semantics.
 
 Requests omit ambient credentials, reject redirects, have a 15-second deadline,
-and accept only validated fixed same-origin hash-addressed paths. Indexes are
+use credential-free CORS, and accept only validated hash-addressed files beneath
+the configured manifest directory on that endpoint's origin. The manifest must
+use HTTPS (HTTP is allowed only on loopback for development), with no userinfo,
+query or fragment. Catalog identity is bounded text, not a provider allowlist;
+the schema version and reviewed Apache-2.0 asset license remain enforced. Indexes are
 limited to 128 KiB and 500 entries, models to 256 KiB, and preview PNGs to 64 KiB
 and 256 pixels on each axis. A catalog error has an explicit retry action and
 must not disable embedded models or uploads. Merely browsing never dirties the

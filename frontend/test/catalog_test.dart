@@ -55,12 +55,88 @@ class _Transport implements CatalogTransport {
 }
 
 void main() {
+  test(
+    'custom endpoint confines files to its own origin and directory',
+    () async {
+      final endpoint = CatalogEndpoint(
+        'https://example.invalid/furniture/list.json',
+      );
+      final transport = _Transport();
+      expect(endpoint.permits(endpoint.manifest.toString()), isTrue);
+      final file = 'models/original-chair.$_hash.glb';
+      expect(endpoint.asset(file), 'https://example.invalid/furniture/$file');
+      expect(endpoint.permits(endpoint.asset(file)), isTrue);
+      for (final url in [
+        'https://other.invalid/furniture/$file',
+        'https://example.invalid/furniture-extra/$file',
+        'https://example.invalid/api/v1/plans',
+        '${endpoint.asset(file)}?x=1',
+        '${endpoint.asset(file)}#fragment',
+        'https://example.invalid/furniture/models/../$file',
+        'https://example.invalid/furniture/%2e%2e/$file',
+      ]) {
+        expect(endpoint.permits(url), isFalse, reason: url);
+      }
+      for (final path in [
+        '../private.glb',
+        '//other.invalid/file.glb',
+        '$file?x=1',
+      ]) {
+        expect(() => endpoint.asset(path), throwsFormatException);
+      }
+      final client = CatalogClient(
+        transport,
+        endpoint: CatalogEndpoint('https://example.invalid/custom/index.json'),
+      );
+      final model = (await client.discover()).single;
+      await client.download(model);
+      expect(
+        transport.paths.first,
+        'https://example.invalid/custom/index.json',
+      );
+      expect(transport.paths.last, 'https://example.invalid/custom/$file');
+    },
+  );
+
+  test('invalid manifest endpoints are rejected before network access', () {
+    for (final url in [
+      '/catalog/v1/index.json',
+      'http://example.invalid/index.json',
+      'https://user:password@example.invalid/index.json',
+      'https://example.invalid/index.json?token=secret',
+      'https://example.invalid/index.json#fragment',
+      'https://example.invalid/%69ndex.json',
+      'https://example.invalid/../index.json',
+      'https://example.invalid/a/./index.json',
+    ]) {
+      expect(() => CatalogEndpoint(url), throwsFormatException, reason: url);
+    }
+    expect(
+      CatalogEndpoint('http://localhost:8000/index.json').manifest.port,
+      8000,
+    );
+  });
+
+  test('catalog identity is generic, bounded and version remains enforced', () {
+    final value = jsonDecode(utf8.decode(index([entry()]))) as Map;
+    value['id'] = 'another-public-catalog';
+    Uint8List encode() => Uint8List.fromList(utf8.encode(jsonEncode(value)));
+    expect(CatalogClient.parse(encode()), hasLength(1));
+    for (final id in ['', '../bad', 1, List.filled(81, 'a').join()]) {
+      value['id'] = id;
+      expect(() => CatalogClient.parse(encode()), throwsFormatException);
+    }
+    value['id'] = 'another-public-catalog';
+    value['catalogVersion'] = 2;
+    expect(() => CatalogClient.parse(encode()), throwsFormatException);
+  });
+
   test('construction is lazy, discovery is shared, models only on explicit download', () async {
     final transport = _Transport();
     final client = CatalogClient(transport);
     expect(transport.paths, isEmpty);
     final results = await Future.wait([client.discover(), client.discover()]);
-    expect(transport.paths, ['/catalog/v1/index.json']);
+    expect(transport.paths, [defaultCatalogManifestUrl]);
     expect(identical(results[0], results[1]), isTrue);
     final model = results[0].single;
     expect(model.description, contains('Seating'));
@@ -68,7 +144,7 @@ void main() {
     expect(await client.download(model), [1, 2, 3]);
     expect(
       transport.paths.last,
-      '/catalog/v1/models/original-chair.$_hash.glb',
+      'https://planner.homehero.pro/catalog/v1/models/original-chair.$_hash.glb',
     );
   });
 

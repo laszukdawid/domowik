@@ -45,7 +45,26 @@ recipe revision, not general limits or a network-latency guarantee.
 
 Generated output is ignored build output. It is **not** a Flutter asset, a
 pubspec resource, or part of the web application image. An optional independent
-static server exposes it at the deployed page's same-origin `/catalog/v1/`.
+static server exposes it separately. The default browser manifest is
+`https://planner.homehero.pro/catalog/v1/index.json`, publicly readable without
+an account. Catalog hosting is independent of the editor's Apache-2.0 source;
+these existing assets retain their Apache-2.0 rights regardless of service pricing.
+
+Set a build default with `--dart-define=DOMOWIK_CATALOG_URL=https://example.org/furniture/index.json`
+when building Flutter. To override it without rebuilding, add the following to
+the served page's `<head>` (relative URLs resolve against the page base):
+
+```html
+<meta name="domowik-catalog-url" content="/catalog/v1/index.json">
+```
+
+Empty `content=""` or an empty build setting disables hosted discovery. Invalid
+configuration also disables it without a request. No query parameter or user-plan
+field controls the endpoint. HTTPS is required except for loopback development.
+The manifest may use any bounded lowercase hyphenated catalog ID; version 1 and
+the reviewed Apache-2.0 entry license are still required. Files resolve within
+the manifest's directory and origin, never arbitrary URLs supplied by a plan.
+
 The application starts without requesting the index, previews or models.
 Opening Furniture discovers `index.json`; search is local, and only visible
 entries request thumbnail PNGs. Selecting an entry alone downloads no GLB.
@@ -60,10 +79,12 @@ Thumbnails use the existing serialized, bounded 64-entry dialog cache, discarded
 on close. An active bounded thumbnail/index request may finish after closing the
 dialog, but cannot update the closed dialog; queued previews are dropped.
 Leaving the editor aborts active requests. Requests omit credentials, reject
-redirects, use same-origin mode and have a 15-second deadline. Indexes are capped
+redirects, use credential-free CORS and have a 15-second deadline. Indexes are capped
 at 128 KiB and 500 entries; models at 256 KiB; PNGs at 64 KiB and 256 pixels per
 axis. Only fixed hash-addressed model/thumbnail paths are accepted. HTTPS is
-provided by the site's normal deployment. SHA-256 checks integrity against the
+provided by the catalog deployment. Cross-origin catalog servers must allow
+anonymous CORS (`Access-Control-Allow-Origin: *`, no credentials) on success and
+error responses. SHA-256 checks integrity against the
 index, not authorship or trust in a compromised origin.
 
 Catalog failure leaves local uploads and embedded models usable. Missing assets

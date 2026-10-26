@@ -4,8 +4,40 @@ import 'dart:typed_data';
 
 import '../catalog.dart';
 
-CatalogClient createCatalogClient() =>
-    CatalogClient(_BrowserCatalogTransport());
+/// Deployment HTML overrides the build default without an extra request. An
+/// empty setting disables discovery. Invalid host configuration fails closed.
+CatalogClient? createCatalogClient({String? manifestUrl}) {
+  final configured =
+      manifestUrl ??
+      _document
+          .querySelector('meta[name="domowik-catalog-url"]')
+          ?.getAttribute('content') ??
+      const String.fromEnvironment(
+        'DOMOWIK_CATALOG_URL',
+        defaultValue: defaultCatalogManifestUrl,
+      );
+  if (configured.trim().isEmpty) return null;
+  try {
+    final endpoint = CatalogEndpoint(Uri.base.resolve(configured).toString());
+    return CatalogClient(
+      _BrowserCatalogTransport(endpoint),
+      endpoint: endpoint,
+    );
+  } on FormatException {
+    return null;
+  }
+}
+
+@JS('document')
+external _Document get _document;
+
+extension type _Document(JSObject _) implements JSObject {
+  external _Element? querySelector(String selector);
+}
+
+extension type _Element(JSObject _) implements JSObject {
+  external String? getAttribute(String name);
+}
 
 @JS('fetch')
 external JSPromise<_Response> _fetch(String url, _Options options);
@@ -50,16 +82,14 @@ extension type _Chunk(JSObject _) implements JSObject {
 external JSPromise<JSArrayBuffer> _digest(String algorithm, JSUint8Array bytes);
 
 class _BrowserCatalogTransport implements CatalogTransport {
+  _BrowserCatalogTransport(this.endpoint);
+  final CatalogEndpoint endpoint;
   final _active = <_AbortController>{};
   bool _closed = false;
 
   @override
   Future<Uint8List> fetch(String path, int maxBytes) async {
-    if (_closed ||
-        !path.startsWith(CatalogClient.root) ||
-        path.contains('..') ||
-        path.contains('?') ||
-        path.contains('#')) {
+    if (_closed || !endpoint.permits(path)) {
       throw StateError('Catalog request refused');
     }
     final controller = _AbortController();
@@ -72,7 +102,7 @@ class _BrowserCatalogTransport implements CatalogTransport {
         _Options(
           credentials: 'omit',
           redirect: 'error',
-          mode: 'same-origin',
+          mode: 'cors',
           signal: controller.signal,
         ),
       ).toDart;

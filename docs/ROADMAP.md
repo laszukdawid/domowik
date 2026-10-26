@@ -25,8 +25,8 @@ later phase does not imply that earlier exit criteria are complete.
   active-floor choice, including for older files without document identity.
   The asset library offers list/grid browsing with on-demand model thumbnails.
   The browser can discover 100 original generic models from a separate
-  same-origin catalog when Furniture opens; only chosen models are downloaded
-  and embedded. Catalog content adds nothing to the initial app bundle.
+  configurable public HTTPS catalog when Furniture opens; only chosen models
+  are downloaded and embedded. Catalog content adds nothing to the initial app bundle.
 - **3D view:** experimental views derive scene data from the same plan and
   share its selection: selected items are tinted, clicking in 3D selects, and
   navigation zooms toward the cursor, orbits about the picked surface and
