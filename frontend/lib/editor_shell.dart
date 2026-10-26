@@ -17,6 +17,7 @@ class EditorShell extends StatelessWidget {
     required this.onSaveAs,
     this.onAssets,
     this.onPreferences,
+    this.account,
     this.onViewModeChanged,
     this.viewMode = '2d',
     required this.onUndo,
@@ -29,6 +30,10 @@ class EditorShell extends StatelessWidget {
   });
 
   final String fileName;
+
+  /// The sign-in control, when a server is configured; built by the caller
+  /// with the same compactness as the other header controls.
+  final Widget Function(bool compact)? account;
   final VoidCallback onNew;
   final VoidCallback onOpen;
   final VoidCallback onSave;
@@ -263,6 +268,7 @@ class EditorShell extends StatelessWidget {
                                   ),
                                 ],
                               ),
+                            if (account != null) account!(compact),
                             if (onPreferences != null)
                               IconButton(
                                 key: const ValueKey('preferences'),
@@ -473,9 +479,8 @@ class _SaveSplitButton extends StatelessWidget {
                     const SizedBox(width: 6),
                     Text(
                       'Save',
-                      style: Theme.of(
-                        context,
-                      ).textTheme.labelLarge?.copyWith(color: colors.onPrimary),
+                      style: Theme.of(context).textTheme.labelLarge
+                          ?.copyWith(color: colors.onPrimary),
                     ),
                   ],
                 ),

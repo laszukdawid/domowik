@@ -11,6 +11,7 @@ void main() {
     String status = 'Ready to draw',
     bool statusIsError = false,
     double textScale = 1.0,
+    Widget Function(bool compact)? account,
   }) => MediaQuery(
     data: MediaQueryData(textScaler: TextScaler.linear(textScale)),
     child: MaterialApp(
@@ -20,6 +21,7 @@ void main() {
         onOpen: () => calls.add('open'),
         onSave: () => calls.add('save'),
         onSaveAs: () => calls.add('save as'),
+        account: account,
         onUndo: () => calls.add('undo'),
         onRedo: () => calls.add('redo'),
         tools: Row(
@@ -35,6 +37,17 @@ void main() {
       ),
     ),
   );
+
+  testWidgets('the sign-in control appears only when a server is configured', (
+    tester,
+  ) async {
+    await tester.pumpWidget(shell([]));
+    expect(find.byKey(const ValueKey('account')), findsNothing);
+    await tester.pumpWidget(
+      shell([], account: (_) => const SizedBox(key: ValueKey('account'))),
+    );
+    expect(find.byKey(const ValueKey('account')), findsOneWidget);
+  });
 
   testWidgets('desktop file and tool actions reach their own callbacks', (
     tester,
