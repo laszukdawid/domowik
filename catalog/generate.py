@@ -529,6 +529,8 @@ def generate(output, bridge):
             doc["asset"]["copyright"] = "Copyright Domowik contributors; Apache-2.0"
             doc["asset"]["extras"] = {
                 "license": "Apache-2.0",
+                "licenseText": (ROOT / "LICENSE").read_text(),
+                "notice": "Domowik original furniture catalog v1. Copyright Domowik contributors. Original generic designs; no external catalog content.",
                 "catalogId": slug,
                 "source": "Domowik original procedural catalog v1",
             }

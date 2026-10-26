@@ -55,6 +55,13 @@ class CatalogGenerationTests(unittest.TestCase):
             self.assertEqual(struct.unpack_from("<I", glb, 8)[0], len(glb))
             doc = json.loads(glb[20 : 20 + struct.unpack_from("<I", glb, 12)[0]])
             self.assertEqual(doc["asset"]["extras"]["license"], "Apache-2.0")
+            self.assertEqual(
+                doc["asset"]["extras"]["licenseText"],
+                (generator.ROOT / "LICENSE").read_text(),
+            )
+            self.assertIn(
+                "Copyright Domowik contributors", doc["asset"]["extras"]["notice"]
+            )
             self.assertNotIn("images", doc)
             self.assertFalse(any("uri" in b for b in doc["buffers"]))
 

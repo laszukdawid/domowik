@@ -29,13 +29,15 @@ generator is deterministic and adds no timestamps or host paths to published
 files. Each index entry records its stable ID, display name, category, measured
 width/depth/height in mm, Apache-2.0 license, model/thumbnail byte counts and
 SHA-256 hashes. File names include those hashes. Each GLB also carries copyright,
-license and original-catalog provenance in `asset` metadata. `LICENSE.txt` and
+license and original-catalog provenance in `asset` metadata. Each GLB includes
+the full license text and its original-content notice so saved plans retain
+those notices offline. `LICENSE.txt` and
 `NOTICE.txt` travel with the catalog. Tests regenerate every byte twice, verify
 the inventory, import all 100 models through Rust, and compare decoded physical
 dimensions. Generator/decoder verification is part of `scripts/verify.sh`.
 
-The initial catalog has a 52,901-byte index, 960,408 bytes of models and 262,742
-bytes of thumbnails. All images are 256 by 256 pixels. No GLB exceeds 32 KiB and
+The initial catalog has a 52,963-byte index, 2,135,796 bytes of models and 262,742
+bytes of thumbnails. All images are 256 by 256 pixels. No GLB exceeds 44 KiB and
 no thumbnail exceeds 5 KiB. These are measured uncompressed file sizes for this
 recipe revision, not general limits or a network-latency guarantee.
 
