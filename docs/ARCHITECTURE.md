@@ -72,8 +72,11 @@ identity, ordering, conflict, deletion and retention rules.
 
 Assets can be embedded in a plan or managed through the local content-cache
 workflow. Placing an imported model can embed its bytes so the plan remains
-self-contained. The editor does not configure external or remote asset
-retrieval. Imported content keeps its original rights; see the
+self-contained. The editor does not automatically retrieve missing references.
+The browser's optional [first-party catalog](../catalog/README.md) discovers
+bounded metadata from a configurable HTTPS endpoint only when Furniture opens,
+then imports explicitly chosen models through the same Rust API as uploaded bytes. Catalog files are
+hosted separately, not bundled with the editor. Imported content keeps its original rights; see the
 [third-party policy](THIRD-PARTY-POLICY.md).
 
 ## Performance and numerical design

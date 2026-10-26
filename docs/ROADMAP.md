@@ -24,6 +24,9 @@ later phase does not imply that earlier exit criteria are complete.
   Plans open on the first listed floor by default and remember the device's last
   active-floor choice, including for older files without document identity.
   The asset library offers list/grid browsing with on-demand model thumbnails.
+  The browser can discover 100 original generic models from a separate
+  configurable public HTTPS catalog when Furniture opens; only chosen models
+  are downloaded and embedded. Catalog content adds nothing to the initial app bundle.
 - **3D view:** experimental views derive scene data from the same plan and
   share its selection: selected items are tinted, clicking in 3D selects, and
   navigation zooms toward the cursor, orbits about the picked surface and

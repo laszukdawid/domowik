@@ -125,6 +125,16 @@ Library thumbnails reuse the independent decoder and rasterizer with an original
 fixed orthographic camera projection. List/grid presentation and its tests use
 original synthetic models and pixels, not external catalogs or artwork.
 
+The [hosted furniture catalog](../catalog/README.md) contains 100 original
+Apache-2.0 generic models and their Rust-derived PNG thumbnails. Dimensions,
+designs and recipes are invented in `catalog/generate.py`; its GLB writer reuses
+the first-party Welcome Home box builder. No external furniture data, geometry,
+textures, photographs, brand designs or catalog were consulted or adapted.
+The already reviewed Khronos glTF publication above governs encoding references,
+not the original geometry. No new package or external artwork is introduced.
+Generation creates an asset-by-asset index of dimensions, sizes, SHA-256 hashes
+and licenses alongside LICENSE/NOTICE, separately hosted rather than bundled.
+
 The decoder dependency `draco-core` 2.2.1 is Apache-2.0, checked against
 https://github.com/Filyus/draco-rust at
 `c6244f35ec1a3c22a69948b04907244e9b215981`. Its normal dependency is `bytemuck`,

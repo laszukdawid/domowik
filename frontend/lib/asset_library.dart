@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 
 import 'measurement_units.dart';
+import 'catalog.dart';
 import 'asset_thumbnails.dart';
 import 'user_config.dart';
 import 'platform/asset_scan.dart';
@@ -65,10 +66,12 @@ class LibraryModel {
     this.digest,
     this.sourceDirectory,
     this.sourceDescription,
+    this.catalog,
   });
   final String name;
   final String? file, digest, sourceDescription;
   final String? sourceDirectory;
+  final CatalogModel? catalog;
 }
 
 class AssetChoice {
@@ -103,6 +106,7 @@ class AssetLibraryDialog extends StatefulWidget {
     this.onPreview,
     this.initialView = AssetLibraryView.list,
     this.onViewChanged,
+    this.onDiscover,
   });
   final List<String> directories;
   final List<LibraryModel> embedded;
@@ -126,6 +130,10 @@ class AssetLibraryDialog extends StatefulWidget {
   final AssetLibraryView initialView;
   final ValueChanged<AssetLibraryView>? onViewChanged;
 
+  /// Optional first-party metadata discovery, invoked only when this dialog is
+  /// opened. It must never fetch or decode the catalog's model bytes.
+  final Future<List<LibraryModel>> Function()? onDiscover;
+
   @override
   State<AssetLibraryDialog> createState() => _AssetLibraryDialogState();
 }
@@ -134,6 +142,9 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
   final _directory = TextEditingController();
   final _search = TextEditingController();
   List<LibraryModel> _models = [];
+  List<LibraryModel> _directoryModels = [], _catalogModels = [];
+  bool _catalogLoading = false;
+  String? _catalogError;
   List<String> _diagnostics = [];
   LibraryModel? _selected;
   bool _loading = true;
@@ -154,6 +165,39 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
     super.initState();
     _directories = List.of(widget.directories);
     _scan(widget.directories);
+    if (widget.onDiscover != null) _discover();
+  }
+
+  void _rebuildModels() {
+    final embeddedDigests = _embedded.map((m) => m.digest).toSet();
+    _models = [
+      ..._directoryModels,
+      ..._embedded,
+      ..._catalogModels.where((m) => !embeddedDigests.contains(m.digest)),
+    ];
+  }
+
+  Future<void> _discover() async {
+    if (_catalogLoading) return;
+    setState(() {
+      _catalogLoading = true;
+      _catalogError = null;
+    });
+    try {
+      final models = await widget.onDiscover!();
+      if (!mounted) return;
+      setState(() {
+        _catalogModels = models;
+        _rebuildModels();
+      });
+    } catch (_) {
+      if (mounted)
+        setState(
+          () => _catalogError = 'Online furniture unavailable. Uploads and embedded models still work.',
+        );
+    } finally {
+      if (mounted) setState(() => _catalogLoading = false);
+    }
   }
 
   Future<void> _scan(List<String> directories) async {
@@ -167,7 +211,8 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
     final result = await scanAssetDirectories(directories);
     if (!mounted || generation != _scanGeneration) return;
     setState(() {
-      _models = [...result.models, ..._embedded];
+      _directoryModels = result.models;
+      _rebuildModels();
       _diagnostics = result.diagnostics;
       _selected = null;
       _loading = false;
@@ -373,6 +418,28 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
+            if (widget.onDiscover != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      _catalogLoading
+                          ? 'Loading online furniture catalog…'
+                          : _catalogError ??
+                                '${_catalogModels.length} online models · Apache-2.0 · Downloaded only when chosen',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    if (_catalogError != null)
+                      TextButton(
+                        key: const ValueKey('retry-furniture-catalog'),
+                        onPressed: _discover,
+                        child: const Text('Retry catalog'),
+                      ),
+                  ],
+                ),
+              ),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
@@ -519,7 +586,7 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
       final known = {for (final m in _embedded) m.digest};
       setState(() {
         _embedded = embedded;
-        _models = [..._models.where((m) => m.file != null), ...embedded];
+        _rebuildModels();
         _selected = embedded
             .where((m) => !known.contains(m.digest))
             .firstOrNull;
@@ -542,7 +609,7 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
       if (!mounted || result == null) return;
       setState(() {
         _embedded = result.embedded;
-        _models = [..._models.where((m) => m.file != null), ...result.embedded];
+        _rebuildModels();
         _selected = null;
         _diagnostics = result.diagnostics;
       });

@@ -30,6 +30,8 @@ import 'platform/entry.dart';
 import 'platform/file_dialogs.dart';
 import 'platform/host.dart';
 import 'platform/model_import.dart';
+import 'platform/catalog_host.dart';
+import 'catalog.dart';
 import 'editor_fonts.dart';
 import 'editor_shell.dart';
 import 'editor_workflows.dart';
@@ -165,6 +167,7 @@ class PlanPage extends StatefulWidget {
     this.modelPicker,
     this.modelDirectoryPicker,
     this.modelUploads,
+    this.catalogClient,
   });
 
   /// Tests load the real native library directly; bundles use
@@ -189,6 +192,12 @@ class PlanPage extends StatefulWidget {
   /// host decides by default (browsers have no directories, issue 0088).
   final bool? modelUploads;
 
+  /// Browser hosts use the first-party catalog by default. Custom core hosts
+  /// (including tests) opt in explicitly so they never contact a default server.
+  /// Native hosts do not enable hosted discovery. The page owns and closes a
+  /// supplied client; it must not be shared with another page.
+  final CatalogClient? catalogClient;
+
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
@@ -199,6 +208,9 @@ class _PlanPageState extends State<PlanPage>
   final ScrollController _selectionScroll = ScrollController();
   final LivePropertyEdits _livePropertyEdits = LivePropertyEdits();
   DomowikCore? _bridge;
+  late final CatalogClient? _catalogClient =
+      widget.catalogClient ??
+      (widget.bridgeLoader == null ? createCatalogClient() : null);
   String? _loadError;
   int _abi = 0;
   PlanSession? _session;
@@ -964,6 +976,7 @@ class _PlanPageState extends State<PlanPage>
 
   @override
   void dispose() {
+    _catalogClient?.close();
     _livePropertyEdits.cancel();
     _inspectorTabs.dispose();
     _selectionScroll.dispose();
@@ -1252,6 +1265,9 @@ class _PlanPageState extends State<PlanPage>
           }
         },
         onPreview: (model) async {
+          if (model.catalog case final entry?) {
+            return _catalogClient!.preview(entry);
+          }
           final core = _bridge;
           if (!mounted || core == null || _handle != handle) {
             throw StateError('The plan is no longer open');
@@ -1270,6 +1286,17 @@ class _PlanPageState extends State<PlanPage>
             ? () => _uploadModelDirectory(handle)
             : null,
         directoriesAvailable: !_modelUploads,
+        onDiscover: _catalogClient == null
+            ? null
+            : () async => [
+                for (final entry in await _catalogClient.discover())
+                  LibraryModel(
+                    name: entry.name,
+                    digest: entry.digest,
+                    sourceDescription: entry.description,
+                    catalog: entry,
+                  ),
+              ],
         onAttach: (directory) async {
           if (_handle != handle) return null;
           final path = await hostResolveDirectory(directory);
@@ -1311,8 +1338,44 @@ class _PlanPageState extends State<PlanPage>
       ),
     );
     if (!mounted || _handle != handle || choice == null) return;
+    var selected = choice;
+    if (choice.model.catalog case final entry?) {
+      final imported = await _fileAction(() async {
+        _setStatus('Downloading ${entry.name}…', isError: false);
+        try {
+          final bytes = await _catalogClient!.download(entry);
+          if (!mounted || _handle != handle) return false;
+          final core = _bridge!;
+          final reply = core.importModel(
+            handle,
+            'Domowik catalog (Apache-2.0)/${entry.name}.glb',
+            bytes,
+          );
+          if (!reply.succeeded)
+            throw CoreException(reply.code, _lastError(core));
+          final result = jsonDecode(reply.text!) as Map<String, Object?>;
+          if (result['digest'] != entry.digest)
+            throw StateError('Imported catalog digest changed');
+          _refresh();
+          selected = AssetChoice(
+            LibraryModel(name: entry.name, digest: entry.digest),
+          );
+          return true;
+        } catch (_) {
+          if (mounted)
+            setState(
+              () => _setStatus(
+                'Could not add ${entry.name} from the catalog. Reopen Furniture to retry.',
+                isError: true,
+              ),
+            );
+          return false;
+        }
+      });
+      if (!imported || !mounted || _handle != handle) return;
+    }
     setState(() {
-      _assetChoice = choice;
+      _assetChoice = selected;
       _placing = 'asset';
       _wallChainTool = false;
       _hoverCursor = SystemMouseCursors.precise;

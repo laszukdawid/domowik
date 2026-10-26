@@ -53,6 +53,16 @@ flutter --version
 flutter doctor -v
 ```
 
+`task run:gui:linux` prefers an already installed pinned SDK at
+`${XDG_CACHE_HOME:-$HOME/.cache}/domowik-tools/flutter-3.47.7`, falling back to
+`flutter` on PATH. Set `DOMOWIK_FLUTTER=/path/to/flutter/bin/flutter` to explicitly
+select another executable. Its SDK's `bin` leads PATH for the task so Dart and
+Flutter agree. Extra arguments can follow `--`, for example
+`task run:gui:linux -- --release`. The task does not download or upgrade SDKs.
+If `flutter upgrade` refuses a modified SDK checkout, preserve those changes;
+use a separate compatible SDK rather than forcing an upgrade or weakening the
+project's Dart requirement.
+
 The CLI does not need Flutter or Python to build; corpus generation is Rust.
 
 ## Build the CLI

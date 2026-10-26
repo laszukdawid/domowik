@@ -192,6 +192,13 @@ Browser differences:
 - **Furniture** offers **Upload model** and **Import folder** instead of attached
   filesystem libraries. Folder selection recursively uploads supported model
   files, which are embedded in the plan but not placed automatically.
+  When the optional hosted catalog is available, opening Furniture also discovers
+  100 original generic household models. Search names or categories such as
+  `sofa`, `Beds` or `Office`; choose a result, then **Place in plan**. Only that
+  model downloads and is embedded for offline reopening. Catalog browsing adds
+  no model downloads to initial page loading. If offline, embedded models and
+  local uploads still work; **Retry catalog** retries discovery when online.
+  Models are illustrative low-poly Apache-2.0 content, not measured products.
 - Preferences are kept for this site in this browser.
 - 3D needs WebGPU; without it the 3D pane says so and 2D works as usual.
   Error text is selectable; **Copy 3D error** copies the complete message for

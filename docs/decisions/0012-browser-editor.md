@@ -101,11 +101,23 @@ batch, so the plan state carries a separate `asset_revision`: the hit,
 footprint and resolution caches key on it, and the editor and 3D view reload
 on it.
 
+The owner-approved [first-party furniture catalog](../../catalog/README.md)
+adds a separate optional host service (2026-10-26). Its HTTPS manifest URL is
+configurable in deployment HTML or at build time, can be disabled, and defaults
+to the public HomeHero catalog. Credential-free CORS permits other deployments
+to use it without knowing private backend internals. Opening
+Furniture discovers bounded metadata and visible preview PNGs, never all model
+bytes; explicit Place in plan verifies and imports the chosen GLB through the
+same core API. No catalog request occurs on startup, and catalog files are not
+part of the Flutter bundle. Embedded bytes keep saved plans self-contained.
+This is not automatic retrieval of URLs or missing references from a plan.
+
 ### 6. Rendering and input
 
 2D is the same Flutter painting on CanvasKit. CanvasKit, the core and the
 renderer are served from the bundle (`--no-web-resources-cdn`), and so are
-the text fonts; the page contacts no other origin.
+the text fonts; startup contacts no other origin. Explicit Furniture browsing
+may contact the configured catalog origin as described above.
 
 - **Roboto 2.138 Regular** (Apache-2.0). Flutter's web engine loads Roboto
   from `fontFallbackBaseUrl` plus a fixed path unless the application
