@@ -26,23 +26,17 @@ Start with the repository guides:
 
 ## Signing in to a server (optional)
 
-The editor is anonymous and local by default and makes no network request
-for accounts. A native build can sign in to a Domowik server when
-`DOMOWIK_SERVER_URL` names one, as an environment variable at launch or a
-`--dart-define` at build or run time (the environment wins):
+The editor is anonymous and local by default. A native build offers **Sign
+in** when `DOMOWIK_SERVER_URL` names a Domowik server, as an environment
+variable at launch or a `--dart-define` (the environment wins):
 
 ```sh
 DOMOWIK_SERVER_URL=https://planner.example flutter run -d macos
 ```
 
-The URL is an HTTPS origin, or plain HTTP on loopback for local development.
-A **Sign in** button then appears in the header. It opens the system browser
-at the server's `/api/v1/auth/desktop`, receives a one-time code on a
-loopback port (RFC 8252) and exchanges it with an S256 PKCE verifier at
-`/api/v1/auth/desktop/token` for an API token. The editor knows only those
-routes, not how the server signs people in. The token lives in memory until
-sign-out, which revokes it, or until the app closes; it is never written to
-disk. The browser build has no such button.
+The URL is an HTTPS origin, or HTTP on loopback for development. Signing in
+happens in the system browser. The session's token is kept in memory only,
+until **Sign out** or the app closes.
 
 Degraded model instances participate in point-hit and marquee selection.
 Optional instances can be deleted and restored by undo; required degradation

@@ -31,9 +31,8 @@ class EditorShell extends StatelessWidget {
 
   final String fileName;
 
-  /// The sign-in control, when a server is configured; built by the caller
-  /// with the same compactness as the other header controls.
-  final Widget Function(bool compact)? account;
+  /// The sign-in control, when a server is configured.
+  final Widget? account;
   final VoidCallback onNew;
   final VoidCallback onOpen;
   final VoidCallback onSave;
@@ -268,7 +267,7 @@ class EditorShell extends StatelessWidget {
                                   ),
                                 ],
                               ),
-                            if (account != null) account!(compact),
+                            if (account != null) account!,
                             if (onPreferences != null)
                               IconButton(
                                 key: const ValueKey('preferences'),

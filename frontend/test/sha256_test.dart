@@ -39,8 +39,7 @@ void main() {
       base64Url.encode(sha256(ascii.encode(verifier))).replaceAll('=', ''),
       'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
     );
-    final pkce = Pkce.create();
-    expect(pkce.verifier.length, 43);
-    expect(pkce.challenge.length, 43);
+    expect(s256(verifier), 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+    expect(nonce(32).length, 43);
   });
 }

@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import '../account.dart';
 
@@ -58,41 +57,35 @@ class NativeAccountClient implements AccountClient {
 
   @override
   Future<AccountSession> signIn() async {
-    final pkce = Pkce.create();
-    final state = randomToken(16, Random.secure());
+    final verifier = nonce(32);
+    final state = nonce(16);
     final listener = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final redirect = 'http://127.0.0.1:${listener.port}/callback';
     try {
-      // The deadline runs from here, and the code is used as soon as it
-      // arrives, whether or not the browser launch has returned.
-      final code = _awaitCode(listener, state).timeout(
-        timeout,
-        onTimeout: () =>
-            throw const AccountException('Signing in took too long'),
-      );
-      final launched = openBrowser(
+      final code = _awaitCode(listener, state)..ignore();
+      await openBrowser(
         server.api('auth/desktop', {
           'redirect_uri': redirect,
           'state': state,
-          'code_challenge': pkce.challenge,
+          'code_challenge': s256(verifier),
           'code_challenge_method': 'S256',
         }),
       );
-      final received = await Future.any([code, launched.then((_) => code)]);
       final issued = await _send(
         'POST',
         server.api('auth/desktop/token'),
         body: {
-          'code': received,
-          'codeVerifier': pkce.verifier,
+          'code': await code.timeout(
+            timeout,
+            onTimeout: () =>
+                throw const AccountException('Signing in took too long'),
+          ),
+          'codeVerifier': verifier,
           'redirectUri': redirect,
         },
       );
-      final token = issued['token'] as String;
-      final me = await _send('GET', server.api('auth/me'), token: token);
       return AccountSession(
-        username: me['username'] as String,
-        token: token,
+        token: issued['token'] as String,
         tokenId: issued['id'] as String,
       );
     } finally {
@@ -108,12 +101,7 @@ class NativeAccountClient implements AccountClient {
       final code = query['code'];
       request.response
         ..statusCode = ours ? HttpStatus.ok : HttpStatus.notFound
-        ..headers.contentType = ContentType.html
-        ..write(
-          ours && code != null
-              ? '<p>Signed in. You can close this tab and return to Domowik.</p>'
-              : '<p>Signing in did not complete. Return to Domowik and try again.</p>',
-        );
+        ..write(ours ? 'Return to Domowik.' : 'Not found.');
       await request.response.close();
       if (!ours) continue;
       if (code == null || code.isEmpty) {

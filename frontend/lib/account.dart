@@ -36,35 +36,24 @@ class ServerEndpoint {
       origin.replace(path: '/api/v1/$path', queryParameters: query);
 }
 
-/// A one-off PKCE verifier and its S256 challenge (RFC 7636).
-class Pkce {
-  Pkce._(this.verifier)
-    : challenge = base64Url
-          .encode(sha256(ascii.encode(verifier)))
-          .replaceAll('=', '');
-
-  factory Pkce.create([Random? random]) =>
-      Pkce._(randomToken(32, random ?? Random.secure()));
-
-  final String verifier;
-  final String challenge;
+/// A secure random value as unpadded base64url: 32 bytes for a PKCE verifier
+/// (RFC 7636), 16 for a `state`.
+String nonce(int bytes) {
+  final random = Random.secure();
+  return base64Url
+      .encode(List<int>.generate(bytes, (_) => random.nextInt(256)))
+      .replaceAll('=', '');
 }
 
-/// `bytes` random bytes as unpadded base64url.
-String randomToken(int bytes, Random random) => base64Url
-    .encode(List<int>.generate(bytes, (_) => random.nextInt(256)))
-    .replaceAll('=', '');
+/// The S256 challenge of a PKCE verifier.
+String s256(String verifier) =>
+    base64Url.encode(sha256(ascii.encode(verifier))).replaceAll('=', '');
 
 /// A signed-in account, for this run of the app only: the API token is kept
 /// in memory and never written to disk.
 class AccountSession {
-  const AccountSession({
-    required this.username,
-    required this.token,
-    required this.tokenId,
-  });
+  const AccountSession({required this.token, required this.tokenId});
 
-  final String username;
   final String token;
   final String tokenId;
 }

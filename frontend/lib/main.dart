@@ -171,7 +171,6 @@ class PlanPage extends StatefulWidget {
     this.modelDirectoryPicker,
     this.modelUploads,
     this.catalogClient,
-    this.accountClient,
   });
 
   /// Tests load the real native library directly; bundles use
@@ -202,11 +201,6 @@ class PlanPage extends StatefulWidget {
   /// supplied client; it must not be shared with another page.
   final CatalogClient? catalogClient;
 
-  /// Signing in to a server, when `DOMOWIK_SERVER_URL` configures one;
-  /// otherwise the editor is anonymous and local. Custom core hosts
-  /// (including tests) opt in explicitly.
-  final AccountClient? accountClient;
-
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
@@ -220,9 +214,10 @@ class _PlanPageState extends State<PlanPage>
   late final CatalogClient? _catalogClient =
       widget.catalogClient ??
       (widget.bridgeLoader == null ? createCatalogClient() : null);
-  late final AccountClient? _accountClient =
-      widget.accountClient ??
-      (widget.bridgeLoader == null ? createAccountClient() : null);
+
+  /// Signing in to a server, when `DOMOWIK_SERVER_URL` configures one;
+  /// otherwise the editor is anonymous and local.
+  late final AccountClient? _accountClient = createAccountClient();
   String? _loadError;
   int _abi = 0;
   PlanSession? _session;
@@ -2997,8 +2992,7 @@ class _PlanPageState extends State<PlanPage>
         onPreferences: _openPreferences,
         account: _accountClient == null
             ? null
-            : (compact) =>
-                  AccountButton(client: _accountClient, compact: compact),
+            : AccountButton(client: _accountClient),
         viewMode: _viewMode,
         onViewModeChanged: (mode) {
           _cancelDrag();
