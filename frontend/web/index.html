@@ -8,6 +8,9 @@
   <title>Domowik</title>
   <!-- Optional host override: <meta name="domowik-catalog-url" content="/catalog/v1/index.json">.
        Empty content disables online discovery. Otherwise the build default is used. -->
+  <!-- Optional sign-in: <meta name="domowik-server-url" content="/"> when this page is
+       served by a Domowik server. It must be the page's own origin. Absent, the editor
+       is anonymous and local. -->
 </head>
 <body>
   <!-- The Rust core (domowik_bridge.wasm) and 3D renderer are fetched beside

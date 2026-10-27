@@ -38,6 +38,12 @@ The URL is an HTTPS origin, or HTTP on loopback for development. Signing in
 happens in the system browser. The session's token is kept in memory only,
 until **Sign out** or the app closes.
 
+The browser editor offers the same button when it is served by a Domowik
+server and its page names that server: `<meta name="domowik-server-url"
+content="/">`, or `--dart-define=DOMOWIK_SERVER_URL=/` at build time. It must
+be the page's own origin. The server keeps the session in an HttpOnly cookie;
+the editor picks it up when the page loads.
+
 Degraded model instances participate in point-hit and marquee selection.
 Optional instances can be deleted and restored by undo; required degradation
 preserves inspection while refusing editing and normal saving. Declared

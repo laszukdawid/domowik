@@ -49,10 +49,11 @@ String nonce(int bytes) {
 String s256(String verifier) =>
     base64Url.encode(sha256(ascii.encode(verifier))).replaceAll('=', '');
 
-/// A signed-in account, for this run of the app only: the API token is kept
-/// in memory and never written to disk.
+/// A signed-in account. Desktop: an API token and its id, kept in memory for
+/// this run of the app only. Browser: the session's CSRF token (the session
+/// itself is an HttpOnly cookie) and no id.
 class AccountSession {
-  const AccountSession({required this.token, required this.tokenId});
+  const AccountSession({required this.token, this.tokenId = ''});
 
   final String token;
   final String tokenId;
@@ -68,6 +69,12 @@ class AccountException implements Exception {
 /// Signs in and out of a Domowik server.
 abstract interface class AccountClient {
   ServerEndpoint get server;
+
+  /// The session already in place when the editor starts, if any.
+  Future<AccountSession?> restore();
+
+  /// Signs in. In a browser the page leaves for the server's sign-in and this
+  /// never completes; the session is restored when the editor loads again.
   Future<AccountSession> signIn();
   Future<void> signOut(AccountSession session);
 }

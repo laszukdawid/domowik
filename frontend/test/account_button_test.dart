@@ -15,6 +15,7 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
     final button = find.byKey(const ValueKey('account'));
     expect(find.text('Sign in'), findsOneWidget);
     await tester.tap(button);
@@ -32,11 +33,35 @@ void main() {
     expect(find.text('Signing in failed'), findsOneWidget);
     expect(find.text('Sign in'), findsOneWidget);
   });
+
+  testWidgets('a session already in place shows as signed in', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: AccountButton(
+              client: _FakeClient(
+                existing: const AccountSession(token: 'csrf'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Sign out'), findsOneWidget);
+  });
 }
 
 class _FakeClient implements AccountClient {
+  _FakeClient({this.existing});
+
+  final AccountSession? existing;
   bool fail = false;
   bool signedOut = false;
+
+  @override
+  Future<AccountSession?> restore() async => existing;
 
   @override
   ServerEndpoint get server => ServerEndpoint('https://planner.example');

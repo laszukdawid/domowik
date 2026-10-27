@@ -15,7 +15,23 @@ class AccountButton extends StatefulWidget {
 
 class _AccountButtonState extends State<AccountButton> {
   AccountSession? _session;
-  bool _busy = false;
+  bool _busy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.client
+        .restore()
+        .then<AccountSession?>((session) => session, onError: (_) => null)
+        .then((session) {
+          if (mounted) {
+            setState(() {
+              _session = session;
+              _busy = false;
+            });
+          }
+        });
+  }
 
   Future<void> _toggle() async {
     final session = _session;
