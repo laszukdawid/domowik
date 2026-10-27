@@ -24,6 +24,20 @@ Start with the repository guides:
   platform/feature limits.
 - [Contributing](../CONTRIBUTING.md): source ownership and verification.
 
+## Signing in to a server (optional)
+
+The editor is anonymous and local by default. A native build offers **Sign
+in** when `DOMOWIK_SERVER_URL` names a Domowik server, as an environment
+variable at launch or a `--dart-define` (the environment wins):
+
+```sh
+DOMOWIK_SERVER_URL=https://planner.example flutter run -d macos
+```
+
+The URL is an HTTPS origin, or HTTP on loopback for development. Signing in
+happens in the system browser. The session's token is kept in memory only,
+until **Sign out** or the app closes.
+
 Degraded model instances participate in point-hit and marquee selection.
 Optional instances can be deleted and restored by undo; required degradation
 preserves inspection while refusing editing and normal saving. Declared

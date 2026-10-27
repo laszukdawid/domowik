@@ -31,6 +31,9 @@ import 'platform/file_dialogs.dart';
 import 'platform/host.dart';
 import 'platform/model_import.dart';
 import 'platform/catalog_host.dart';
+import 'platform/account_host.dart';
+import 'account.dart';
+import 'account_button.dart';
 import 'catalog.dart';
 import 'editor_fonts.dart';
 import 'editor_shell.dart';
@@ -212,6 +215,10 @@ class _PlanPageState extends State<PlanPage>
   late final CatalogClient? _catalogClient =
       widget.catalogClient ??
       (widget.bridgeLoader == null ? createCatalogClient() : null);
+
+  /// Signing in to a server, when `DOMOWIK_SERVER_URL` configures one;
+  /// otherwise the editor is anonymous and local.
+  late final AccountClient? _accountClient = createAccountClient();
   String? _loadError;
   int _abi = 0;
   PlanSession? _session;
@@ -3057,6 +3064,9 @@ class _PlanPageState extends State<PlanPage>
         onSaveAs: _requestSaveAsFile,
         onAssets: _openAssetLibrary,
         onPreferences: _openPreferences,
+        account: _accountClient == null
+            ? null
+            : AccountButton(client: _accountClient),
         viewMode: _viewMode,
         onViewModeChanged: (mode) {
           _cancelDrag();

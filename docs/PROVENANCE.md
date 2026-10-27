@@ -7,6 +7,17 @@ It is not a development diary or a claim of legal clearance. Follow the
 Dependency notices remain in [NOTICE](../NOTICE), the
 [Rust dependency inventory](RUST-DEPENDENCIES.md) and [third-party records](third-party/).
 
+## Optional server sign-in
+
+The native sign-in flow follows OAuth 2.0 for Native Apps (RFC 8252, loopback
+redirect) and PKCE (RFC 7636, S256). SHA-256 for the PKCE challenge is an
+independent implementation of FIPS 180-4, so the editor keeps no hashing
+dependency. Its tests use the published FIPS 180-4 example messages (`""`,
+`"abc"`, the 448-bit message, one million `a`) with their published digests,
+and the RFC 7636 Appendix B verifier/challenge pair. Server tests use original
+synthetic responses. No application source, dependency, distributed content or
+notice obligation was added.
+
 ## Solid appearance overrides
 
 Per-material placed-model colors and whole-wall colors are original
