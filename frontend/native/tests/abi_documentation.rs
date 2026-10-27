@@ -129,7 +129,7 @@ fn the_extractor_finds_the_exports_it_is_supposed_to() {
     // pass on an empty set, which is exactly the shape of check this spike has
     // twice had to delete. Pin the count and known names.
     let names = implementation_exports();
-    assert_eq!(names.len(), 37, "found: {names:?}");
+    assert_eq!(names.len(), 38, "found: {names:?}");
     assert!(names.contains("domowik_abi_version"));
     assert!(names.contains("domowik_plan_edit"));
     assert!(names.contains("domowik_plan_assets"));

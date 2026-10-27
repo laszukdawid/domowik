@@ -8,7 +8,8 @@ FileDialogs defaultFileDialogs() => const BrowserFileDialogs();
 /// saving writes encoded bytes to a chosen file or downloads them. A tab
 /// cannot hold its close for the editor's dialog, so unsaved changes use the
 /// browser's own leave-page prompt instead of the close handler.
-class BrowserFileDialogs implements FileDialogs, UnsavedChangesGuard {
+class BrowserFileDialogs
+    implements FileDialogs, ExportDialogs, UnsavedChangesGuard {
   const BrowserFileDialogs();
 
   @override
@@ -20,6 +21,17 @@ class BrowserFileDialogs implements FileDialogs, UnsavedChangesGuard {
   @override
   Future<PlanTarget?> savePlan(String suggestedName) async {
     final target = await chooseSaveTarget(suggestedName);
+    return target == null ? null : PlanByteTarget(target.name, target.write);
+  }
+
+  @override
+  Future<PlanByteTarget?> saveUsdz(String suggestedName) async {
+    final target = await chooseSaveTarget(
+      suggestedName,
+      description: 'USD 3D scene',
+      mediaType: 'model/vnd.usdz+zip',
+      extension: '.usdz',
+    );
     return target == null ? null : PlanByteTarget(target.name, target.write);
   }
 

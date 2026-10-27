@@ -452,6 +452,13 @@ enum Command {
         #[arg(long)]
         level: Option<String>,
     },
+
+    /// Export every level as a 3D .usdz scene for USD viewers.
+    ExportUsdz {
+        path: PathBuf,
+        /// Output .usdz path
+        out: PathBuf,
+    },
 }
 
 /// Parses an `x,y` millimetre pair.
@@ -1236,6 +1243,7 @@ fn main() -> ExitCode {
         Command::ExportSvg { path, out, level } => {
             domowik_cli::cmd_export_svg(path, out, level.as_deref())
         }
+        Command::ExportUsdz { path, out } => domowik_cli::cmd_export_usdz(path, out),
     };
 
     match result {

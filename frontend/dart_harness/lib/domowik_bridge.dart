@@ -175,6 +175,13 @@ class Bridge {
           Pointer<DomowikBuf>),
       int Function(int, Pointer<Uint8>, int, Pointer<Uint8>, int,
           Pointer<DomowikBuf>)>('domowik_plan_import_model');
+
+  /// ABI 22: the whole plan as a `.usdz` 3D scene.
+  late final planExportUsdz = _lib.lookupFunction<
+      Int32 Function(Uint64, Pointer<DomowikBuf>, Pointer<DomowikBuf>),
+      int Function(int, Pointer<DomowikBuf>, Pointer<DomowikBuf>)>(
+    'domowik_plan_export_usdz',
+  );
   late final planSceneFrame =
       _lib.lookupFunction<_ExecuteC, _Execute>('domowik_plan_scene_frame');
 

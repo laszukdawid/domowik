@@ -140,6 +140,7 @@ domowik ops flat.domo --json    # the same, for a script
 domowik undo flat.domo          # appends a compensating batch
 
 domowik export-svg flat.domo flat.svg
+domowik export-usdz flat.domo flat.usdz            # every level as a 3D USD scene
 domowik export-png flat.domo flat.png --scale 0.3
 domowik export-png flat.domo review.png --review   # labels, lengths, scale bar
 ```

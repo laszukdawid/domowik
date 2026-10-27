@@ -135,7 +135,7 @@ Future<PickedFile?> pickFile(String accept) {
 Future<BrowserDirectorySelection?> pickDirectoryFiles() {
   final input = _document.createElement('input')
     ..type = 'file'
-    ..accept = '.glb,.obj,.zip'
+    ..accept = '.glb,.obj,.zip,.usd,.usda,.usdc,.usdz'
     ..multiple = true
     ..webkitdirectory = true
     ..style = 'display:none';
@@ -182,7 +182,11 @@ bool _isModelFile(String name) {
   final lower = name.toLowerCase();
   return lower.endsWith('.glb') ||
       lower.endsWith('.obj') ||
-      lower.endsWith('.zip');
+      lower.endsWith('.zip') ||
+      lower.endsWith('.usd') ||
+      lower.endsWith('.usda') ||
+      lower.endsWith('.usdc') ||
+      lower.endsWith('.usdz');
 }
 
 Future<Uint8List> _readModelFile(_File file) async {
@@ -212,12 +216,17 @@ bool get canChooseSaveLocation => globalContext.has('showSaveFilePicker');
 /// Otherwise `write` downloads the bytes under [suggestedName] and completes
 /// with false: a page learns nothing about whether the download was kept.
 Future<({String name, Future<bool> Function(Uint8List) write})?>
-chooseSaveTarget(String suggestedName) async {
+chooseSaveTarget(
+  String suggestedName, {
+  String description = 'Domowik plan',
+  String mediaType = 'application/zip',
+  String extension = '.domo',
+}) async {
   if (!canChooseSaveLocation) {
     return (
       name: suggestedName,
       write: (Uint8List bytes) async {
-        _download(suggestedName, bytes);
+        _download(suggestedName, bytes, mediaType);
         return false;
       },
     );
@@ -228,11 +237,10 @@ chooseSaveTarget(String suggestedName) async {
       'types'.toJS,
       [
         JSObject()
-          ..setProperty('description'.toJS, 'Domowik plan'.toJS)
+          ..setProperty('description'.toJS, description.toJS)
           ..setProperty(
             'accept'.toJS,
-            JSObject()
-              ..setProperty('application/zip'.toJS, ['.domo'.toJS].toJS),
+            JSObject()..setProperty(mediaType.toJS, [extension.toJS].toJS),
           ),
       ].toJS,
     );
@@ -270,10 +278,10 @@ chooseSaveTarget(String suggestedName) async {
   );
 }
 
-void _download(String name, Uint8List bytes) {
+void _download(String name, Uint8List bytes, String mediaType) {
   final blob = _Blob(
     [bytes.toJS].toJS,
-    JSObject()..setProperty('type'.toJS, 'application/zip'.toJS),
+    JSObject()..setProperty('type'.toJS, mediaType.toJS),
   );
   final url = _createObjectUrl(blob);
   final anchor = _document.createElement('a')

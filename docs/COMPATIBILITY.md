@@ -87,8 +87,17 @@ derived rendering only. Original embedded bytes and the plan format do not
 change. Internal browser frames use DSW2 when textured (DSW1 otherwise); update
 core and renderer modules together. Old scene readers reject DSW2 explicitly.
 
-Supported model paths are GLB, OBJ and ZIP-OBJ, with bounded decode and static
-scene handling. Support for a container format is not a claim to implement
+Supported model paths are GLB, OBJ, ZIP-OBJ and self-contained OpenUSD
+(`.usda`, `.usdc`, `.usdz`), with static scene handling. GLB, OBJ, ZIP-OBJ and
+text USD decoding is bounded; binary USD is bounded except as noted below.
+USD support covers composed `Mesh` geometry, `xformOp` stacks, units and up
+axis, `displayColor` and `UsdPreviewSurface` diffuse colour, opacity and
+packaged base-colour textures; external references, nested packages,
+subdivision, skinning and animation are not evaluated. A crafted binary
+(`.usdc`) layer can demand far more memory than its size because the USD
+reader allows each compressed block to expand up to 4 GiB; text layers and
+package structure are checked before reading. `.usdz` export writes the derived 3D scene at the
+editor's model display detail, not original model bytes. Support for a container format is not a claim to implement
 all of its animation, material, texture or scene features. Unitless models use
 an estimated proportional scale. 2D previews and 3D LOD are approximations;
 missing, unsupported or undecodable content can produce diagnosed placeholders.

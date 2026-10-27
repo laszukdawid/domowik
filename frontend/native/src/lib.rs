@@ -185,7 +185,9 @@ pub mod status {
 /// strict edit admission remains unchanged.
 /// **20** adds solid wall colours and per-material instance palettes, material
 /// queries and palette-aware previews. No symbols or buffer ownership changed.
-const ABI_VERSION: i32 = 21;
+/// **22** adds [`domowik_plan_export_usdz`]: the whole plan as a `.usdz` 3D
+/// scene. Additive; the number moves for **9**'s reason.
+const ABI_VERSION: i32 = 22;
 
 /// An owned byte buffer handed to the caller.
 ///
@@ -469,7 +471,13 @@ impl Plan {
                     digest: a.digest.clone(),
                 })
                 .collect();
-            let media = MediaSupport::new(["model/gltf-binary", "model/obj", "application/zip"]);
+            let media = MediaSupport::new([
+                "model/gltf-binary",
+                "model/obj",
+                "application/zip",
+                "model/vnd.usdz+zip",
+                "model/vnd.pixar.usd",
+            ]);
             let policy = RetrievalPolicy::default();
             let snapshot = resolve::resolve(
                 &instances,
@@ -2649,6 +2657,72 @@ pub extern "C" fn domowik_plan_mark_saved(handle: u64, revision: u64) -> i32 {
         plan.ensure_file().mark_saved();
         plan.metadata_dirty = false;
         status::OK
+    })
+}
+
+/// Writes every level of the plan to `out` as one `.usdz` 3D scene: the
+/// walls, openings, floors, construction bodies, stairs and placed models the
+/// 3D view shows, with their colours (see `domowik_scene::usd`), and to
+/// `out_diagnostics` a UTF-8 JSON array of export warnings, which name every
+/// model exported as a placeholder box (`[]` when none). Both buffers are token-owned as
+/// elsewhere and are released together: on failure neither is written and
+/// `domowik_last_error` records why. Read-only: the plan, its revision and
+/// dirty state are unchanged.
+///
+/// # Safety
+///
+/// `out` and `out_diagnostics` must be valid, writable, non-overlapping
+/// `domowik_buf*`; null or overlapping pointers are rejected.
+#[no_mangle]
+pub unsafe extern "C" fn domowik_plan_export_usdz(
+    handle: u64,
+    out: *mut DomowikBuf,
+    out_diagnostics: *mut DomowikBuf,
+) -> i32 {
+    guard(|| {
+        // Overlapping outputs would overwrite one buffer's token with the other's.
+        let apart =
+            (out as usize).abs_diff(out_diagnostics as usize) >= std::mem::size_of::<DomowikBuf>();
+        if out.is_null() || out_diagnostics.is_null() || !apart {
+            return status::INVALID_ARGUMENT;
+        }
+        let Some((plan, _lease)) = resolve(handle) else {
+            return status::UNKNOWN_HANDLE;
+        };
+        let mut plan = plan.lock().unwrap_or_else(|e| e.into_inner());
+        let empty = std::collections::BTreeMap::new();
+        let assets = plan.file.as_ref().map_or(&empty, |f| &f.assets);
+        let export = match domowik_scene::usd::usdz(plan.session().document(), assets) {
+            Ok(export) => export,
+            Err(e) => {
+                plan.last_error = e;
+                return status::REJECTED;
+            }
+        };
+        let diagnostics = match serde_json::to_vec(&export.diagnostics) {
+            Ok(json) => json,
+            Err(e) => {
+                plan.last_error = e.to_string();
+                return status::REJECTED;
+            }
+        };
+        let code = release(export.bytes, out);
+        if code != status::OK {
+            return code;
+        }
+        let code = release(diagnostics, out_diagnostics);
+        if code != status::OK {
+            // Release both or neither: reclaim the scene buffer.
+            domowik_buffer_free(unsafe { (*out).token });
+            unsafe {
+                *out = DomowikBuf {
+                    data: std::ptr::null_mut(),
+                    len: 0,
+                    token: 0,
+                }
+            };
+        }
+        code
     })
 }
 
@@ -5205,6 +5279,51 @@ mod tests {
              {:#x}",
             back.to_bits()
         );
+    }
+
+    /// The 3D export reads the live plan without dirtying or changing it.
+    #[test]
+    fn a_plan_exports_usdz_without_changing_state() {
+        let (h, _) = plan_with_a_room();
+        let (_, before) = call_returning(|out| unsafe { domowik_plan_state(h, out) });
+        let mut notes = DomowikBuf {
+            data: std::ptr::null_mut(),
+            len: 0,
+            token: 0,
+        };
+        let (code, bytes) =
+            call_returning(|out| unsafe { domowik_plan_export_usdz(h, out, &mut notes) });
+        assert_eq!(code, status::OK);
+        assert!(bytes.starts_with(b"PK"));
+        let json = unsafe { std::slice::from_raw_parts(notes.data, notes.len as usize) };
+        assert_eq!(json, b"[]", "no placeholder models");
+        assert_eq!(domowik_buffer_free(notes.token), status::OK);
+        let size = domowik_models::dimensions(&bytes).expect("a USD reader composes it");
+        assert!(size.physical_units);
+        let (_, after) = call_returning(|out| unsafe { domowik_plan_state(h, out) });
+        assert_eq!(before, after, "export is read-only");
+        assert_eq!(
+            unsafe { domowik_plan_export_usdz(h, std::ptr::null_mut(), &mut notes) },
+            status::INVALID_ARGUMENT
+        );
+        let (code, _) = call_returning(|out| unsafe { domowik_plan_export_usdz(h, out, out) });
+        assert_eq!(
+            code,
+            status::INVALID_ARGUMENT,
+            "aliased outputs are refused"
+        );
+        let mut pair = [0u8; 48];
+        let base = pair.as_mut_ptr();
+        let overlapping = unsafe { domowik_plan_export_usdz(h, base.cast(), base.add(8).cast()) };
+        assert_eq!(
+            overlapping,
+            status::INVALID_ARGUMENT,
+            "overlapping outputs are refused"
+        );
+        assert_eq!(domowik_plan_close(h), status::OK);
+        let (code, _) =
+            call_returning(|out| unsafe { domowik_plan_export_usdz(h, out, &mut notes) });
+        assert_eq!(code, status::UNKNOWN_HANDLE);
     }
 
     /// Save, close, reopen: an editor you cannot save from is not an editor.

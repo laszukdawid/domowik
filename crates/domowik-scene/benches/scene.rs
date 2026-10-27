@@ -94,5 +94,58 @@ fn bench(c: &mut Criterion) {
         )
     });
 }
-criterion_group!(benches, bench);
+
+/// A 10 x 10 grid of 4 m rooms (220 walls) with 200 placements of one
+/// original 5,000-triangle model: the export a furnished house approaches.
+fn export(c: &mut Criterion) {
+    let mut doc = domowik_format::Document::with_ground_floor();
+    let level = doc.levels[0].id;
+    let p = |x: usize, y: usize| domowik_format::Point::new(x as f64 * 4000., y as f64 * 4000.);
+    for i in 0..=10 {
+        for j in 0..10 {
+            for (a, b) in [(p(i, j), p(i, j + 1)), (p(j, i), p(j + 1, i))] {
+                doc.walls
+                    .push(domowik_format::Wall::new(level, a, b, 200., 2700.));
+            }
+        }
+    }
+    let mut obj = String::new();
+    for i in 0..5000 {
+        let t = i as f64 * 0.618_034;
+        obj += &format!(
+            "v {} {} {}\n",
+            t.fract(),
+            (t * 0.37).fract(),
+            (t * 0.71).fract()
+        );
+    }
+    for i in 1..=4998 {
+        obj += &format!("f {i} {} {}\n", i + 1, i + 2);
+    }
+    let digest = format!("sha256:{}", "1".repeat(64));
+    for i in 0..200 {
+        doc.asset_instances.push(domowik_format::AssetInstance {
+            id: uuid::Uuid::now_v7(),
+            level_id: level,
+            digest: digest.clone(),
+            transform: domowik_format::InstanceTransform {
+                translation_mm: [
+                    (i % 20) as f64 * 2000. + 500.,
+                    (i / 20) as f64 * 4000. + 500.,
+                ],
+                ..Default::default()
+            },
+            display_name: None,
+            unknown: Default::default(),
+        });
+    }
+    let assets = std::collections::BTreeMap::from([(digest, obj.into_bytes())]);
+    let mut group = c.benchmark_group("USD export");
+    group.sample_size(10);
+    group.bench_function("usdz / 220 walls + 200 shared 5k-triangle models", |b| {
+        b.iter(|| domowik_scene::usd::usdz(black_box(&doc), &assets).unwrap())
+    });
+    group.finish();
+}
+criterion_group!(benches, bench, export);
 criterion_main!(benches);

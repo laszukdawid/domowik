@@ -89,7 +89,7 @@ bool get _firstFrameProbeRequested =>
 /// A mismatch is fatal on purpose. The header says a caller reading a
 /// different number must not proceed, and an app that proceeded anyway would
 /// be interpreting one struct layout as another.
-const int expectedAbi = 21;
+const int expectedAbi = 22;
 
 void main(List<String> arguments) {
   // Native builds may be launched as a headless probe; see platform/entry.dart.
@@ -1458,7 +1458,10 @@ class _PlanPageState extends State<PlanPage>
 
     if (!mounted || _handle != handle) return null;
     if (selected == 0) {
-      diagnostics.insert(0, 'No supported GLB, OBJ or ZIP files were found.');
+      diagnostics.insert(
+        0,
+        'No supported GLB, OBJ, ZIP or USD files were found.',
+      );
     }
     if (failed > 5) {
       diagnostics.add('${failed - 5} additional model imports failed.');
@@ -2761,6 +2764,10 @@ class _PlanPageState extends State<PlanPage>
     await _fileAction(_saveAsFile);
   }
 
+  Future<void> _requestExportUsdz() async {
+    await _fileAction(_exportUsdz);
+  }
+
   void _deleteLevel(String id) {
     // The document contract permits deletion only from the active level's
     // controls. Keep the guard here even though inactive layer menus omit it.
@@ -2837,6 +2844,48 @@ class _PlanPageState extends State<PlanPage>
     final target = await _fileDialogs.savePlan(suggested);
     if (target == null || !mounted) return false;
     return _storePlan(session, target);
+  }
+
+  /// Writes every level as a `.usdz` 3D scene where the user chooses. The
+  /// plan itself, its file and its saved state are unchanged.
+  Future<bool> _exportUsdz() async {
+    final session = _session;
+    final dialogs = _fileDialogs;
+    if (session == null || _handle == 0 || dialogs is! ExportDialogs) {
+      return false;
+    }
+    final exporter = dialogs as ExportDialogs;
+    final name = _filePath?.split('/').last ?? 'plan.domo';
+    final base = name.endsWith('.domo')
+        ? name.substring(0, name.length - 5)
+        : name;
+    final target = await exporter.saveUsdz('$base.usdz');
+    if (target == null || !mounted) return false;
+    final reply = session.core.exportUsdz(_handle);
+    if (!reply.succeeded) {
+      final detail = session.core.lastError(_handle) ?? 'no detail';
+      setState(
+        () => _setStatus(
+          'could not export: ${_describe(reply.code)} — ${_readableError(detail)}',
+          isError: true,
+        ),
+      );
+      return false;
+    }
+    final stored = await target.write(reply.bytes!);
+    if (!mounted) return stored;
+    // Export warnings, which name models replaced with placeholder boxes.
+    final notes = (jsonDecode(reply.text ?? '[]') as List).cast<String>();
+    final where = stored
+        ? 'exported 3D scene to ${target.name}'
+        : 'downloaded ${target.name}';
+    setState(
+      () => _setStatus(
+        notes.isEmpty ? where : '$where; warnings: ${notes.join('; ')}',
+        isError: false,
+      ),
+    );
+    return stored;
   }
 
   /// Stores into [target]. A failed or unconfirmed save leaves the plan
@@ -3090,6 +3139,7 @@ class _PlanPageState extends State<PlanPage>
         onOpen: _requestOpenFile,
         onSave: _requestSaveFile,
         onSaveAs: _requestSaveAsFile,
+        onExportUsdz: _fileDialogs is ExportDialogs ? _requestExportUsdz : null,
         onAssets: _openAssetLibrary,
         onPreferences: _openPreferences,
         account: _accountClient == null

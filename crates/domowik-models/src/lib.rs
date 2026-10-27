@@ -10,6 +10,7 @@ pub mod appearance;
 mod glb;
 mod obj;
 mod texture;
+mod usd;
 use serde::Serialize;
 pub use texture::ModelTexture;
 
@@ -37,7 +38,7 @@ pub struct Preview {
     pub model_extents: [f64; 3],
 }
 
-/// Decode a GLB, OBJ or ZIP containing OBJ/MTL and render a 256-pixel square
+/// Decode a GLB, USD (`.usda`/`.usdc`/`.usdz`), OBJ or ZIP containing OBJ/MTL and render a 256-pixel square
 /// transparent PNG. At most 64 MiB input/expanded relevant ZIP content, 4096
 /// archive entries and one million vertices/triangles. Errors name unsupported
 /// content or the exceeded budget; model bytes are never modified.
@@ -56,7 +57,8 @@ pub fn thumbnail(bytes: &[u8]) -> Result<Preview, String> {
 }
 
 /// Initial object size in millimetres, measured from decoded scene geometry.
-/// GLB uses defined metre units; OBJ/ZIP proportions use a 1000 mm longest axis.
+/// GLB and USD (`metersPerUnit`, default 0.01) use defined units; OBJ/ZIP
+/// proportions use a 1000 mm longest axis.
 /// +Y is up, width/depth are X/Z. Flat Y extents receive a 1 mm minimum.
 /// This is derived display sizing, not an exact geometry predicate or a claim
 /// about the real size of a unitless model. No source bytes are modified.
@@ -94,7 +96,7 @@ pub fn dimensions(bytes: &[u8]) -> Result<ModelDimensions, String> {
     if extent.iter().any(|v| !v.is_finite()) || extent[0] <= 0. || extent[2] <= 0. {
         return Err("Model has no usable horizontal bounds".into());
     }
-    let physical_units = bytes.starts_with(b"glTF");
+    let physical_units = bytes.starts_with(b"glTF") || usd::detect(bytes).is_some();
     let factor = if physical_units {
         1000.
     } else {
@@ -122,6 +124,8 @@ fn decode(bytes: &[u8]) -> Result<Vec<Triangle>, String> {
     }
     let triangles = if bytes.starts_with(b"glTF") {
         glb::decode(bytes)?
+    } else if let Some(kind) = usd::detect(bytes) {
+        usd::decode(bytes, kind)?
     } else if bytes.starts_with(b"PK") {
         obj::archive(bytes)?
     } else {

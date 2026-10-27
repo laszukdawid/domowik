@@ -238,12 +238,26 @@ promise that reopening restores the same interactive undo stack.
 ## Import furniture
 
 Open **Furniture** in the header. Use **Import folder** to embed every supported
-GLB, OBJ or ZIP model in a selected folder and its subdirectories; unrelated
+GLB, OBJ, ZIP or OpenUSD (`.usd`, `.usda`, `.usdc`, `.usdz`) model in a
+selected folder and its subdirectories; unrelated
 files are ignored, models are not placed automatically, and scan or per-file
 failures are shown in the dialog. Native scans are bounded to 10,000 entries
 and 64 directory levels; browser uploads are capped at 10,000 selected files.
 Each model is limited to 256 MiB. This is not an importer for another
-floor-plan application's document or catalog format.
+floor-plan application's document or catalog format. USD models must be
+self-contained: a `.usdz` package (or a single `.usda`/`.usdc` layer) that does
+not reference files outside itself. Their declared units are kept, so a
+centimetre-based USD chair arrives at its real size.
+
+## Export a 3D scene
+
+Open the save control's menu (the arrow beside **Save**) and choose
+**Export 3D (.usdz)**, or run `domowik export-usdz plan.domo plan.usdz`. The
+package contains every floor as it appears in 3D: walls with their doors and
+windows, floors, stairs and placed furniture in their chosen colours. Open it
+in AR Quick Look on an iPhone or iPad, Blender, NVIDIA Omniverse or any USD
+viewer. Exporting does not save or change the plan. Furniture is exported at
+the editor's display detail (up to 20,000 triangles per model).
 
 Folder-imported models record their source path in asset provenance and show it
 in the library. Native imports record the filesystem path; browsers record the

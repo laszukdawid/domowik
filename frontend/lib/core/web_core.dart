@@ -329,6 +329,40 @@ class WebCore implements DomowikCore {
       _request('domowik_plan_scene_frame', handle, request, binary: true);
 
   @override
+  CoreReply exportUsdz(int handle) {
+    if (_failure != null) return const CoreReply.failed(panicContained);
+    const size = 24; // data (u32, padded), len (u64), token (u64)
+    final out = _alloc(size);
+    final notes = _alloc(size);
+    try {
+      _bytes.fillRange(out, out + size, 0);
+      _bytes.fillRange(notes, notes + size, 0);
+      final code = _status('domowik_plan_export_usdz', [
+        _big(handle),
+        out.toJS,
+        notes.toJS,
+      ]);
+      if (code != ok) return CoreReply.failed(code);
+      Uint8List take(int buf) {
+        final data = _view.getUint32(buf, Endian.little);
+        try {
+          return _bytes.sublist(data, data + _u64(buf + 8));
+        } finally {
+          _status('domowik_buffer_free', [_big(_u64(buf + 16))]);
+        }
+      }
+
+      final bytes = take(out);
+      return CoreReply(code, bytes: bytes, text: utf8.decode(take(notes)));
+    } finally {
+      if (_failure == null) {
+        _free(out, size);
+        _free(notes, size);
+      }
+    }
+  }
+
+  @override
   CoreReply undo(int handle) => _withBuf('domowik_plan_undo', [_big(handle)]);
 
   @override

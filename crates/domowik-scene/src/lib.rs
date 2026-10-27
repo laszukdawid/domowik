@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 pub mod asset_pose;
 pub mod pick;
+pub mod usd;
 
 /// `f32`s per mesh vertex: position xyz, normal xyz, rgba.
 pub const VERTEX_FLOATS: usize = 10;

@@ -155,6 +155,8 @@ transforms use Khronos glTF 2.0.1 (2021-10-11),
 https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html. The specification's
 terms govern that document; no specification text or code is bundled.
 Texture-specific provenance is in [Model textures](third-party/model-textures.md).
+OpenUSD model reading and `.usdz` export provenance is in
+[OpenUSD](third-party/openusd.md).
 Library thumbnails reuse the independent decoder and rasterizer with an original
 fixed orthographic camera projection. List/grid presentation and its tests use
 original synthetic models and pixels, not external catalogs or artwork.

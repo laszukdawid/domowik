@@ -15,6 +15,13 @@ tiny-skia.workspace = true
 draco-core = { version = "=2.2.1", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
 # Pure-Rust embedded PNG/JPEG/WebP decoding; MIT OR Apache-2.0. No native
 # codecs, network, rayon or unrelated image formats. See issue 0120 provenance.
+# Pure-Rust OpenUSD reader for .usda/.usdc/.usdz models; MIT plus one generated
+# TOST-1.0 (Apache-2.0-derived) schema file. Pinned: pre-1.0, no API stability.
+# See docs/third-party/openusd.md.
+openusd = { version = "=0.8.0", default-features = false }
+# The tokenizer trait behind openusd's own USDA lexer, used for the pre-parse
+# nesting bound. Same pinned version openusd resolves; adds no crate.
+logos = "=0.16.1"
 image = { version = "=0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]

@@ -20,7 +20,7 @@ See [Getting started](../../docs/GETTING-STARTED.md),
 ## ABI summary (internal, not a stable product contract)
 
 ```c
-int32_t domowik_abi_version(void); /* 21 */
+int32_t domowik_abi_version(void); /* 22 */
 int32_t domowik_plan_create(uint64_t* out_handle);
 int32_t domowik_plan_create_default(uint64_t* out_handle);
 int32_t domowik_plan_execute(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
@@ -43,6 +43,7 @@ int32_t domowik_plan_mark_saved(uint64_t, uint64_t revision);
 int32_t domowik_plan_import_model(uint64_t, const uint8_t*, uint64_t,
                                   const uint8_t*, uint64_t, domowik_buf*);
 int32_t domowik_plan_scene_frame(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
+int32_t domowik_plan_export_usdz(uint64_t, domowik_buf*, domowik_buf* diagnostics);
 uint8_t* domowik_web_alloc(uint32_t len); /* browser only */
 void domowik_web_free(uint8_t*, uint32_t len); /* browser only */
 int32_t domowik_last_error(uint64_t, domowik_buf*);
@@ -60,7 +61,7 @@ int64_t domowik_debug_snap_index_builds(uint64_t);
 int64_t domowik_debug_warnings_computations(uint64_t);
 ```
 
-All 37 declared exports are checked against the implementation and header by
+All 38 declared exports are checked against the implementation and header by
 `tests/abi_documentation.rs`. The two `domowik_web_*` exports exist only in the
 browser module. Read the header for complete parameter and failure contracts;
 this summary does not replace its pointer-validity preconditions.
