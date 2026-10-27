@@ -7,8 +7,9 @@ import 'sha256.dart';
 /// editor stays an anonymous, local-only app and makes no request.
 ///
 /// The server alone handles accounts: the editor knows only its URL and the
-/// routes it serves (`/api/v1/auth/desktop` and `/api/v1/auth/desktop/token`),
-/// never how the server signs people in.
+/// routes it serves (`/api/v1/auth/desktop` and `/api/v1/auth/desktop/token`,
+/// and `/api/v1/auth/me` and `/api/v1/plans` for the account menu), never how
+/// the server signs people in.
 const serverUrlSetting = 'DOMOWIK_SERVER_URL';
 
 /// The configured server: an HTTPS origin, or plain HTTP on loopback for local
@@ -59,6 +60,52 @@ class AccountSession {
   final String tokenId;
 }
 
+/// A plan kept on the server.
+class HostedPlan {
+  const HostedPlan({required this.title, required this.updatedAt});
+
+  final String title;
+  final DateTime updatedAt;
+}
+
+/// Who is signed in and what their account holds on the server.
+class AccountProfile {
+  const AccountProfile({
+    required this.email,
+    required this.plans,
+    this.planLimit,
+  });
+
+  /// Reads the answers of `GET auth/me` and `GET plans`. [planLimit] is null
+  /// when the server does not report one.
+  factory AccountProfile.fromJson(Object? me, Object? plans) {
+    if (me is! Map || me['username'] is! String || plans is! List) {
+      throw const AccountException('The server sent an unexpected answer');
+    }
+    final limit = me['planLimit'];
+    return AccountProfile(
+      email: me['username'] as String,
+      planLimit: limit is int ? limit : null,
+      plans: [
+        for (final plan in plans)
+          if (plan is Map &&
+              plan['title'] is String &&
+              plan['updatedAtEpoch'] is int)
+            HostedPlan(
+              title: plan['title'] as String,
+              updatedAt: DateTime.fromMillisecondsSinceEpoch(
+                (plan['updatedAtEpoch'] as int) * 1000,
+              ),
+            ),
+      ],
+    );
+  }
+
+  final String email;
+  final List<HostedPlan> plans;
+  final int? planLimit;
+}
+
 class AccountException implements Exception {
   const AccountException(this.message);
   final String message;
@@ -77,4 +124,7 @@ abstract interface class AccountClient {
   /// this returns null; the session is restored when the editor loads again.
   Future<AccountSession?> signIn();
   Future<void> signOut(AccountSession session);
+
+  /// The signed-in account and its plans on the server.
+  Future<AccountProfile> profile(AccountSession session);
 }

@@ -36,7 +36,9 @@ DOMOWIK_SERVER_URL=https://planner.example flutter run -d macos
 
 The URL is an HTTPS origin, or HTTP on loopback for development. Signing in
 happens in the system browser. The session's token is kept in memory only,
-until **Sign out** or the app closes.
+until **Sign out** or the app closes. Once signed in, the header shows the
+account's email; its menu lists the account's plans on the server, with the
+plan allowance when the server reports one, and **Sign out**.
 
 The browser editor offers the same button when it is served by a Domowik
 server and its page names that server: `<meta name="domowik-server-url"

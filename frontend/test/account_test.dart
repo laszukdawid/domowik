@@ -63,6 +63,18 @@ class FakeServer {
             }),
           );
       }
+    } else if (request.method == 'GET' &&
+        (path == '/api/v1/auth/me' || path == '/api/v1/plans')) {
+      if (request.headers.value('authorization') != 'Bearer dmk_secret') {
+        response.statusCode = HttpStatus.unauthorized;
+      } else {
+        response.write(
+          path == '/api/v1/auth/me'
+              ? '{"userId":"u","username":"ann@example.com","planLimit":1}'
+              : '[{"id":"p","title":"Flat","revision":"1","storedBytes":10,'
+                    '"journalLen":0,"updatedAtEpoch":1793059200}]',
+        );
+      }
     } else if (request.method == 'DELETE' &&
         path == '/api/v1/tokens/token-id') {
       revoked.add(request.headers.value('authorization')!);
@@ -120,6 +132,18 @@ void main() {
       final session = (await client.signIn())!;
       expect(session.token, 'dmk_secret');
       expect(session.tokenId, 'token-id');
+      final profile = await client.profile(session);
+      expect(profile.email, 'ann@example.com');
+      expect(profile.planLimit, 1);
+      expect(profile.plans.single.title, 'Flat');
+      expect(
+        profile.plans.single.updatedAt,
+        DateTime.fromMillisecondsSinceEpoch(1793059200000),
+      );
+      await expectLater(
+        client.profile(const AccountSession(token: 'stale')),
+        throwsA(isA<AccountException>()),
+      );
       await client.signOut(session);
       expect(server.revoked, ['Bearer dmk_secret']);
     });
@@ -170,4 +194,27 @@ void main() {
       await expectLater(client.signIn(), throwsA(isA<AccountException>()));
     });
   });
+
+  for (final scheme in ['http', 'https']) {
+    test('an answer cut short over $scheme is reported, not thrown', () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((socket) {
+        socket.first.then((_) async {
+          socket.write(
+            'HTTP/1.1 200 OK\r\nContent-Length: 128\r\n'
+            'Connection: close\r\n\r\n{"username":',
+          );
+          await socket.close();
+        });
+      });
+      addTearDown(server.close);
+      final client = NativeAccountClient(
+        ServerEndpoint('$scheme://127.0.0.1:${server.port}'),
+      );
+      await expectLater(
+        client.profile(const AccountSession(token: 'dmk_secret')),
+        throwsA(isA<AccountException>()),
+      );
+    });
+  }
 }
