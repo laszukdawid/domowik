@@ -95,6 +95,11 @@ pub(crate) fn decode(
     let mut vertices = Vec::new();
     let mut triangles = Vec::new();
     let mut color = [0.64, 0.68, 0.72, 1.0];
+    let mut material = std::sync::Arc::new(appearance::ModelMaterial::new(
+        "default".into(),
+        "Default".into(),
+        color,
+    ));
     for line in String::from_utf8_lossy(bytes).lines() {
         let mut words = line.split('#').next().unwrap_or("").split_whitespace();
         match words.next() {
@@ -109,10 +114,16 @@ pub(crate) fn decode(
                 ]);
             }
             Some("usemtl") => {
+                let name = words.collect::<Vec<_>>().join(" ");
                 color = materials
-                    .get(&words.collect::<Vec<_>>().join(" "))
+                    .get(&name)
                     .copied()
                     .unwrap_or([0.64, 0.68, 0.72, 1.0]);
+                material = std::sync::Arc::new(appearance::ModelMaterial::new(
+                    format!("obj:{name}"),
+                    name,
+                    color,
+                ));
             }
             Some("f") => {
                 let mut face = Vec::new();
@@ -148,6 +159,7 @@ pub(crate) fn decode(
                         color,
                         uv: [[0.; 2]; 3],
                         texture: None,
+                        material: material.clone(),
                     });
                 }
             }

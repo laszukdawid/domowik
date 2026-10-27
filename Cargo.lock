@@ -377,6 +377,7 @@ dependencies = [
  "domowik-edit",
  "domowik-format",
  "domowik-geometry",
+ "domowik-models",
  "serde",
  "serde_json",
  "tempfile",

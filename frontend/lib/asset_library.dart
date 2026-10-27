@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -21,6 +22,9 @@ class AssetFootprint {
     : id = j['id'] as String,
       levelId = j['levelId'] as String,
       digest = j['digest'] as String,
+      materialColors = Map<String, String>.unmodifiable(
+        (j['materialColors'] as Map?)?.cast<String, String>() ?? const {},
+      ),
       name = j['name'] as String,
       position = _point(j['positionMm']),
       widthMm = ((j['dimensionsMm'] as List)[0] as num).toDouble(),
@@ -33,6 +37,14 @@ class AssetFootprint {
       corners = (j['cornersMm'] as List).map(_point).toList();
 
   final String id, levelId, name, digest;
+  final Map<String, String> materialColors;
+  late final String previewKey = _previewKey();
+  String _previewKey() {
+    if (materialColors.isEmpty) return digest;
+    final keys = materialColors.keys.toList()..sort();
+    return '$digest:${jsonEncode({for (final key in keys) key: materialColors[key]})}';
+  }
+
   final Offset position;
   final double widthMm, depthMm, rotationDeg;
   final double elevationMm, rotationXDeg, rotationYDeg;

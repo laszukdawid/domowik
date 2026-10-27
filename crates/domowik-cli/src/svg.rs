@@ -230,6 +230,33 @@ pub fn render_level_diagnostics(
             d = path_data(component)
         );
     }
+    let paints = domowik_geometry::cuts::wall_paints(doc, level_id);
+    if !paints.is_empty() {
+        let clip = drawn.iter().map(path_data).collect::<Vec<_>>().join(" ");
+        let _ = writeln!(
+            svg,
+            r#"<defs><clipPath id="wall-colors"><path d="{clip}" clip-rule="evenodd"/></clipPath></defs><g clip-path="url(#wall-colors)">"#
+        );
+        for part in paints {
+            let p = Polygon {
+                outer: part.outer.into_iter().map(Point::from).collect(),
+                holes: vec![],
+            };
+            let color = part
+                .color
+                .map(|c| c.hex())
+                .unwrap_or_else(|| "#3c3a36".into());
+            let _ = writeln!(svg, r#"<path d="{}" fill="{color}"/>"#, path_data(&p));
+        }
+        svg.push_str("</g>\n");
+        for component in drawn {
+            let _ = writeln!(
+                svg,
+                r##"<path d="{}" fill="none" stroke="#1b1a18" stroke-width="4"/>"##,
+                path_data(component)
+            );
+        }
+    }
 
     // Architectural bodies and stair graphics share Rust-derived geometry.
     let (construction, construction_diagnostics) =

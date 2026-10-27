@@ -312,8 +312,16 @@ fn primitive(
 ) -> Result<(), String> {
     let mut color = [0.8, 0.8, 0.8, 1.0];
     let mut texture = None;
+    let mut key = "default".to_owned();
+    let mut name = "Default".to_owned();
     if !p["material"].is_null() {
-        let m = at(j, "materials", integer(&p["material"])?)?;
+        let index = integer(&p["material"])?;
+        let m = at(j, "materials", index)?;
+        key = format!("gltf:{index}");
+        name = m["name"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("Material {}", index + 1));
         texture = texture_info(j, bin, m, images)?;
         color = array(
             &m["pbrMetallicRoughness"]["baseColorFactor"],
@@ -330,6 +338,7 @@ fn primitive(
             };
         }
     }
+    let material = std::sync::Arc::new(appearance::ModelMaterial::new(key, name, color));
     let draco = &p["extensions"]["KHR_draco_mesh_compression"];
     let (vertices, indices, mut uvs) = if !draco.is_null() {
         let bytes = view(j, bin, integer(&draco["bufferView"])?)?;
@@ -464,6 +473,7 @@ fn primitive(
             color,
             uv,
             texture: texture.as_ref().map(|t| t.surface.clone()),
+            material: material.clone(),
         });
     }
     Ok(())

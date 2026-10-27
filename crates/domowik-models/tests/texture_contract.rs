@@ -3,6 +3,40 @@ use image::ImageFormat;
 use serde_json::json;
 
 #[test]
+fn solid_override_suppresses_only_its_texture_and_preserves_opacity() {
+    use domowik_format::appearance::{MaterialColors, RgbColor};
+    let (mut j, bin) = support::fixture(ImageFormat::Png, false);
+    j["materials"][0]["pbrMetallicRoughness"]["baseColorFactor"] = json!([1., 1., 1., 0.5]);
+    let mut second = j["materials"][0].clone();
+    second["name"] = "duplicate name".into();
+    j["materials"].as_array_mut().unwrap().push(second);
+    let mut p = j["meshes"][0]["primitives"][0].clone();
+    p["material"] = 1.into();
+    j["meshes"][0]["primitives"].as_array_mut().unwrap().push(p);
+    let bytes = support::pack(&j, &bin);
+    let source = domowik_models::mesh(&bytes).unwrap();
+    let colored = source.recolored(&MaterialColors::from([(
+        "gltf:0".into(),
+        RgbColor([12, 34, 56]),
+    )]));
+    for (i, tri) in colored.vertices.as_chunks::<30>().0.iter().enumerate() {
+        let overridden = source.materials[source.triangle_materials[i]].key == "gltf:0";
+        assert_eq!(tri[9], 0.5);
+        for uv in colored.texture.as_ref().unwrap().coordinates[i * 15..i * 15 + 15]
+            .as_chunks::<5>()
+            .0
+        {
+            assert_eq!(uv[2] < 0., overridden);
+        }
+    }
+    assert_eq!(
+        source.texture.as_ref().unwrap().rgba,
+        colored.texture.as_ref().unwrap().rgba
+    );
+    assert_eq!(source.materials.len(), 2);
+}
+
+#[test]
 fn embedded_formats_and_draco_uvs_render_quadrants_and_survive_lod() {
     for format in [ImageFormat::Png, ImageFormat::Jpeg, ImageFormat::WebP] {
         for draco in [false, true] {

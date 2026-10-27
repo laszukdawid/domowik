@@ -48,6 +48,7 @@ import 'level_state.dart';
 import 'level_properties_form.dart';
 import 'opening_properties_form.dart';
 import 'wall_properties_form.dart';
+import 'solid_colors_dialog.dart';
 import 'asset_library.dart';
 import 'asset_rotation.dart';
 import 'user_config.dart';
@@ -88,7 +89,7 @@ bool get _firstFrameProbeRequested =>
 /// A mismatch is fatal on purpose. The header says a caller reading a
 /// different number must not proceed, and an app that proceeded anyway would
 /// be interpreting one struct layout as another.
-const int expectedAbi = 19;
+const int expectedAbi = 20;
 
 void main(List<String> arguments) {
   // Native builds may be launched as a headless probe; see platform/entry.dart.
@@ -1573,6 +1574,74 @@ class _PlanPageState extends State<PlanPage>
       _setAsset(asset, values: values);
   }
 
+  Future<void> _editAssetColors(AssetFootprint asset) async {
+    await _fileAction(() async {
+      final core = _bridge;
+      if (core == null) return false;
+      final handle = _handle;
+      try {
+        final raw = await core.assetsInBackground(handle, {
+          'kind': 'materials',
+          'digest': asset.digest,
+        }) as List;
+        if (!mounted || _handle != handle) return false;
+        final materials = [
+          for (final entry in raw)
+            SolidColorMaterial(
+              entry['key'] as String,
+              entry['name'] as String,
+              '#${(entry['color'] as List).take(3).map((v) => ((v as num) * 255).round().clamp(0, 255).toRadixString(16).padLeft(2, '0')).join().toUpperCase()}',
+            ),
+        ];
+        final colors = await showDialog<Map<String, String>>(
+          context: context,
+          builder: (_) => SolidColorsDialog(
+            title: '${asset.name} · colors',
+            materials: materials,
+            colors: asset.materialColors,
+          ),
+        );
+        if (!mounted || colors == null || _handle != handle) return false;
+        _assetMutation({
+          'kind': 'colors',
+          'instanceId': asset.id,
+          'materialColors': colors,
+        }, 'Edit model colors');
+        return true;
+      } catch (e) {
+        _setStatus('Cannot edit model colors: $e', isError: true);
+        return false;
+      }
+    });
+  }
+
+  Future<void> _editWallColors(List<Wall> walls) async {
+    await _fileAction(() async {
+      final common = walls.every((w) => w.color == walls.first.color)
+          ? walls.first.color
+          : null;
+      final colors = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (_) => SolidColorsDialog(
+          title: walls.length == 1
+              ? 'Wall color'
+              : '${walls.length} walls · color',
+          materials: const [
+            SolidColorMaterial('wall', 'Wall color (both sides)', '#E8DCC4'),
+          ],
+          colors: {if (common != null) 'wall': common},
+        ),
+      );
+      if (!mounted || colors == null) return false;
+      _gesture({
+        'kind': 'setWallColors',
+        'wallIds': walls.map((w) => w.id).toList(),
+        'color': colors['wall'],
+      }, 'Edit wall colors');
+      return true;
+    });
+  }
+
   Future<double> _assetHeight(AssetFootprint asset) async {
     if (asset.heightMm != null) return asset.heightMm!;
     // Legacy plans inferred height from stored width. Measure off the UI thread
@@ -1606,7 +1675,7 @@ class _PlanPageState extends State<PlanPage>
         units: _userConfig.unitSystem,
         asset: asset,
         heightMm: height,
-        preview: _modelPreviews[asset.digest],
+        preview: _modelPreviews[asset.previewKey],
       ),
     );
     if (mounted && _handle == handle && size != null) {
@@ -1888,14 +1957,14 @@ class _PlanPageState extends State<PlanPage>
         final asset = visible
             .where(
               (a) =>
-                  !_modelPreviews.containsKey(a.digest) &&
-                  !_modelPreviewErrors.containsKey(a.digest),
+                  !_modelPreviews.containsKey(a.previewKey) &&
+                  !_modelPreviewErrors.containsKey(a.previewKey),
             )
             .firstOrNull;
         if (asset == null) break;
         final handle = _handle;
         final assetRevision = _assetRevision;
-        final key = (handle, asset.digest);
+        final key = (handle, asset.previewKey);
         _previewPending.add(key);
         ui.Image? image;
         String? error;
@@ -1903,6 +1972,7 @@ class _PlanPageState extends State<PlanPage>
           final payload = await core.assetsInBackground(handle, {
             'kind': 'preview',
             'digest': asset.digest,
+            'materialColors': asset.materialColors,
           }) as Map<String, Object?>;
           final png = Uint8List.fromList((payload['png'] as List).cast<int>());
           final codec = await ui.instantiateImageCodec(png);
@@ -1924,7 +1994,7 @@ class _PlanPageState extends State<PlanPage>
             // 128 previews at 256² RGBA is at most 32 MiB. Evict an old,
             // currently invisible preview before admitting another.
             if (_modelPreviews.length >= 128) {
-              final used = visible.map((a) => a.digest).toSet();
+              final used = visible.map((a) => a.previewKey).toSet();
               final victim = _modelPreviews.keys
                   .where((d) => !used.contains(d))
                   .firstOrNull;
@@ -1938,14 +2008,14 @@ class _PlanPageState extends State<PlanPage>
               }
             }
             if (image != null)
-              _modelPreviews = {..._modelPreviews, asset.digest: image!};
+              _modelPreviews = {..._modelPreviews, asset.previewKey: image!};
           }
           // A failure from before an asset change may no longer hold; the
           // next pass retries against the new content.
           if (error != null && assetRevision == _assetRevision)
             _modelPreviewErrors = {
               ..._modelPreviewErrors,
-              asset.digest: error!,
+              asset.previewKey: error!,
             };
         });
       }
@@ -2209,6 +2279,7 @@ class _PlanPageState extends State<PlanPage>
           Offset(e[0].toDouble(), e[1].toDouble()),
           (w['thicknessMm'] as num).toDouble(),
           (w['heightMm'] as num).toDouble(),
+          color: w['color'] as String?,
         );
         wallsById[wall.id] = wall;
         wallLevels[wall.id] = w['levelId'] as String;
@@ -2358,6 +2429,9 @@ class _PlanPageState extends State<PlanPage>
             .map((e) => RoomRecordView.fromJson(e as Map<String, Object?>))
             .toList(),
         drawn: j['drawn'] == null ? null : rings('drawn'),
+        wallPaints: (j['wallPaints'] as List<Object?>? ?? const [])
+            .map((e) => WallPaintView.fromJson(e as Map<String, Object?>))
+            .toList(),
         floorSurfaces: j['floorSurfaces'] == null
             ? null
             : rings('floorSurfaces'),
@@ -5810,6 +5884,12 @@ class _PlanPageState extends State<PlanPage>
             icon: const Icon(Icons.tune, size: 18),
             label: const Text('Edit height and thickness'),
           ),
+          OutlinedButton.icon(
+            key: const ValueKey('edit-walls-colors'),
+            onPressed: () => _editWallColors(selectedWalls),
+            icon: const Icon(Icons.palette_outlined, size: 18),
+            label: const Text('Edit color'),
+          ),
         ] else if (_joins.containsKey(_selected)) ...[
           const Text('Joined corner'),
           Text(
@@ -5842,7 +5922,7 @@ class _PlanPageState extends State<PlanPage>
               icon: const Icon(Icons.threed_rotation, size: 18),
               label: const Text('Position and rotate in 3D'),
             ),
-          if (_modelPreviewErrors[selectedAsset.digest] case final error?)
+          if (_modelPreviewErrors[selectedAsset.previewKey] case final error?)
             Text(
               'Model preview unavailable: $error',
               style: theme.textTheme.bodySmall,
@@ -5871,6 +5951,14 @@ class _PlanPageState extends State<PlanPage>
                 : () => _editAsset(selectedAsset),
             icon: const Icon(Icons.tune, size: 18),
             label: const Text('Edit model properties'),
+          ),
+          OutlinedButton.icon(
+            key: const ValueKey('edit-asset-colors'),
+            onPressed: _poseAssetId != null
+                ? null
+                : () => _editAssetColors(selectedAsset),
+            icon: const Icon(Icons.palette_outlined, size: 18),
+            label: const Text('Edit colors'),
           ),
           OutlinedButton.icon(
             key: const ValueKey('resize-asset'),
@@ -6015,6 +6103,12 @@ class _PlanPageState extends State<PlanPage>
             onPressed: () => _editWallProperties(selected),
             icon: const Icon(Icons.tune, size: 18),
             label: const Text('Edit dimensions'),
+          ),
+          OutlinedButton.icon(
+            key: const ValueKey('edit-wall-color'),
+            onPressed: () => _editWallColors([selected]),
+            icon: const Icon(Icons.palette_outlined, size: 18),
+            label: const Text('Edit color'),
           ),
           OutlinedButton.icon(
             onPressed: _deleteSelected,

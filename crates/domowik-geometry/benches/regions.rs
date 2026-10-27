@@ -192,5 +192,26 @@ fn sourced_union(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, occupied, full_plan, sourced_union);
+fn wall_colors(c: &mut Criterion) {
+    let level = domowik_format::Level::new("Colors");
+    let mut doc = domowik_format::Document::default();
+    for i in 0..100 {
+        let y = f64::from(i) * 300.;
+        let mut w = domowik_format::Wall::new(
+            level.id,
+            Point::new(0., y),
+            Point::new(4000., y),
+            120.,
+            2500.,
+        );
+        w.unknown.insert("color".into(), "#D8CDB7".into());
+        doc.walls.push(w);
+    }
+    doc.levels.push(level.clone());
+    c.bench_function("wall-colors/100-walls", |b| {
+        b.iter(|| domowik_geometry::cuts::wall_paints(black_box(&doc), level.id))
+    });
+}
+
+criterion_group!(benches, occupied, full_plan, sourced_union, wall_colors);
 criterion_main!(benches);

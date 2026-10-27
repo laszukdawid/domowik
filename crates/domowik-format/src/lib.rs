@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 mod architecture;
 pub use architecture::*;
+pub mod appearance;
 
 /// Ceiling on any coordinate magnitude, in millimetres.
 ///
@@ -1201,6 +1202,9 @@ pub fn remap_u(u: f64, length: f64, s: f64, e: f64) -> f64 {
 /// says only "invalid" makes the user hunt for what it already knew.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ValidationError {
+    /// A recognized optional presentation field is malformed.
+    #[error("invalid-appearance: entity {id}: {message}")]
+    InvalidAppearance { id: Uuid, message: String },
     #[error("architecture {id}: {reason}")]
     Architecture { id: Uuid, reason: String },
     /// A materialized user plan, unlike an internal builder, needs a level.
@@ -1829,7 +1833,21 @@ impl Document {
         // a wall and an opening cannot end up with different ideas of what a
         // token set is.
         for wall in &self.walls {
+            if let Err(message) = appearance::wall_color(wall) {
+                errors.push(ValidationError::InvalidAppearance {
+                    id: wall.id,
+                    message,
+                });
+            }
             check_style_refs(&mut errors, wall.id, "wall", &wall.style_refs);
+        }
+        for asset in &self.asset_instances {
+            if let Err(message) = appearance::material_colors(asset) {
+                errors.push(ValidationError::InvalidAppearance {
+                    id: asset.id,
+                    message,
+                });
+            }
         }
         for opening in &self.openings {
             check_style_refs(&mut errors, opening.id, "opening", &opening.style_refs);

@@ -41,6 +41,62 @@ use domowik_format::{Document, Opening, Point, Side};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+/// Paint-only source contours, using the same millimetre wall pieces and join
+/// patches as the drawn region. No topology changes or new predicates. Empty
+/// unless at least one wall has a colour. Walls paint in descending UUID order
+/// (lowest wins overlap), then joins use their lowest member UUID's colour.
+/// Callers clip these contours to the canonical drawn region. Output is owned,
+/// deterministic and bounded by the existing wall/opening input limits.
+pub struct WallPaint {
+    pub color: Option<domowik_format::appearance::RgbColor>,
+    pub outer: Vec<[f64; 2]>,
+}
+
+pub fn wall_paints(doc: &Document, level: Uuid) -> Vec<WallPaint> {
+    if !doc.walls_on_level(level).any(|w| {
+        domowik_format::appearance::wall_color(w)
+            .ok()
+            .flatten()
+            .is_some()
+    }) {
+        return vec![];
+    }
+    let solids = walls::level_solids(doc, level);
+    let mut ordered: Vec<_> = solids.ids.iter().enumerate().collect();
+    ordered.sort_by_key(|(_, id)| std::cmp::Reverse(**id));
+    let mut result = vec![];
+    for (i, id) in ordered {
+        let color = doc
+            .wall(*id)
+            .and_then(|w| domowik_format::appearance::wall_color(w).ok().flatten());
+        let cuts: Vec<_> = doc
+            .openings_on_wall(*id)
+            .into_iter()
+            .filter_map(|o| Aperture::of(o, i, &solids.walls[i]))
+            .collect();
+        for ring in wall_pieces(&solids.walls[i], &cuts) {
+            result.push(WallPaint {
+                color,
+                outer: ring.into_iter().map(Into::into).collect(),
+            });
+        }
+    }
+    for join in &solids.joins {
+        let owner = join.members.iter().map(|m| solids.ids[m.wall]).min();
+        let color = owner
+            .and_then(|id| doc.wall(id))
+            .and_then(|w| domowik_format::appearance::wall_color(w).ok().flatten());
+        let ring = walls::join_patch(&solids.walls, join);
+        if ring.len() >= 3 {
+            result.push(WallPaint {
+                color,
+                outer: ring.into_iter().map(Into::into).collect(),
+            });
+        }
+    }
+    result
+}
+
 /// One aperture's footprint in its host's frame (R4.2.1): the along-axis
 /// span as fractions of the host length, the face it opens from and its
 /// depth (clamped to the host thickness).

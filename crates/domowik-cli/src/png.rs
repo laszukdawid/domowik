@@ -376,6 +376,43 @@ fn render(
         }
     }
 
+    let wall_paints = domowik_geometry::cuts::wall_paints(doc, level_id);
+    if !wall_paints.is_empty() {
+        let mut mask = tiny_skia::Mask::new(pixmap.width(), pixmap.height())
+            .ok_or_else(|| CliError::Failure("wall color mask allocation failed".into()))?;
+        for component in drawn {
+            if let Some(path) = polygon_path(component, &to_px) {
+                mask.fill_path(&path, FillRule::EvenOdd, false, Transform::identity());
+            }
+        }
+        for part in wall_paints {
+            let p = Polygon {
+                outer: part.outer.into_iter().map(Point::from).collect(),
+                holes: vec![],
+            };
+            if let Some(path) = polygon_path(&p, &to_px) {
+                let [r, g, b] =
+                    part.color
+                        .map(|c| c.0)
+                        .unwrap_or([WALL_FILL.0, WALL_FILL.1, WALL_FILL.2]);
+                paint.set_color(rgb((r, g, b)));
+                pixmap.fill_path(
+                    &path,
+                    &paint,
+                    FillRule::EvenOdd,
+                    Transform::identity(),
+                    Some(&mask),
+                );
+            }
+        }
+        for component in drawn {
+            if let Some(path) = polygon_path(component, &to_px) {
+                paint.set_color(rgb(WALL_STROKE));
+                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            }
+        }
+    }
+
     let (construction, construction_diagnostics) =
         domowik_geometry::architecture::plan_reporting(doc, level_id);
     let font = label::Annotator::new()?;

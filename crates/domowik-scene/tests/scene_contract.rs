@@ -3,6 +3,39 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 #[test]
+fn wall_color_replaces_rgb_and_keeps_ghost_alpha_and_default_neighbors() {
+    let mut doc = Document::with_ground_floor();
+    let level = doc.levels[0].id;
+    let mut wall = Wall::new(
+        level,
+        Point::new(0., 0.),
+        Point::new(4000., 0.),
+        120.,
+        2500.,
+    );
+    wall.unknown
+        .insert("color".into(), serde_json::json!("#D8CDB7"));
+    let colored = wall.id;
+    doc.walls.push(wall);
+    doc.walls.push(Wall::new(
+        level,
+        Point::new(0., 1000.),
+        Point::new(4000., 1000.),
+        120.,
+        2500.,
+    ));
+    let scene =
+        domowik_scene::build(&doc, &[level], &BTreeSet::from([level]), &BTreeMap::new()).unwrap();
+    for node in &scene.nodes {
+        if node.id.starts_with(&format!("wall:{colored}")) {
+            assert_eq!(node.color, [216. / 255., 205. / 255., 183. / 255., 0.3]);
+        } else if node.id.starts_with("wall:") {
+            assert_eq!(node.color, [232. / 255., 220. / 255., 196. / 255., 0.3]);
+        }
+    }
+}
+
+#[test]
 fn explicit_height_resizes_y_without_changing_width_depth_or_legacy_instances() {
     let mut doc = Document::new();
     doc.levels.push(Level::new("Ground"));
