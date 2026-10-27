@@ -391,6 +391,13 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
           'meshes': packet.meshes,
           'nodes': packet.nodes,
         });
+        // Some presenters retire unreferenced meshes at scene commit. A color
+        // undo must upload its former variant again rather than assume residency.
+        if (scene['instanceOnly'] != true) {
+          _uploadedModels.retainAll(
+            (scene['requiredModels'] as List).cast<String>(),
+          );
+        }
         // Even if a newer revision arrived during commit, this is the scene
         // now on screen. Adopt its origin before navigation or the next load.
         if (mounted && session == surface && widget.handle == handle) {

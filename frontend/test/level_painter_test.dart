@@ -184,6 +184,46 @@ void main() {
     });
   }, timeout: rasterTimeout);
 
+  testWidgets(
+    'colored ghost walls composite once even where source contours overlap',
+    (tester) async {
+      await tester.runAsync(() async {
+        final part = WallPaintView.fromJson({
+          'color': '#FF0000',
+          'outer': [
+            [-2000, 1500],
+            [2000, 1500],
+            [2000, -1500],
+            [-2000, -1500],
+          ],
+        });
+        final geometry = Derived(
+          [activeRegion],
+          const [],
+          const [],
+          0,
+          wallPaints: [part, part],
+        );
+        final pixels = await raster(
+          passiveOnlyPainter([
+            PlanLayer(
+              levelId: 'colored',
+              walls: const [],
+              derived: geometry,
+              ghosted: true,
+            ),
+          ]),
+        );
+        // Ghost opacity is applied to the entire
+        // mass, not repeatedly to its baseline and overlapping source contours.
+        final alpha = PlanPainter.ghostOpacity;
+        expect(pixels.at(overlap).r, closeTo(1, 1 / 255));
+        expect(pixels.at(overlap).g, closeTo(1 - alpha, 2 / 255));
+      });
+    },
+    timeout: rasterTimeout,
+  );
+
   testWidgets('a ghosted layer is fainter than a visible one', (tester) async {
     await tester.runAsync(() async {
       // The DARK layer, so the emphasis difference is far above quantization.
@@ -521,7 +561,11 @@ void main() {
       final gapAt = pixels.at(view.toScreen(const Offset(500, 0)));
       expect(patchAt, wallAt, reason: 'the kept patch shows the wall colour');
       expect(gapAt, isNot(wallAt), reason: 'the removed gap is not wall');
-      expect(gapAt, isNot(const Color(0xFFFFFFFF)), reason: 'it shows the tint');
+      expect(
+        gapAt,
+        isNot(const Color(0xFFFFFFFF)),
+        reason: 'it shows the tint',
+      );
     });
   }, timeout: rasterTimeout);
 }

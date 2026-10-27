@@ -84,11 +84,13 @@ uniform highp sampler2DArray uBaseColor;
 void main(){vec2 uv=vUv;vec2 halfTexel=0.5/vec2(textureSize(uBaseColor,0).xy);
 for(int i=0;i<2;i++){if(vWrap[i]==1.0)uv[i]=clamp(uv[i],halfTexel[i],1.0-halfTexel[i]);if(vWrap[i]==2.0)uv[i]=clamp(1.0-abs(mod(uv[i],2.0)-1.0),halfTexel[i],1.0-halfTexel[i]);}
 vec4 texel=texture(uBaseColor,vec3(uv,float(max(vLayer,0))));vec4 base=vColor;
-if(vLayer>=0){vec3 linear=mix(pow((base.rgb+0.055)/1.055,vec3(2.4)),base.rgb/12.92,lessThanEqual(base.rgb,vec3(0.04045)))*texel.rgb;
-base=vec4(mix(1.055*pow(linear,vec3(1.0/2.4))-0.055,linear*12.92,lessThanEqual(linear,vec3(0.0031308))),base.a*texel.a);}
+// Decode display colours once; sRGB texture sampling already returns linear RGB.
+vec3 linear=mix(pow((base.rgb+0.055)/1.055,vec3(2.4)),base.rgb/12.92,lessThanEqual(base.rgb,vec3(0.04045)));
+if(vLayer>=0){linear*=texel.rgb;base.a*=texel.a;}
 if(base.a<0.01)discard;vec3 n=normalize(vNormal);if(!gl_FrontFacing)n=-n;
 float light=0.38+0.62*max(dot(n,normalize(vec3(0.35,0.85,0.4))),0.0);
-color=vec4(base.rgb*light,base.a);}
+linear*=light;
+color=vec4(mix(1.055*pow(linear,vec3(1.0/2.4))-0.055,linear*12.92,lessThanEqual(linear,vec3(0.0031308))),base.a);}
 )",r->error);
   if(!vertex||!fragment){if(vertex)glDeleteShader(vertex);if(fragment)glDeleteShader(fragment);return false;}
   r->program=glCreateProgram();glAttachShader(r->program,vertex);glAttachShader(r->program,fragment);

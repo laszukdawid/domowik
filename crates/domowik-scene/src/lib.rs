@@ -17,6 +17,19 @@ pub mod pick;
 /// `f32`s per mesh vertex: position xyz, normal xyz, rgba.
 pub const VERTEX_FLOATS: usize = 10;
 
+/// Display-space wall finish when no explicit per-wall colour is stored.
+/// Light warm beige (#E8DCC4); the technical 2D plan keeps its own ink default.
+const DEFAULT_WALL_COLOR: domowik_format::appearance::RgbColor =
+    domowik_format::appearance::RgbColor([232, 220, 196]);
+
+fn wall_color(wall: Option<&domowik_format::Wall>, alpha: f32) -> [f32; 4] {
+    let [r, g, b] = wall
+        .and_then(|w| domowik_format::appearance::wall_color(w).ok().flatten())
+        .unwrap_or(DEFAULT_WALL_COLOR)
+        .rgb();
+    [r, g, b, alpha]
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Scene {
@@ -531,6 +544,7 @@ pub fn build_with_floors(
             b.construction(doc, body, &format!("body:{}", body.id), alpha, true)?;
         }
         for w in doc.walls_on_level(level.id) {
+            let color = wall_color(Some(w), alpha);
             let a = w.start();
             let z = w.end();
             let length = (z.x - a.x).hypot(z.y - a.y);
@@ -572,7 +586,7 @@ pub fn build_with_floors(
                         level.elevation_mm + bottom,
                         top - bottom,
                         w.thickness_mm,
-                        [0.87, 0.86, 0.82, alpha],
+                        color,
                     );
                 }
             }
@@ -653,7 +667,7 @@ pub fn build_with_floors(
                         bottom,
                         o.height_mm,
                         w.thickness_mm - o.depth_mm,
-                        [0.87, 0.86, 0.82, alpha],
+                        color,
                     );
                 }
             }
@@ -670,6 +684,12 @@ pub fn build_with_floors(
                 .map(|w| w.height_mm)
                 .fold(f64::INFINITY, f64::min);
             if height.is_finite() {
+                let owner = join
+                    .members
+                    .iter()
+                    .filter_map(|m| doc.wall(solids.ids[m.wall]))
+                    .min_by_key(|w| w.id);
+                let color = wall_color(owner, alpha);
                 b.polygon(
                     format!("join:{}:{i}", level.id),
                     &Polygon {
@@ -678,7 +698,7 @@ pub fn build_with_floors(
                     },
                     level.elevation_mm,
                     height,
-                    [0.87, 0.86, 0.82, alpha],
+                    color,
                 )?;
             }
         }

@@ -4568,6 +4568,40 @@ this increment. One imported asset file represents one finish; there is no
 multi-finish selector. Original imported bytes, plan persistence and history
 remain unchanged.
 
+### Solid wall and instance colors
+
+**Normative for the experimental editor.** A wall may carry one optional opaque
+sRGB `color`, applied to both sides, caps and recess backing in 3D and its wall
+mass in 2D and SVG/PNG exports. Absence retains each view's existing default.
+The default 3D wall finish is light warm beige (`#E8DCC4`); an unspecified 2D
+wall retains its technical ink default. This is presentation only: joins, cuts,
+room topology and dimensions do not change. Splits copy the color; reversal
+preserves it. For mixed-color overlaps
+in 2D the lowest wall UUID paints last; a join patch takes its lowest-member
+wall's color in both 2D and 3D. Paint is clipped to the canonical drawn region,
+so no opening cut is filled back in.
+
+A placed model may carry `materialColors`: solid RGB replacements for individual
+source materials. Stable keys are scoped to its exact content digest: `gltf:N`
+uses the zero-based material-array index, `obj:NAME` uses the exact `usemtl` name,
+and `default` identifies surfaces without an explicit material. Display names
+are labels, not identities; equal colors or duplicate names do not merge keys.
+Overrides replace RGB, retain source opacity, and suppress an embedded base-color
+image only on the overridden material. Unchanged materials keep their original
+colors and textures. Both orthographic plan previews and 3D use the same palette;
+library thumbnails remain source previews. Original model bytes/digests are
+unchanged, and another instance of the same model is unaffected. Unknown material
+keys are preserved but inert, not remapped to a nearby name or index.
+
+The Selection inspector exposes **Edit color** for one or several same-level
+walls and **Edit colors** for a model. Hex input, swatches and reset-to-original
+are supported; cancel writes nothing. Each Apply is one atomic undoable batch;
+unchanged values emit none. Colors survive saving, reopening, replay, compaction
+and model copy/paste. The CLI exposes the same edits under `color`; `color list`
+reports material keys, source colors and decode diagnostics. Invalid color
+values/palettes reject the whole command. Arbitrary textures, wall-side-specific
+finishes and regional floor painting are outside this solid-color increment.
+
 ### 10.3 User configuration (issue 0077)
 
 Reusable asset library locations are local user/device preferences, available
@@ -4599,6 +4633,11 @@ through the placeholder query. Whole-app interaction budgets remain with issue
 0033.
 
 ## 11. Live 3D editor view (issue 0078)
+
+Both 3D presenters evaluate directional and ambient lighting in linear RGB,
+after decoding sRGB material colors and sampling sRGB textures, then encode once
+for the display-space UNORM target. Alpha is unchanged by illumination. Shaded
+beige surfaces must not be darkened by multiplying display-encoded RGB directly.
 
 **Normative experimental-editor behavior.** The 3D view is derived from the
 same plan as the 2D editor and updates after accepted edits/history and file

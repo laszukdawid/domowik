@@ -21,7 +21,8 @@ void main() {
     final suffix = Platform.isMacOS ? 'dylib' : 'so';
     bridge = Bridge.fromLibrary(
       DynamicLibrary.open(
-        File('target/release/libdomowik_bridge.$suffix').absolute.path,
+        Platform.environment['DOMOWIK_TEST_LIBRARY'] ??
+            File('target/release/libdomowik_bridge.$suffix').absolute.path,
       ),
     );
   });
@@ -157,4 +158,37 @@ void main() {
     await tap(tester, find.byKey(const ValueKey('wall-properties-cancel')));
     expect(painter(tester).walls.single.heightMm, wall.heightMm);
   });
+
+  testWidgets(
+    'wall color Apply updates derived paint and one undo restores it',
+    (tester) async {
+      await start(tester);
+      final original = await drawAndSelect(tester);
+      final edit = find.byKey(const ValueKey('edit-wall-color'));
+      await tester.scrollUntilVisible(
+        edit,
+        300,
+        scrollable: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tap(tester, edit);
+      await tester.enterText(
+        find.byKey(const ValueKey('solid-color-wall')),
+        '#d8cdb7',
+      );
+      await tap(tester, find.byKey(const ValueKey('apply-solid-colors')));
+      final changed = painter(tester).walls.single;
+      expect(changed.color, '#D8CDB7');
+      expect(changed.start, original.start);
+      expect(changed.end, original.end);
+      expect(painter(tester).derived.wallPaints.single.color, '#D8CDB7');
+      await tap(tester, find.byTooltip('Undo'));
+      expect(painter(tester).walls.single.color, isNull);
+      expect(painter(tester).derived.wallPaints, isEmpty);
+      await tap(tester, find.byTooltip('Redo'));
+      expect(painter(tester).walls.single.color, '#D8CDB7');
+    },
+  );
 }

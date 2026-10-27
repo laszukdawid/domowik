@@ -89,6 +89,53 @@ fn zip_materials_and_depth_preserve_the_upper_visible_surface() {
     assert_eq!(pixel(&i, 10, 10), [255, 0, 0, 255]);
 }
 
+#[test]
+fn material_keys_keep_equal_colors_distinct_and_overrides_do_not_tint_other_parts() {
+    use domowik_format::appearance::{MaterialColors, RgbColor};
+    let bytes =
+        b"v 0 1 0\nv 2 1 0\nv 0 1 2\nv 2 1 2\nusemtl first\nf 1 2 3\nusemtl second\nf 2 4 3\n";
+    let materials = domowik_models::appearance::materials(bytes).unwrap();
+    assert_eq!(
+        materials.iter().map(|m| m.key.as_str()).collect::<Vec<_>>(),
+        ["obj:first", "obj:second"]
+    );
+    assert_eq!(materials[0].color, materials[1].color);
+    let source = domowik_models::mesh(bytes).unwrap();
+    let colors = MaterialColors::from([("obj:first".into(), RgbColor([255, 0, 0]))]);
+    let changed = source.recolored(&colors);
+    for (i, (a, b)) in source
+        .vertices
+        .as_chunks::<30>()
+        .0
+        .iter()
+        .zip(changed.vertices.as_chunks::<30>().0)
+        .enumerate()
+    {
+        for (a, b) in a.as_chunks::<10>().0.iter().zip(b.as_chunks::<10>().0) {
+            assert_eq!(&a[..6], &b[..6]);
+            assert_eq!(a[9], b[9]);
+            if source.materials[source.triangle_materials[i]].key == "obj:first" {
+                assert_eq!(&b[6..9], [1., 0., 0.]);
+            } else {
+                assert_eq!(a, b);
+            }
+        }
+    }
+    let result = domowik_models::appearance::preview(bytes, &colors).unwrap();
+    let image = tiny_skia::Pixmap::decode_png(&result.png).unwrap();
+    assert_eq!(pixel(&image, 32, 32), [255, 0, 0, 255]);
+    assert_eq!(
+        source.vertices,
+        domowik_models::mesh(bytes).unwrap().vertices
+    );
+    assert_eq!(
+        preview(bytes).unwrap().png,
+        domowik_models::appearance::preview(bytes, &MaterialColors::new())
+            .unwrap()
+            .png
+    );
+}
+
 fn original_glb() -> Vec<u8> {
     let positions = [[0f32, 1., 0.], [2., 1., 0.], [0., 1., 2.]];
     let bin: Vec<u8> = positions
