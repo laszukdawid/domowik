@@ -35,17 +35,16 @@ class _AccountButtonState extends State<AccountButton> {
 
   Future<void> _toggle() async {
     final session = _session;
-    setState(() {
-      _busy = true;
-      // Forget the token first: a failed revocation must not keep it in use.
-      _session = null;
-    });
+    setState(() => _busy = true);
     try {
       if (session == null) {
         final signedIn = await widget.client.signIn();
         if (mounted) setState(() => _session = signedIn);
       } else {
+        // Forgotten only once the server has ended it, so a failed sign-out
+        // can be retried.
         await widget.client.signOut(session);
+        if (mounted) setState(() => _session = null);
       }
     } on AccountException catch (error) {
       if (mounted) {

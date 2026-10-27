@@ -73,8 +73,8 @@ abstract interface class AccountClient {
   /// The session already in place when the editor starts, if any.
   Future<AccountSession?> restore();
 
-  /// Signs in. In a browser the page leaves for the server's sign-in and this
-  /// never completes; the session is restored when the editor loads again.
-  Future<AccountSession> signIn();
+  /// Signs in. In a browser the page leaves for the server's sign-in and
+  /// this returns null; the session is restored when the editor loads again.
+  Future<AccountSession?> signIn();
   Future<void> signOut(AccountSession session);
 }

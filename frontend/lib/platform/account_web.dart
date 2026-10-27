@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:js_interop';
 
@@ -43,11 +42,12 @@ class BrowserAccountClient implements AccountClient {
   }
 
   @override
-  Future<AccountSession> signIn() async {
+  Future<AccountSession?> signIn() async {
     final (status, body) = await _send('POST', 'auth/sign-in', csrf: '1');
+    // The page leaves (unless an unsaved-changes prompt keeps it); the
+    // session is restored when the editor loads again.
     _navigate(_field(status, body, 'authorizationUrl'));
-    // The page is leaving; the session is restored when it loads again.
-    return Completer<AccountSession>().future;
+    return null;
   }
 
   @override

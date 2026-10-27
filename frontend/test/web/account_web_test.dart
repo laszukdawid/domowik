@@ -95,8 +95,7 @@ void main() {
         200,
         '{"authorizationUrl":"https://idp.example/authorize?state=s"}',
       );
-      client.signIn().ignore();
-      await pumpEventQueue();
+      expect(await client.signIn(), isNull);
       expect(visited, ['https://idp.example/authorize?state=s']);
       expect(sent.single.method, 'POST');
       expect(sent.single.url, '$origin/api/v1/auth/sign-in');
