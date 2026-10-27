@@ -117,7 +117,7 @@ void main() {
         ServerEndpoint(server.origin.toString()),
         openBrowser: followingBrowser,
       );
-      final session = await client.signIn();
+      final session = (await client.signIn())!;
       expect(session.token, 'dmk_secret');
       expect(session.tokenId, 'token-id');
       await client.signOut(session);

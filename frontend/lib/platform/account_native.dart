@@ -55,8 +55,12 @@ class NativeAccountClient implements AccountClient {
   final BrowserOpener openBrowser;
   final Duration timeout;
 
+  /// Nothing outlives the app: every run starts signed out.
   @override
-  Future<AccountSession> signIn() async {
+  Future<AccountSession?> restore() async => null;
+
+  @override
+  Future<AccountSession?> signIn() async {
     final verifier = nonce(32);
     final state = nonce(16);
     final listener = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

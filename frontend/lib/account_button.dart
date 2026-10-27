@@ -15,21 +15,36 @@ class AccountButton extends StatefulWidget {
 
 class _AccountButtonState extends State<AccountButton> {
   AccountSession? _session;
-  bool _busy = false;
+  bool _busy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.client
+        .restore()
+        .then<AccountSession?>((session) => session, onError: (_) => null)
+        .then((session) {
+          if (mounted) {
+            setState(() {
+              _session = session;
+              _busy = false;
+            });
+          }
+        });
+  }
 
   Future<void> _toggle() async {
     final session = _session;
-    setState(() {
-      _busy = true;
-      // Forget the token first: a failed revocation must not keep it in use.
-      _session = null;
-    });
+    setState(() => _busy = true);
     try {
       if (session == null) {
         final signedIn = await widget.client.signIn();
         if (mounted) setState(() => _session = signedIn);
       } else {
+        // Forgotten only once the server has ended it, so a failed sign-out
+        // can be retried.
         await widget.client.signOut(session);
+        if (mounted) setState(() => _session = null);
       }
     } on AccountException catch (error) {
       if (mounted) {
