@@ -60,6 +60,20 @@ class BrowserAccountClient implements AccountClient {
     if (status != 204) throw _refused(status, body);
   }
 
+  @override
+  Future<AccountProfile> profile(AccountSession session) async {
+    final plans = _get('plans')..ignore();
+    final me = await _get('auth/me');
+    return AccountProfile.fromJson(me, await plans);
+  }
+
+  /// The decoded JSON answer of a read, which needs no CSRF token.
+  Future<Object?> _get(String path) async {
+    final (status, body) = await _send('GET', path);
+    if (status < 200 || status > 299) throw _refused(status, body);
+    return _json(body);
+  }
+
   Future<(int, String)> _send(
     String method,
     String path, {

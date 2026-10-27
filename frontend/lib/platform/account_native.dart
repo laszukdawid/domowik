@@ -88,6 +88,11 @@ class NativeAccountClient implements AccountClient {
           'redirectUri': redirect,
         },
       );
+      if (issued is! Map ||
+          issued['token'] is! String ||
+          issued['id'] is! String) {
+        throw const AccountException('The server sent an unexpected answer');
+      }
       return AccountSession(
         token: issued['token'] as String,
         tokenId: issued['id'] as String,
@@ -126,7 +131,16 @@ class NativeAccountClient implements AccountClient {
     );
   }
 
-  Future<Map<String, Object?>> _send(
+  @override
+  Future<AccountProfile> profile(AccountSession session) async {
+    final plans = _send('GET', server.api('plans'), token: session.token)
+      ..ignore();
+    final me = await _send('GET', server.api('auth/me'), token: session.token);
+    return AccountProfile.fromJson(me, await plans);
+  }
+
+  /// The decoded JSON answer, or null when [expectBody] is false.
+  Future<Object?> _send(
     String method,
     Uri url, {
     Map<String, String>? body,
@@ -150,19 +164,20 @@ class NativeAccountClient implements AccountClient {
       final response = await request.close().timeout(
         const Duration(seconds: 30),
       );
-      final text = await response.transform(utf8.decoder).join();
+      final text = await response
+          .transform(utf8.decoder)
+          .join()
+          .timeout(const Duration(seconds: 30));
       if (response.statusCode < 200 || response.statusCode > 299) {
         throw AccountException(
           'The server refused (${response.statusCode}): ${_message(text)}',
         );
       }
-      if (!expectBody) return const {};
-      final decoded = jsonDecode(text);
-      if (decoded is! Map<String, Object?>) {
-        throw const AccountException('The server sent an unexpected answer');
-      }
-      return decoded;
-    } on SocketException {
+      return expectBody ? jsonDecode(text) : null;
+    } on FormatException {
+      throw const AccountException('The server sent an unexpected answer');
+    } on IOException {
+      // Also a connection cut mid-answer (HttpException) or a TLS failure.
       throw AccountException('Could not reach ${server.origin}');
     } on TimeoutException {
       throw AccountException('${server.origin} did not answer');

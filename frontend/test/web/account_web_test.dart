@@ -30,8 +30,9 @@ extension type _Element(JSObject _) implements JSObject {
 /// One request the editor sent.
 typedef Sent = ({String url, String method, String? csrf, String credentials});
 
-/// Replaces `fetch` with one answering `status` and `body`, recording calls.
-List<Sent> answer(int status, String? body) {
+/// Replaces `fetch` with one answering `status` and `body`, or the body
+/// [byPath] gives the URL's path, recording calls.
+List<Sent> answer(int status, String? body, {Map<String, String>? byPath}) {
   final sent = <Sent>[];
   final original = _fetch;
   addTearDown(() => _fetch = original);
@@ -43,8 +44,9 @@ List<Sent> answer(int status, String? body) {
       csrf: (headers['X-Domowik-CSRF'] as JSString?)?.toDart,
       credentials: (init['credentials'] as JSString).toDart,
     ));
+    final reply = byPath?[Uri.parse(url.toDart).path] ?? body;
     return Future.value(
-      _Response(body, {'status': status}.jsify()! as JSObject),
+      _Response(reply, {'status': status}.jsify()! as JSObject),
     ).toJS;
   }).toJS;
   return sent;
@@ -111,6 +113,34 @@ void main() {
             contains('not configured'),
           ),
         ),
+      );
+    });
+
+    test('reads the account and its plans', () async {
+      final client = BrowserAccountClient(server);
+      final sent = answer(
+        200,
+        null,
+        byPath: {
+          '/api/v1/auth/me':
+              '{"userId":"u","username":"ann@example.com","planLimit":1}',
+          '/api/v1/plans': '[{"id":"p","title":"Flat","updatedAtEpoch":0}]',
+        },
+      );
+      final profile = await client.profile(const AccountSession(token: 'c'));
+      expect(profile.email, 'ann@example.com');
+      expect(profile.planLimit, 1);
+      expect(profile.plans.single.title, 'Flat');
+      expect(sent.map((s) => s.url), {
+        '$origin/api/v1/plans',
+        '$origin/api/v1/auth/me',
+      });
+      expect(sent.every((s) => s.method == 'GET' && s.csrf == null), isTrue);
+
+      answer(401, '{"code":"unauthenticated","message":"sign in"}');
+      await expectLater(
+        client.profile(const AccountSession(token: 'c')),
+        throwsA(isA<AccountException>()),
       );
     });
 
