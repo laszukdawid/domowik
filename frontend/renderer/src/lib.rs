@@ -938,6 +938,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn beige_in_shadow_is_lit_in_linear_space_for_plain_and_textured_surfaces() {
+        let Some(mut r) = renderer() else { return };
+        let (mut mesh, mut instances) = orientation_fixture();
+        for vertex in mesh.as_chunks_mut::<10>().0 {
+            vertex[3..6].copy_from_slice(&[0., 0., -1.]);
+        }
+        instances.truncate(1);
+        instances[0].matrix[13] = 0.;
+        instances[0].color = [232. / 255., 220. / 255., 196. / 255., 1.];
+        let decode = |v: f64| {
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let encode = |v: f64| {
+            if v <= 0.0031308 {
+                v * 12.92
+            } else {
+                1.055 * v.powf(1. / 2.4) - 0.055
+            }
+        };
+        let coords = [0.5, 0.5, 0., 0., 0.].repeat(mesh.len() / 10);
+        for textured in [false, true] {
+            let textures = if textured {
+                vec![(
+                    "diagnostic:orientation",
+                    TextureData {
+                        width: 1,
+                        height: 1,
+                        layers: 1,
+                        rgba: &[128, 128, 128, 255],
+                        coordinates: &coords,
+                    },
+                )]
+            } else {
+                vec![]
+            };
+            r.set_scene_textured(
+                [("diagnostic:orientation", mesh.as_slice())],
+                &instances,
+                textures,
+            )
+            .unwrap();
+            let target = r.offscreen(32, 32);
+            let frame = r
+                .render(&target.create_view(&Default::default()), 32, 32, &IDENTITY)
+                .unwrap();
+            r.wait(frame).unwrap();
+            let pixels = r.read_pixels(&target).unwrap();
+            let pixel = &pixels[(16 * 32 + 16) * 4..][..4];
+            for (actual, base) in [pixel[2], pixel[1], pixel[0]]
+                .into_iter()
+                .zip([232., 220., 196.])
+            {
+                let expected = encode(
+                    decode(base / 255.) * if textured { decode(128. / 255.) } else { 1. } * 0.38,
+                ) * 255.;
+                assert!(
+                    (f64::from(actual) - expected).abs() <= 2.,
+                    "textured={textured}, actual={pixel:?}, expected channel={expected}"
+                );
+            }
+            assert_eq!(pixel[3], 255);
+        }
+    }
+
+    #[test]
     fn texture_validation_is_bounded_without_a_gpu() {
         let coords = [0., 0., 0., 1., 1.].repeat(3);
         let mut t = TextureData {

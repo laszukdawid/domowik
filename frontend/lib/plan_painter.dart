@@ -22,9 +22,18 @@ import 'plan_viewport.dart';
 import 'measurement_units.dart';
 import 'asset_library.dart';
 import 'asset_rotation.dart';
+import 'solid_colors_dialog.dart' show solidColor;
 
 class Wall {
-  const Wall(this.id, this.start, this.end, this.thicknessMm, this.heightMm);
+  const Wall(
+    this.id,
+    this.start,
+    this.end,
+    this.thicknessMm,
+    this.heightMm, {
+    this.color,
+  });
+  final String? color;
 
   final String id;
   final Offset start;
@@ -235,6 +244,7 @@ class Derived {
     this.construction = const [],
     this.constructionDiagnostics = const [],
     this.floorSurfaces,
+    this.wallPaints = const [],
     List<Ring>? drawn,
   }) : _drawn = drawn;
 
@@ -258,8 +268,17 @@ class Derived {
   final List<PlanConstruction> construction;
   final List<String> constructionDiagnostics;
   final List<Ring>? floorSurfaces;
+  final List<WallPaintView> wallPaints;
 
   static const empty = Derived([], [], [], 0.0);
+}
+
+class WallPaintView {
+  WallPaintView.fromJson(Map<String, Object?> j)
+    : color = j['color'] as String?,
+      ring = Ring.fromJson({...j, 'holes': const <Object?>[]});
+  final String? color;
+  final Ring ring;
 }
 
 /// Paint-only architectural geometry supplied by Rust, on either stair level.
@@ -636,7 +655,7 @@ class PlanPainter extends CustomPainter {
       final image =
           asset.rotationXDeg % 360 != 0 || asset.rotationYDeg % 360 != 0
           ? null
-          : modelPreviews[asset.digest];
+          : modelPreviews[asset.previewKey];
       if (image != null) {
         // Native footprint corners transport the transform, including rotation.
         // Image top-left is local (-width/2,+depth/2), hence corner 3.
@@ -768,10 +787,43 @@ class PlanPainter extends CustomPainter {
     }
 
     // The drawn region: one filled path per component, holes included.
-    final wallFill = Paint()..color = _fade(const Color(0xFF33475B), opacity);
+    final colored = levelDerived.wallPaints.isNotEmpty;
+    if (colored && opacity < 1) {
+      // Composite the wall mass once: overlapping source contours must not
+      // make a ghosted colored level darker than an ordinary ghosted level.
+      canvas.saveLayer(
+        null,
+        Paint()..color = Colors.white.withValues(alpha: opacity),
+      );
+    }
+    final wallOpacity = colored ? 1.0 : opacity;
+    final wallFill = Paint()
+      ..color = _fade(const Color(0xFF33475B), wallOpacity);
     for (final part in levelDerived.drawn) {
       canvas.drawPath(_pathOf(part), wallFill);
     }
+    if (levelDerived.wallPaints.isNotEmpty) {
+      final clip = Path()..fillType = PathFillType.evenOdd;
+      for (final part in levelDerived.drawn) {
+        clip.addPath(_pathOf(part), Offset.zero);
+      }
+      canvas.save();
+      canvas.clipPath(clip, doAntiAlias: false);
+      for (final part in levelDerived.wallPaints) {
+        canvas.drawPath(
+          _pathOf(part.ring),
+          Paint()
+            ..color = _fade(
+              part.color == null
+                  ? const Color(0xFF33475B)
+                  : solidColor(part.color!),
+              wallOpacity,
+            ),
+        );
+      }
+      canvas.restore();
+    }
+    if (colored && opacity < 1) canvas.restore();
 
     for (final item in levelDerived.construction) {
       final path = Path()..fillType = PathFillType.evenOdd;

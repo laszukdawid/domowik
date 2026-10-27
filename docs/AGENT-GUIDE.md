@@ -171,6 +171,15 @@ be opened by older builds. Keep an untouched backup.
 
 ### Walls, openings and rooms
 
+Solid appearance edits use `domowik color list PLAN` to inspect wall IDs and
+each placed model's source material keys. `domowik color wall PLAN WALL --color
+'#D8CDB7'` colors both wall sides; `--reset` restores the default. Use `domowik
+color asset PLAN INSTANCE --material 'gltf:0=#F2F0E8' --material
+'gltf:2=#6B5A48'` for per-instance materials, `--material 'gltf:0=original'` to
+reset one, or `--reset` for the whole model. Quote hex colors so the shell does
+not treat `#` as a comment. Colors sampled visually from photos are approximations,
+not measured finishes. These commands do not change geometry or model bytes.
+
 ```sh
 domowik new PLAN
 domowik add-wall PLAN X1 Y1 X2 Y2 --thickness MM [--height MM] [--level NAME]

@@ -70,7 +70,7 @@ typedef struct {
   uint64_t token;
 } domowik_buf;
 
-/* The ABI revision, currently 19. A caller reading a different number must
+/* The ABI revision, currently 20. A caller reading a different number must
  * not proceed.
  *
  * 10 is NOT backward-compatible, unlike every export- or field-only bump
@@ -189,6 +189,13 @@ int32_t domowik_plan_execute(uint64_t handle, const uint8_t *req,
  * Embedded thumbnails work on all core hosts; file requests require filesystem
  * access. Synchronous call; native UI callers use a worker and serialize work.
  * Ownership/errors/panic transport match other asset requests. */
+/* ABI 20: materials {digest} returns [{key,name,color:[sRGB r,g,b,a]}].
+ * colors {instanceId,materialColors:{key:"#RRGGBB"}} replaces one palette in
+ * one undoable batch; {} resets, unchanged writes nothing. list includes each
+ * instance's materialColors. preview additionally accepts materialColors.
+ * Material queries/preview decode are read-only, bounded and outside the plan
+ * lock; colors is serialized with other mutations. Ownership, close/drain,
+ * panic transport, platform support and lack of cancellation are unchanged. */
 int32_t domowik_plan_assets(uint64_t handle, const uint8_t *req,
                            uint64_t req_len, domowik_buf *out);
 
@@ -276,7 +283,9 @@ int32_t domowik_plan_snapshot(uint64_t handle, domowik_buf *out);
  * a refusal changes neither document nor history. No length or axis edit.
  * Ownership, threading and errors are the same as other gestures.
  *
- * Requests are JSON: addWall, moveWall, setWall, setWalls, deleteWall, reverseWall,
+  * ABI 20 adds setWallColors {wallIds,color:"#RRGGBB"|null}, setting or resetting
+  * distinct same-level walls atomically; unchanged colors produce no batch.
+  * Requests are JSON: addWall, moveWall, setWall, setWalls, deleteWall, reverseWall,
  * addOpening, moveOpening, deleteOpening, deleteLevel, setLevel. */
 int32_t domowik_plan_edit(uint64_t handle, const uint8_t *req, uint64_t req_len,
                           domowik_buf *out);

@@ -6,6 +6,7 @@
 //! +Y is up, X/Z form the footprint. Raster coverage is approximate at pixel
 //! resolution, never a topology predicate. Returned PNG bytes are caller-owned.
 
+pub mod appearance;
 mod glb;
 mod obj;
 mod texture;
@@ -23,6 +24,7 @@ pub(crate) struct Triangle {
     pub color: [f64; 4],
     pub uv: [[f64; 2]; 3],
     pub texture: Option<texture::Surface>,
+    pub material: std::sync::Arc<appearance::ModelMaterial>,
 }
 
 /// A rebuildable preview; model extents are in original model units, not mm.
@@ -144,6 +146,10 @@ pub struct ModelMesh {
     pub height_ratio: f64,
     pub source_triangles: usize,
     pub triangles: usize,
+    pub materials: Vec<appearance::ModelMaterial>,
+    /// Material membership of each retained triangle; CPU-only derivation.
+    #[serde(skip)]
+    pub triangle_materials: Vec<usize>,
 }
 
 /// Decode once for an interactive 3D renderer. At most 20,000 retained triangles
@@ -181,6 +187,13 @@ pub fn mesh_with_budget(bytes: &[u8], budget: usize) -> Result<ModelMesh, String
     }
     let mut vertices = Vec::new();
     let mut coordinates = Vec::new();
+    let materials = appearance::collect(&triangles);
+    let material_indices: std::collections::BTreeMap<_, _> = materials
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.key.as_str(), i))
+        .collect();
+    let mut triangle_materials = Vec::new();
     let mut images: Vec<std::sync::Arc<texture::Image>> = Vec::new();
     for t in &triangles {
         if let Some(surface) = &t.texture {
@@ -195,6 +208,7 @@ pub fn mesh_with_budget(bytes: &[u8], budget: usize) -> Result<ModelMesh, String
     for grid in [128., 64., 32., 16., 8.] {
         vertices.clear();
         coordinates.clear();
+        triangle_materials.clear();
         let mut seen = std::collections::BTreeSet::new();
         let mut seen_plain = std::collections::BTreeSet::new();
         for t in &triangles {
@@ -228,9 +242,9 @@ pub fn mesh_with_budget(bytes: &[u8], budget: usize) -> Result<ModelMesh, String
             let unique = if images.is_empty() {
                 // Colour-only models retain the compact pre-texture LOD key
                 // and do not allocate a redundant derived UV array.
-                seen_plain.insert((ordered, color))
+                seen_plain.insert((ordered, color, &t.material.key))
             } else {
-                seen.insert((ordered, color, layer, uv_key, wrap))
+                seen.insert((ordered, color, layer, uv_key, wrap, &t.material.key))
             };
             if !unique {
                 continue;
@@ -253,6 +267,7 @@ pub fn mesh_with_budget(bytes: &[u8], budget: usize) -> Result<ModelMesh, String
             if length <= 1e-12 {
                 continue;
             }
+            triangle_materials.push(material_indices[t.material.key.as_str()]);
             for (i, p) in p.into_iter().enumerate() {
                 vertices.extend(p.map(|v| v as f32));
                 vertices.extend(n.map(|v| (v / length) as f32));
@@ -284,6 +299,8 @@ pub fn mesh_with_budget(bytes: &[u8], budget: usize) -> Result<ModelMesh, String
         source_triangles: triangles.len(),
         triangles: vertices.len() / 30,
         vertices,
+        materials,
+        triangle_materials,
     })
 }
 
