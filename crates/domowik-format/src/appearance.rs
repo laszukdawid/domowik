@@ -1,5 +1,5 @@
 //! Optional, presentation-only solid colours. No geometry or asset bytes change.
-use crate::{AssetInstance, Wall};
+use crate::{AssetInstance, Opening, OpeningKind, Wall};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 
@@ -55,6 +55,66 @@ pub fn wall_color(wall: &Wall) -> Result<Option<RgbColor>, String> {
         .transpose()
 }
 
+/// Leaf finish, independent of a door's operating mechanism. Glass uses ordinary
+/// alpha blending, not refraction; frames and opening geometry are unchanged.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DoorStyle {
+    #[default]
+    Solid,
+    Glass,
+}
+
+impl DoorStyle {
+    /// Original leaf finish, before an optional color replacement (8-bit sRGB).
+    pub fn color(self) -> RgbColor {
+        match self {
+            Self::Solid => RgbColor([158, 107, 64]),
+            Self::Glass => RgbColor([128, 191, 230]),
+        }
+    }
+
+    /// Linear coverage alpha. A ghosted level multiplies this value.
+    pub fn opacity(self) -> f32 {
+        match self {
+            Self::Solid => 1.,
+            Self::Glass => 0.25,
+        }
+    }
+}
+
+/// Optional leaf color on a door. Window metadata remains opaque and inert.
+pub fn door_color(opening: &Opening) -> Result<Option<RgbColor>, String> {
+    if opening.kind != OpeningKind::Door {
+        return Ok(None);
+    }
+    opening
+        .unknown
+        .get("color")
+        .map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string()))
+        .transpose()
+}
+
+/// Effective door style; absence retains the original solid appearance.
+pub fn door_style(opening: &Opening) -> Result<DoorStyle, String> {
+    if opening.kind != OpeningKind::Door {
+        return Ok(DoorStyle::Solid);
+    }
+    opening
+        .unknown
+        .get("doorStyle")
+        .map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string()))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+/// Plan/export leaf ink. `None` preserves the view's legacy solid-door ink;
+/// technical glyphs stay opaque even when the physical leaf is glass.
+pub fn door_plan_color(opening: &Opening) -> Result<Option<RgbColor>, String> {
+    let style = door_style(opening)?;
+    Ok(door_color(opening)?.or_else(|| (style == DoorStyle::Glass).then(|| style.color())))
+}
+
 /// Reads and bounds an instance palette. At most 256 nonempty material keys,
 /// each at most 1024 UTF-8 bytes. Absent is the unmodified source appearance.
 pub fn material_colors(asset: &AssetInstance) -> Result<MaterialColors, String> {
@@ -88,5 +148,49 @@ mod tests {
         assert!(
             validate_material_colors(&BTreeMap::from([("".into(), RgbColor([0; 3]))])).is_err()
         );
+    }
+
+    #[test]
+    fn door_fields_are_validated_but_window_extensions_remain_opaque() {
+        let mut doc = crate::Document::with_ground_floor();
+        let wall = crate::Wall::new(
+            doc.levels[0].id,
+            crate::Point::new(0., 0.),
+            crate::Point::new(4000., 0.),
+            120.,
+            2500.,
+        );
+        let mut door = Opening::door(wall.id, 0.5, 900., 2100., 120.);
+        doc.walls.push(wall);
+        assert_eq!(door_style(&door).unwrap(), DoorStyle::Solid);
+        assert_eq!(door_plan_color(&door).unwrap(), None);
+        door.unknown
+            .insert("doorStyle".into(), serde_json::json!("glass"));
+        assert_eq!(door_style(&door).unwrap().opacity(), 0.25);
+        assert_eq!(
+            door_plan_color(&door).unwrap(),
+            Some(DoorStyle::Glass.color())
+        );
+        doc.openings.push(door);
+        assert!(doc.validate().is_empty());
+        for (field, value) in [
+            ("color", serde_json::json!("#FFF")),
+            ("color", serde_json::Value::Null),
+            ("doorStyle", serde_json::json!("invisible")),
+            ("doorStyle", serde_json::json!(0.5)),
+        ] {
+            let mut bad = doc.clone();
+            bad.openings[0].unknown.insert(field.into(), value);
+            assert!(bad
+                .validate()
+                .iter()
+                .any(|e| matches!(e, crate::ValidationError::InvalidAppearance { .. })));
+        }
+        doc.openings[0].kind = OpeningKind::Window;
+        doc.openings[0]
+            .unknown
+            .insert("doorStyle".into(), serde_json::json!({"future": true}));
+        assert!(doc.validate().is_empty());
+        assert_eq!(door_color(&doc.openings[0]).unwrap(), None);
     }
 }

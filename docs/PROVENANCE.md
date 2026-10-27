@@ -36,6 +36,11 @@ owner-requested appearance corrections. They reuse the sRGB transfer functions
 already present in the texture renderers; no new external sources, dependencies
 or assets were consulted. Regression inputs are synthetic colored surfaces.
 
+Door leaf colors and solid/glass styles are original owner-requested behavior,
+implemented with existing optional metadata, edit batches and alpha-blending
+paths. No external source, new dependencies or distributed content were used.
+Door regression plans and rendering inputs are original synthetic fixtures.
+
 ## Architectural primitives and straight stairs
 
 The body/opening/connection distinction and straight-stair assembly are original

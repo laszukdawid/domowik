@@ -70,7 +70,7 @@ typedef struct {
   uint64_t token;
 } domowik_buf;
 
-/* The ABI revision, currently 20. A caller reading a different number must
+/* The ABI revision, currently 21. A caller reading a different number must
  * not proceed.
  *
  * 10 is NOT backward-compatible, unlike every export- or field-only bump
@@ -283,9 +283,17 @@ int32_t domowik_plan_snapshot(uint64_t handle, domowik_buf *out);
  * a refusal changes neither document nor history. No length or axis edit.
  * Ownership, threading and errors are the same as other gestures.
  *
-  * ABI 20 adds setWallColors {wallIds,color:"#RRGGBB"|null}, setting or resetting
-  * distinct same-level walls atomically; unchanged colors produce no batch.
-  * Requests are JSON: addWall, moveWall, setWall, setWalls, deleteWall, reverseWall,
+ * ABI 20 adds setWallColors {wallIds,color:"#RRGGBB"|null}, setting or resetting
+ * distinct same-level walls atomically; unchanged colors produce no batch.
+ * ABI 21 adds setDoorAppearance {openingId,color:"#RRGGBB"|null,
+ * doorStyle:"solid"|"glass"}. All fields are required. Replaces a door leaf's
+ * color/style in one atomic undoable edit; unchanged values produce no batch.
+ * Windows/unknown IDs are refused. Derived openings include color, doorStyle,
+ * leafColor (resolved technical ink, or null for legacy ink), originalColor.
+ * Glass uses alpha .25 times level ghost alpha; frames/geometry are unchanged.
+ * Ownership, allocation, close/drain, serialization/threading, panic transport,
+ * cancellation (none) and native/browser support match other edit requests.
+ * Requests are JSON: addWall, moveWall, setWall, setWalls, deleteWall, reverseWall,
  * addOpening, moveOpening, deleteOpening, deleteLevel, setLevel. */
 int32_t domowik_plan_edit(uint64_t handle, const uint8_t *req, uint64_t req_len,
                           domowik_buf *out);

@@ -3,6 +3,97 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 #[test]
+fn door_style_changes_only_leaf_finish_and_preserves_frames_geometry_and_picking() {
+    use domowik_format::{Opening, OpeningMechanism};
+    let mut doc = Document::with_ground_floor();
+    let level = doc.levels[0].id;
+    let wall = Wall::new(
+        level,
+        Point::new(0., 0.),
+        Point::new(6000., 0.),
+        200.,
+        3000.,
+    );
+    let door = Opening::door(wall.id, 0.5, 900., 2100., 200.);
+    let id = format!("door:{}", door.id);
+    doc.walls.push(wall);
+    doc.openings.push(door);
+    for mechanism in [OpeningMechanism::DoorHinged, OpeningMechanism::DoorSliding] {
+        doc.openings[0].mechanism = Some(mechanism);
+        doc.openings[0].unknown.clear();
+        let before =
+            domowik_scene::build(&doc, &[level], &BTreeSet::new(), &BTreeMap::new()).unwrap();
+        doc.openings[0]
+            .unknown
+            .insert("doorStyle".into(), serde_json::json!("glass"));
+        doc.openings[0]
+            .unknown
+            .insert("color".into(), serde_json::json!("#DCC8B4"));
+        for ghosted in [false, true] {
+            let ghost = if ghosted {
+                BTreeSet::from([level])
+            } else {
+                BTreeSet::new()
+            };
+            let after = domowik_scene::build(&doc, &[level], &ghost, &BTreeMap::new()).unwrap();
+            assert_eq!(before.meshes, after.meshes);
+            for (old, new) in before.nodes.iter().zip(&after.nodes) {
+                assert_eq!(old.id, new.id);
+                assert_eq!(old.matrix, new.matrix);
+                assert_eq!(old.normal_matrix, new.normal_matrix);
+                assert_eq!(old.mesh, new.mesh);
+                if new.id == id {
+                    assert!(new.transparent);
+                    assert_eq!(&new.color[..3], &[220. / 255., 200. / 255., 180. / 255.]);
+                    assert!((new.color[3] - if ghosted { 0.075 } else { 0.25 }).abs() < 1e-6);
+                    assert_eq!(
+                        domowik_scene::pick::node_entity(&new.id),
+                        domowik_scene::pick::node_entity(&old.id)
+                    );
+                    // Shoot through the leaf's local centre along its normal:
+                    // opacity changes must not make the door unselectable.
+                    let m = new.matrix.map(f64::from);
+                    let origin = [
+                        m[12] + m[8] * 50.,
+                        m[13] + m[5] * 0.5 + m[9] * 50.,
+                        m[14] + m[10] * 50.,
+                    ];
+                    let direction = [-m[8], -m[9], -m[10]];
+                    let hit = domowik_scene::pick::pick(
+                        &after.nodes,
+                        origin,
+                        direction,
+                        [0., 100.],
+                        |key| {
+                            let vertices = after.meshes.get(key)?;
+                            Some(domowik_scene::pick::MeshView {
+                                vertices,
+                                bounds: domowik_scene::pick::mesh_bounds(vertices)?,
+                            })
+                        },
+                        |node| node.id != id,
+                    );
+                    assert_eq!(
+                        after.nodes[hit.expect("glass leaf remains pickable").node].id,
+                        id
+                    );
+                } else {
+                    assert_eq!(&old.color[..3], &new.color[..3]);
+                }
+            }
+        }
+        doc.openings[0]
+            .unknown
+            .insert("doorStyle".into(), serde_json::json!("solid"));
+        let solid =
+            domowik_scene::build(&doc, &[level], &BTreeSet::new(), &BTreeMap::new()).unwrap();
+        let leaf = solid.nodes.iter().find(|n| n.id == id).unwrap();
+        assert!(!leaf.transparent);
+        assert_eq!(leaf.color, [220. / 255., 200. / 255., 180. / 255., 1.]);
+    }
+}
+
+#[test]
 fn wall_color_replaces_rgb_and_keeps_ghost_alpha_and_default_neighbors() {
     let mut doc = Document::with_ground_floor();
     let level = doc.levels[0].id;

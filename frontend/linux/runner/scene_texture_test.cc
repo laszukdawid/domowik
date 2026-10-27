@@ -33,7 +33,8 @@ int main(int argc,char** argv) {
     r->camera={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     const auto decode=[](double v){return v<=0.04045?v/12.92:std::pow((v+0.055)/1.055,2.4);};
     const auto encode=[](double v){return v<=0.0031308?v*12.92:1.055*std::pow(v,1.0/2.4)-0.055;};
-    for(bool textured:{false,true}){
+    // Alpha .25 is a glass door; .075 also includes the level ghost factor.
+    for(float alpha:{1.f,0.25f,0.075f})for(bool textured:{false,true}){
       clear_gpu(r);r->meshes.clear();r->groups.clear();r->scene_dirty=true;
       std::vector<float> vertices;
       for(auto p:{std::array<float,3>{-0.8f,-0.8f,0.f},{0.8f,-0.8f,0.f},{0.8f,0.8f,0.f},{-0.8f,-0.8f,0.f},{0.8f,0.8f,0.f},{-0.8f,0.8f,0.f}}){
@@ -42,13 +43,15 @@ int main(int argc,char** argv) {
       auto mesh=std::make_shared<Mesh>(std::move(vertices));
       if(textured){mesh->rgba={128,128,128,255};for(int i=0;i<6;i++)mesh->coordinates.insert(mesh->coordinates.end(),{0.5f,0.5f,0,0,0});}
       r->meshes.emplace("beige",mesh);
-      r->groups.push_back(Group{"beige",false,{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0.5f,1,1,0,0,0,1,0,0,0,1,232.f/255,220.f/255,196.f/255,1},0,0});
+      r->groups.push_back(Group{"beige",alpha<1.f,{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0.5f,1,1,0,0,0,1,0,0,0,1,232.f/255,220.f/255,196.f/255,alpha},0,0});
       uint32_t target,name,width,height;GError* error=nullptr;
       g_assert_true(populate(FL_TEXTURE_GL(texture),&target,&name,&width,&height,&error));g_assert_no_error(error);
       glBindFramebuffer(GL_FRAMEBUFFER,r->framebuffer);uint8_t pixel[4];glReadPixels(16,16,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
       const double base[3]={232,220,196};
+      const double background[3]={0.84,0.9,0.94};
       for(int i=0;i<3;i++){
-        const double expected=encode(decode(base[i]/255)*(textured?decode(128./255):1)*0.38)*255;
+        const double lit=encode(decode(base[i]/255)*(textured?decode(128./255):1)*0.38);
+        const double expected=(lit*alpha+background[i]*(1-alpha))*255;
         g_assert_cmpfloat(std::abs(pixel[i]-expected),<=,2.0);
       }
       g_assert_cmpuint(pixel[3],==,255);

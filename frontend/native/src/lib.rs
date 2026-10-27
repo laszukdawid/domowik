@@ -185,7 +185,7 @@ pub mod status {
 /// strict edit admission remains unchanged.
 /// **20** adds solid wall colours and per-material instance palettes, material
 /// queries and palette-aware previews. No symbols or buffer ownership changed.
-const ABI_VERSION: i32 = 20;
+const ABI_VERSION: i32 = 21;
 
 /// An owned byte buffer handed to the caller.
 ///
@@ -1711,6 +1711,7 @@ pub unsafe extern "C" fn domowik_plan_edit(
             && matches!(
                 request,
                 EditRequest::SetLevel { .. }
+                    | EditRequest::SetDoorAppearance { .. }
                     | EditRequest::SetWallColors { .. }
                     | EditRequest::SetWalls { .. }
                     | EditRequest::SetOpening { .. }
@@ -1881,6 +1882,13 @@ fn opening_request_refusal(handle: u64, bytes: &[u8]) -> Option<RequestRefusal> 
 #[allow(clippy::enum_variant_names)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum EditRequest {
+    #[serde(rename_all = "camelCase")]
+    SetDoorAppearance {
+        opening_id: Uuid,
+        // Required even when null: missing input must not reset appearance.
+        color: serde_json::Value,
+        door_style: domowik_format::appearance::DoorStyle,
+    },
     #[serde(rename_all = "camelCase")]
     SetWallColors {
         wall_ids: Vec<Uuid>,
@@ -2097,6 +2105,14 @@ fn field_edit(value: &Option<Option<String>>) -> domowik_edit::FieldEdit<String>
 /// Turns a gesture into the batch the specification says it commits.
 fn build_edit(doc: &Document, request: &EditRequest) -> Result<Vec<Operation>, String> {
     match request {
+        EditRequest::SetDoorAppearance {
+            opening_id,
+            color,
+            door_style,
+        } => {
+            let color = serde_json::from_value(color.clone()).map_err(|e| e.to_string())?;
+            domowik_edit::appearance::door(doc, *opening_id, color, *door_style)
+        }
         EditRequest::SetWallColors { wall_ids, color } => {
             let color = serde_json::from_value(color.clone()).map_err(|e| e.to_string())?;
             domowik_edit::appearance::walls(doc, wall_ids, color)
@@ -2969,6 +2985,10 @@ fn aperture_json(
         "opensToward": opening.opens_toward,
         "hingeEnd": opening.hinge,
         "mechanism": opening.effective_mechanism(),
+        "color": domowik_format::appearance::door_color(opening).ok().flatten(),
+        "doorStyle": domowik_format::appearance::door_style(opening).ok(),
+        "leafColor": domowik_format::appearance::door_plan_color(opening).ok().flatten(),
+        "originalColor": domowik_format::appearance::door_style(opening).ok().map(|s| s.color()),
         "cut": rect.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>(),
         "leaf": [[hinge.x, hinge.y], [tip.x, tip.y]],
         "glyphSegments": glyph.iter().map(|(x,y)| [[x.x,x.y],[y.x,y.y]]).collect::<Vec<_>>(),
@@ -4642,6 +4662,67 @@ mod tests {
             status::OK
         );
         assert_eq!(snapshot_json(h), after);
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn door_appearance_crosses_the_boundary_and_invalidates_derived_colors_without_geometry_edits()
+    {
+        let (h, level) = plan_with_a_room();
+        let wall = snapshot_json(h)["walls"][0]["id"].clone();
+        assert_eq!(edit_json(h,serde_json::json!({"kind":"addOpening","hostWallId":wall,"opening":"door","u":0.5,"widthMm":900.,"heightMm":2100.})).0,status::OK);
+        let before = snapshot_json(h);
+        let id = before["openings"][0]["id"].clone();
+        let level = std::ffi::CString::new(level.to_string()).unwrap();
+        let derived = || {
+            let (code, bytes) =
+                call_returning(|out| unsafe { domowik_plan_derived(h, level.as_ptr(), out) });
+            assert_eq!(code, status::OK);
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        };
+        let original = derived();
+        let base = state_of(h)["undo_depth"].as_u64().unwrap();
+        let request = serde_json::json!({"kind":"setDoorAppearance","openingId":id,"color":"#dcc8b4","doorStyle":"glass"});
+        assert_eq!(edit_json(h, request.clone()).0, status::OK);
+        assert_eq!(state_of(h)["undo_depth"], base + 1);
+        let after = snapshot_json(h);
+        let colored = derived();
+        assert_eq!(colored["openings"][0]["color"], "#DCC8B4");
+        assert_eq!(colored["openings"][0]["leafColor"], "#DCC8B4");
+        assert_eq!(colored["openings"][0]["doorStyle"], "glass");
+        for key in ["drawn", "occupied", "rooms"] {
+            assert_eq!(original[key], colored[key]);
+        }
+        for key in ["cut", "leaf", "glyphSegments", "swingDeg", "mechanism"] {
+            assert_eq!(original["openings"][0][key], colored["openings"][0][key]);
+        }
+        let (code, bytes) = edit_json(h, request.clone());
+        assert_eq!(code, status::OK);
+        assert!(bytes.is_empty());
+        assert_eq!(state_of(h)["undo_depth"], base + 1);
+        for key in ["color", "doorStyle"] {
+            let mut missing = request.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert_eq!(edit_json(h, missing).0, status::MALFORMED_REQUEST);
+        }
+        let mut invalid = request.clone();
+        invalid["color"] = serde_json::json!("bad");
+        assert_ne!(edit_json(h, invalid).0, status::OK);
+        let mut invalid = request;
+        invalid["doorStyle"] = serde_json::json!("bad");
+        assert_eq!(edit_json(h, invalid).0, status::MALFORMED_REQUEST);
+        assert_eq!(snapshot_json(h), after);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), before);
+        assert_eq!(derived(), original);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_redo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(derived(), colored);
         assert_eq!(domowik_plan_close(h), status::OK);
     }
 

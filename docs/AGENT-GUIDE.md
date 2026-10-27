@@ -180,6 +180,12 @@ reset one, or `--reset` for the whole model. Quote hex colors so the shell does
 not treat `#` as a comment. Colors sampled visually from photos are approximations,
 not measured finishes. These commands do not change geometry or model bytes.
 
+Doors also support `domowik color door PLAN DOOR --color '#F2F0E8' --style glass`
+(or `--style solid`). Omit either option to retain its current value. Use
+`--color original` to clear only the color, or `--reset` to restore solid style
+and original color together. Glass makes the 3D leaf translucent, not its frame;
+plan/export symbols retain opaque ink for legibility. `color list` includes doors.
+
 ```sh
 domowik new PLAN
 domowik add-wall PLAN X1 Y1 X2 Y2 --thickness MM [--height MM] [--level NAME]

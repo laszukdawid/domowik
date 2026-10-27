@@ -89,7 +89,7 @@ bool get _firstFrameProbeRequested =>
 /// A mismatch is fatal on purpose. The header says a caller reading a
 /// different number must not proceed, and an app that proceeded anyway would
 /// be interpreting one struct layout as another.
-const int expectedAbi = 20;
+const int expectedAbi = 21;
 
 void main(List<String> arguments) {
   // Native builds may be launched as a headless probe; see platform/entry.dart.
@@ -1638,6 +1638,34 @@ class _PlanPageState extends State<PlanPage>
         'wallIds': walls.map((w) => w.id).toList(),
         'color': colors['wall'],
       }, 'Edit wall colors');
+      return true;
+    });
+  }
+
+  Future<void> _editDoorColor(Aperture door) async {
+    await _fileAction(() async {
+      final handle = _handle;
+      final colors = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (_) => SolidColorsDialog(
+          title: 'Door color',
+          materials: [
+            SolidColorMaterial(
+              'door',
+              'Door leaf',
+              door.originalColor ?? '#9E6B40',
+            ),
+          ],
+          colors: {if (door.color != null) 'door': door.color!},
+        ),
+      );
+      if (!mounted || colors == null || _handle != handle) return false;
+      _gesture({
+        'kind': 'setDoorAppearance',
+        'openingId': door.id,
+        'color': colors['door'],
+        'doorStyle': door.doorStyle,
+      }, 'Edit door color');
       return true;
     });
   }
@@ -5976,6 +6004,38 @@ class _PlanPageState extends State<PlanPage>
           ),
         ] else if (selectedOpening != null) ...[
           Text(selectedOpening.isDoor ? 'Door' : 'Window'),
+          if (selectedOpening.isDoor) ...[
+            DropdownButtonFormField<String>(
+              key: ValueKey(
+                'door-style-${selectedOpening.id}-${selectedOpening.doorStyle}',
+              ),
+              initialValue: selectedOpening.doorStyle,
+              decoration: const InputDecoration(labelText: 'Style'),
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(value: 'solid', child: Text('Solid')),
+                DropdownMenuItem(
+                  value: 'glass',
+                  child: Text('Glass (transparent)'),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null)
+                  _gesture({
+                    'kind': 'setDoorAppearance',
+                    'openingId': selectedOpening.id,
+                    'color': selectedOpening.color,
+                    'doorStyle': value,
+                  }, 'Change door style');
+              },
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('edit-door-color'),
+              onPressed: () => _editDoorColor(selectedOpening),
+              icon: const Icon(Icons.palette_outlined, size: 18),
+              label: const Text('Edit color'),
+            ),
+          ],
           DropdownButtonFormField<String>(
             key: const ValueKey('opening-mechanism'),
             isExpanded: true,

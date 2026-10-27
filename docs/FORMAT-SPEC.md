@@ -264,6 +264,15 @@ change geometry, references or editing safety; it does not reinterpret opaque
 `styleRefs`. Synthetic tests cover opaque preservation, replay, undo/redo,
 split inheritance and package roundtrips. User plans are not format fixtures.
 
+For a door `opening`, optional `color` uses the same `#RRGGBB` representation,
+and optional `doorStyle` is the string `solid` or `glass`. Absence means the
+legacy solid finish; null in `setFields` clears the optional field. Invalid
+door colors/styles produce `invalid-appearance`. These fields use the existing
+flat field map and do not reinterpret `styleRefs`; they remain opaque on window
+openings. The schema labels and required features are unchanged. Older readers
+preserve these optional fields but display the legacy appearance. Synthetic
+tests cover validation, atomic undo/redo, replay and package compaction.
+
 ### 2.4 Authoritative, derived, and cached data
 
 The classification of BEHAVIOR-SPEC (R3.0.7, R4.0.5, §2.4, R5.2.1) binds:

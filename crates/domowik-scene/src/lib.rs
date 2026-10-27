@@ -607,6 +607,10 @@ pub fn build_with_floors(
                     let _ = p;
                 }
                 if o.kind == domowik_format::OpeningKind::Door {
+                    let style = domowik_format::appearance::door_style(o)?;
+                    let [red, green, blue] = domowik_format::appearance::door_color(o)?
+                        .unwrap_or_else(|| style.color())
+                        .rgb();
                     let (hinge, tip) = if o.effective_mechanism()
                         == domowik_format::OpeningMechanism::DoorSliding
                     {
@@ -621,7 +625,7 @@ pub fn build_with_floors(
                         bottom,
                         o.height_mm,
                         35.,
-                        [0.62, 0.42, 0.25, alpha],
+                        [red, green, blue, style.opacity() * alpha],
                     );
                 } else {
                     let (left, right) = if o.effective_mechanism()
