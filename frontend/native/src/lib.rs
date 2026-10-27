@@ -183,7 +183,9 @@ pub mod status {
 /// **19** adds descending stair preview/drawing and live stair properties.
 /// Derived plan drawing skips invalid stairs with `constructionDiagnostics`;
 /// strict edit admission remains unchanged.
-const ABI_VERSION: i32 = 19;
+/// **20** adds solid wall colours and per-material instance palettes, material
+/// queries and palette-aware previews. No symbols or buffer ownership changed.
+const ABI_VERSION: i32 = 20;
 
 /// An owned byte buffer handed to the caller.
 ///
@@ -1709,6 +1711,7 @@ pub unsafe extern "C" fn domowik_plan_edit(
             && matches!(
                 request,
                 EditRequest::SetLevel { .. }
+                    | EditRequest::SetWallColors { .. }
                     | EditRequest::SetWalls { .. }
                     | EditRequest::SetOpening { .. }
                     // Issue 0115: a reorder that finds the list already in
@@ -1878,6 +1881,12 @@ fn opening_request_refusal(handle: u64, bytes: &[u8]) -> Option<RequestRefusal> 
 #[allow(clippy::enum_variant_names)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum EditRequest {
+    #[serde(rename_all = "camelCase")]
+    SetWallColors {
+        wall_ids: Vec<Uuid>,
+        // Required even when resetting: omission must not silently clear paint.
+        color: serde_json::Value,
+    },
     AddDescendingStaircase {
         request: domowik_edit::architecture::DescendingStairRequest,
     },
@@ -2088,6 +2097,10 @@ fn field_edit(value: &Option<Option<String>>) -> domowik_edit::FieldEdit<String>
 /// Turns a gesture into the batch the specification says it commits.
 fn build_edit(doc: &Document, request: &EditRequest) -> Result<Vec<Operation>, String> {
     match request {
+        EditRequest::SetWallColors { wall_ids, color } => {
+            let color = serde_json::from_value(color.clone()).map_err(|e| e.to_string())?;
+            domowik_edit::appearance::walls(doc, wall_ids, color)
+        }
         EditRequest::AddDescendingStaircase { request } => {
             domowik_edit::architecture::add_descending_stair_operations(doc, request)
         }
@@ -2776,6 +2789,7 @@ pub unsafe extern "C" fn domowik_plan_derived(
         );
         let (construction, construction_diagnostics) =
             domowik_geometry::architecture::plan_reporting(document, level);
+        let wall_paints = domowik_geometry::cuts::wall_paints(document, level);
         let (occupied, rooms) = (projection.occupied, projection.faces);
         plan.levels.get_mut(&level).expect("synced above").apertures = cache;
         plan.aperture_builds = plan.aperture_builds.saturating_add(built);
@@ -2804,6 +2818,7 @@ pub unsafe extern "C" fn domowik_plan_derived(
             "floorSurfaces":floor_surfaces.iter().map(to_json).collect::<Vec<_>>(),
             "construction":construction,
             "constructionDiagnostics":construction_diagnostics,
+            "wallPaints": wall_paints.iter().map(|p| serde_json::json!({"color":p.color,"outer":p.outer})).collect::<Vec<_>>(),
             "openings": apertures,
             "occupied": occupied.iter().map(to_json).collect::<Vec<_>>(),
             // What to DRAW: the occupied region with opening cuts (R4.2.2).
@@ -4571,6 +4586,62 @@ mod tests {
             before,
             "one undo restores length, thickness and height together"
         );
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn wall_colors_cross_the_boundary_without_changing_geometry_or_noop_history() {
+        let (h, level) = plan_with_a_room();
+        let before = snapshot_json(h);
+        let ids = serde_json::json!(before["walls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["id"].clone())
+            .collect::<Vec<_>>());
+        let request = serde_json::json!({"kind":"setWallColors","wallIds":ids,"color":"#d8cdb7"});
+        let depth = state_of(h)["undo_depth"].as_u64().unwrap();
+        assert_eq!(edit_json(h, request.clone()).0, status::OK);
+        assert_eq!(state_of(h)["undo_depth"], depth + 1);
+        let after = snapshot_json(h);
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({"kind":"setWallColors", "wallIds":ids})
+            )
+            .0,
+            status::MALFORMED_REQUEST
+        );
+        assert_eq!(snapshot_json(h), after);
+        assert!(after["walls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|w| w["color"] == "#D8CDB7"));
+        let level = std::ffi::CString::new(level.to_string()).unwrap();
+        let (_, body) =
+            call_returning(|out| unsafe { domowik_plan_derived(h, level.as_ptr(), out) });
+        let derived: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(!derived["wallPaints"].as_array().unwrap().is_empty());
+        assert!(derived["wallPaints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["color"] == "#D8CDB7"));
+        let (code, body) = edit_json(h, request);
+        assert_eq!(code, status::OK);
+        assert!(body.is_empty());
+        assert_eq!(state_of(h)["undo_depth"], depth + 1);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), before);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_redo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), after);
         assert_eq!(domowik_plan_close(h), status::OK);
     }
 

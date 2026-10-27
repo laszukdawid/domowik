@@ -60,9 +60,13 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
     }
     let texel = textureSample(base_color, base_sampler, uv, max(in.layer, 0));
     var color = in.color;
+    // Vertex/instance colours are sRGB; sampled sRGB textures are already
+    // decoded by the GPU. Apply illumination before encoding for the UNORM
+    // presentation target, not to display-encoded RGB (which crushes shadows).
+    var linear = select(pow((color.rgb + 0.055) / 1.055, vec3<f32>(2.4)), color.rgb / 12.92, color.rgb <= vec3<f32>(0.04045));
     if (in.layer >= 0) {
-        let linear = select(pow((color.rgb + 0.055) / 1.055, vec3<f32>(2.4)), color.rgb / 12.92, color.rgb <= vec3<f32>(0.04045)) * texel.rgb;
-        color = vec4<f32>(select(1.055 * pow(linear, vec3<f32>(1.0 / 2.4)) - 0.055, linear * 12.92, linear <= vec3<f32>(0.0031308)), color.a * texel.a);
+        linear *= texel.rgb;
+        color.a *= texel.a;
     }
     if (color.a < 0.01) {
         discard;
@@ -72,5 +76,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) front: bool) -> @location(0) ve
         n = -n;
     }
     let light = 0.38 + 0.62 * max(dot(n, normalize(vec3<f32>(0.35, 0.85, 0.4))), 0.0);
-    return vec4<f32>(color.rgb * light, color.a);
+    linear *= light;
+    let srgb = select(1.055 * pow(linear, vec3<f32>(1.0 / 2.4)) - 0.055, linear * 12.92, linear <= vec3<f32>(0.0031308));
+    return vec4<f32>(srgb, color.a);
 }

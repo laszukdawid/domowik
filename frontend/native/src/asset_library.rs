@@ -358,6 +358,16 @@ enum Request {
     },
     Preview {
         digest: String,
+        #[serde(default, rename = "materialColors")]
+        material_colors: domowik_format::appearance::MaterialColors,
+    },
+    Materials {
+        digest: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Colors {
+        instance_id: Uuid,
+        material_colors: domowik_format::appearance::MaterialColors,
     },
     #[serde(rename_all = "camelCase")]
     Thumbnail {
@@ -561,6 +571,7 @@ fn list(plan: &mut Plan) -> Result<Value, String> {
         "name": a.display_name.as_deref().unwrap_or("Model"),
         "positionMm": a.transform.translation_mm, "rotationDeg": a.transform.rotation_deg,
         "pose3d": domowik_scene::asset_pose::extra_pose(a),
+        "materialColors": domowik_format::appearance::material_colors(a).unwrap_or_default(),
         "interactionDimensionsMm": interaction_dimensions(a),
         "scaleUniform": a.transform.scale_uniform, "dimensionsMm": dimensions(a), "cornersMm":
             placeholders.get(&a.id).map(|b| [[b.min_x,b.min_y],[b.max_x,b.min_y],[b.max_x,b.max_y],[b.min_x,b.max_y]]).unwrap_or_else(|| corners(a)).into_iter().filter(|p| p.iter().all(|v| v.is_finite() && v.abs() <= DERIVED_COORD_BOUND_MM)).collect::<Vec<_>>(),
@@ -885,7 +896,10 @@ fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
             }
         }
         Request::List => return list(plan),
-        Request::Preview { .. } | Request::Size { .. } | Request::Thumbnail { .. } => {
+        Request::Preview { .. }
+        | Request::Size { .. }
+        | Request::Thumbnail { .. }
+        | Request::Materials { .. } => {
             return Err("Model decoding must run outside the plan lock".into())
         }
         Request::Scene { .. } | Request::Mesh { .. } => {
@@ -1120,6 +1134,22 @@ fn run(plan: &mut Plan, request: Request) -> Result<Value, String> {
                 .commit(vec![Operation::set_fields(instance_id, fields)])
                 .map_err(|e| e.to_string())?;
         }
+        Request::Colors {
+            instance_id,
+            material_colors,
+        } => {
+            let operations = domowik_edit::appearance::asset(
+                plan.session().document(),
+                instance_id,
+                &material_colors,
+            )?;
+            if !operations.is_empty() {
+                plan.session_mut()
+                    .map_err(|e| e.to_string())?
+                    .commit(operations)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         Request::Delete { instance_id } => {
             if plan
                 .session()
@@ -1310,7 +1340,7 @@ pub(crate) fn derive_scene(
     }
     // One lock acquisition captures the document, its retained per-level
     // floors and the model cache together, so all describe one revision.
-    let (doc, floors, mut models, missing, revision, (preview_ids, pose_version)) = {
+    let (mut doc, floors, mut models, missing, revision, (preview_ids, pose_version)) = {
         let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
         let mut doc = locked.session().document().clone();
         let mut preview_ids = Vec::new();
@@ -1367,21 +1397,9 @@ pub(crate) fn derive_scene(
                     let total = locked
                         .scene_models
                         .values()
-                        .map(|m| {
-                            m.vertices.len() * 4
-                                + m.texture
-                                    .as_ref()
-                                    .map_or(0, |t| t.rgba.len() + t.coordinates.len() * 4)
-                        })
+                        .map(|m| m.cache_bytes())
                         .sum::<usize>();
-                    if total
-                        + mesh.vertices.len() * 4
-                        + mesh
-                            .texture
-                            .as_ref()
-                            .map_or(0, |t| t.rgba.len() + t.coordinates.len() * 4)
-                        <= 128 * 1024 * 1024
-                    {
+                    if total + mesh.cache_bytes() <= 128 * 1024 * 1024 {
                         locked.scene_model_decodes += 1;
                         locked.scene_models.insert(digest.clone(), mesh.clone());
                         if let Some(bounds) = bounds {
@@ -1402,6 +1420,39 @@ pub(crate) fn derive_scene(
                 }
             }
         }
+    }
+    // Colour variants are immutable content-addressed meshes. Presenters never
+    // replace a resident model's bytes under an existing key.
+    for asset in &mut doc.asset_instances {
+        if !level_ids.contains(&asset.level_id) {
+            continue;
+        }
+        let colors = domowik_format::appearance::material_colors(asset)?;
+        if colors.is_empty() {
+            continue;
+        }
+        let Some(base) = models.get(&asset.digest).cloned() else {
+            continue;
+        };
+        let key = domowik_container::digest_of(
+            &serde_json::to_vec(&("solid-colors-v1", &asset.digest, &colors))
+                .map_err(|e| e.to_string())?,
+        );
+        if let std::collections::btree_map::Entry::Vacant(entry) = models.entry(key.clone()) {
+            let mesh = Arc::new(base.recolored(&colors));
+            let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
+            let total: usize = locked.scene_models.values().map(|m| m.cache_bytes()).sum();
+            let size = mesh.cache_bytes();
+            if total + size > 128 * 1024 * 1024 {
+                return Err("Decoded 3D colour cache exceeds 128 MiB".into());
+            }
+            if let Some(bounds) = locked.scene_model_bounds.get(&asset.digest).copied() {
+                locked.scene_model_bounds.insert(key.clone(), bounds);
+            }
+            locked.scene_models.insert(key.clone(), mesh.clone());
+            entry.insert(mesh);
+        }
+        asset.digest = key;
     }
     let heights = models
         .iter()
@@ -1616,7 +1667,10 @@ pub unsafe extern "C" fn domowik_plan_assets(
                 Err(e) => fail(&plan, status::REJECTED, e.to_string()),
             };
         }
-        if let Request::Preview { ref digest } | Request::Size { ref digest } = request {
+        if let Request::Preview { ref digest, .. }
+        | Request::Size { ref digest }
+        | Request::Materials { ref digest } = request
+        {
             // Copy a bounded blob while locked, then release the session for
             // interaction while decoding. The call lease still brackets work.
             let bytes = {
@@ -1635,11 +1689,20 @@ pub unsafe extern "C" fn domowik_plan_assets(
                 }
                 bytes.clone()
             };
-            let result = if matches!(request, Request::Size { .. }) {
+            let result = if matches!(request, Request::Materials { .. }) {
+                domowik_models::appearance::materials(&bytes)
+                    .and_then(|p| serde_json::to_vec(&p).map_err(|e| e.to_string()))
+            } else if matches!(request, Request::Size { .. }) {
                 domowik_models::dimensions(&bytes)
                     .and_then(|p| serde_json::to_vec(&p).map_err(|e| e.to_string()))
             } else {
-                domowik_models::preview(&bytes)
+                let Request::Preview {
+                    material_colors, ..
+                } = &request
+                else {
+                    unreachable!()
+                };
+                domowik_models::appearance::preview(&bytes, material_colors)
                     .and_then(|p| serde_json::to_vec(&p).map_err(|e| e.to_string()))
             };
             return match result {
@@ -1832,6 +1895,103 @@ mod tests {
         let (plan, _lease) = resolve(handle).unwrap();
         let level = plan.lock().unwrap().session().document().levels[0].id;
         (handle, level)
+    }
+
+    #[test]
+    fn instance_colors_share_source_bytes_but_not_appearance_and_survive_history_and_save() {
+        let root = std::env::temp_dir().join(format!("domowik-colors-{}", Uuid::now_v7()));
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("original.obj");
+        let bytes = b"v 0 1 0\nv 2 1 0\nv 0 1 2\nv 2 1 2\nusemtl cabinet\nf 1 2 3\nusemtl counter\nf 2 4 3\n";
+        std::fs::write(&file, bytes).unwrap();
+        let (h, level) = create();
+        request(h, json!({"kind":"attach","directory":root})).unwrap();
+        let first = request(
+            h,
+            json!({"kind":"place","file":file,"levelId":level,"positionMm":[0,0]}),
+        )
+        .unwrap()["instanceId"]
+            .clone();
+        let initial = request(h, json!({"kind":"list"})).unwrap();
+        let digest = initial["instances"][0]["digest"].clone();
+        let second = request(
+            h,
+            json!({"kind":"place","digest":digest,"levelId":level,"positionMm":[2000,0]}),
+        )
+        .unwrap()["instanceId"]
+            .clone();
+        let base_scene = request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+        let original_preview = request(h, json!({"kind":"preview","digest":digest})).unwrap();
+        let materials = request(h, json!({"kind":"materials","digest":digest})).unwrap();
+        assert_eq!(materials[0]["key"], "obj:cabinet");
+        let before = state(h)["document_revision"].clone();
+        let edit = json!({"kind":"colors","instanceId":first,"materialColors":{"obj:cabinet":"#F2F0E8","obj:counter":"#6B5A48"}});
+        request(h, edit.clone()).unwrap();
+        let changed = request(h, json!({"kind":"list"})).unwrap();
+        let changed_scene = request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+        assert_eq!(
+            changed_scene["modelDecodes"], base_scene["modelDecodes"],
+            "recolor must not decode geometry again"
+        );
+        let nodes = changed_scene["nodes"].as_array().unwrap();
+        let first_node = nodes.iter().find(|n| n["id"] == first).unwrap();
+        let second_node = nodes.iter().find(|n| n["id"] == second).unwrap();
+        assert_ne!(first_node["mesh"], second_node["mesh"]);
+        assert_eq!(second_node["mesh"], digest);
+        let mesh = request(h, json!({"kind":"mesh","digest":first_node["mesh"]})).unwrap();
+        assert_ne!(
+            mesh["vertices"],
+            request(h, json!({"kind":"mesh","digest":digest})).unwrap()["vertices"]
+        );
+        let colored_preview = request(
+            h,
+            json!({"kind":"preview","digest":digest,"materialColors":edit["materialColors"]}),
+        )
+        .unwrap();
+        assert_ne!(colored_preview["png"], original_preview["png"]);
+        assert_eq!(
+            request(h, json!({"kind":"preview","digest":digest})).unwrap(),
+            original_preview
+        );
+        let revision = state(h)["document_revision"].clone();
+        assert_ne!(revision, before);
+        request(h, edit).unwrap();
+        assert_eq!(
+            state(h)["document_revision"],
+            revision,
+            "unchanged Apply is not a command"
+        );
+        assert!(request(
+            h,
+            json!({"kind":"colors","instanceId":first,"materialColors":{"obj:cabinet":"invalid"}})
+        )
+        .is_err());
+        assert_eq!(state(h)["document_revision"], revision);
+        undo(h).unwrap();
+        assert_eq!(
+            request(h, json!({"kind":"scene","levelIds":[level]})).unwrap()["nodes"],
+            base_scene["nodes"]
+        );
+        redo(h).unwrap();
+        assert_eq!(request(h, json!({"kind":"list"})).unwrap(), changed);
+        let target = root.join("saved.domo");
+        let path = CString::new(target.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { domowik_plan_save(h, path.as_ptr()) }, status::OK);
+        assert_eq!(domowik_plan_close(h), status::OK);
+        let saved = domowik_container::Plan::open(&target).unwrap();
+        assert_eq!(saved.assets[digest.as_str().unwrap()], bytes);
+        let mut reopened = 0;
+        assert_eq!(
+            unsafe { domowik_plan_open(path.as_ptr(), &mut reopened) },
+            status::OK
+        );
+        assert_eq!(request(reopened, json!({"kind":"list"})).unwrap(), changed);
+        assert_eq!(
+            request(reopened, json!({"kind":"scene","levelIds":[level]})).unwrap()["nodes"],
+            changed_scene["nodes"]
+        );
+        assert_eq!(domowik_plan_close(reopened), status::OK);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

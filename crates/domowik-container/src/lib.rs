@@ -1445,8 +1445,8 @@ impl Plan {
     /// Opens `pkg` for a NEW writer epoch: every batch this plan commits is
     /// minted under `actor`.
     ///
-    /// For hosts where several writers take turns on one plan, such as the
-    /// `domowik-serve` hosted service. [`Plan::open`] continues the actor with the
+    /// For hosts where several writers take turns on one plan, such as a
+    /// hosted service. [`Plan::open`] continues the actor with the
     /// highest watermark, which is right for one file on one machine; two
     /// writers continuing it would mint overlapping operation ids. `actor`
     /// must not already appear in the log, which is refused.

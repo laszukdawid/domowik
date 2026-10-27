@@ -246,6 +246,24 @@ Unknown entity kinds and unknown fields follow §8 exactly: refuse safely
 when required data is unrecognized; preserve opaquely (bounded by L32) or
 refuse write-back otherwise; silent stripping is forbidden.
 
+**Optional solid appearance fields.** A `wall` may carry `color`, a seven-byte
+string `#RRGGBB` representing opaque 8-bit sRGB (hex input is case-insensitive;
+authoring commands emit uppercase). An `assetInstance` may carry
+`materialColors`, an object mapping nonempty, case-sensitive material keys of at
+most 1024 UTF-8 bytes to the same color strings, with at most 256 entries. These
+are recognized optional presentation fields, carried through the existing flat
+field map; malformed values produce `invalid-appearance`. Absence means original
+appearance; an empty palette has the same visual meaning. `setFields` writes the
+whole palette; null removes either field under the ordinary clear-field rule.
+BEHAVIOR-SPEC's solid-color section owns material identity and rendering.
+
+Compatibility assessment: no entity kind, asset-root reference, required feature
+or schema label changes (`0.1` and `0.2` remain supported). Older readers preserve
+the optional fields under §8 U2 but do not display the overrides. Color cannot
+change geometry, references or editing safety; it does not reinterpret opaque
+`styleRefs`. Synthetic tests cover opaque preservation, replay, undo/redo,
+split inheritance and package roundtrips. User plans are not format fixtures.
+
 ### 2.4 Authoritative, derived, and cached data
 
 The classification of BEHAVIOR-SPEC (R3.0.7, R4.0.5, §2.4, R5.2.1) binds:

@@ -18,6 +18,24 @@ and the RFC 7636 Appendix B verifier/challenge pair. Server tests use original
 synthetic responses. No application source, dependency, distributed content or
 notice obligation was added.
 
+## Solid appearance overrides
+
+Per-material placed-model colors and whole-wall colors are original
+owner-requested product behavior. Implementation uses the existing bounded
+OBJ/GLB decoders, material identities, wall contours, operations and rendering
+paths; no external application code, schema, artwork or test vectors were
+consulted or adapted. User-supplied home photographs guide approximate local
+color choices only; the photos, personal plan and imported models are not
+committed or distributed as test data. Tests use original synthetic model bytes
+and plans. No new third-party dependency, distributed content or notice
+obligation was introduced; the CLI now also uses the existing first-party
+model decoder and its already-reviewed dependencies.
+
+The warm beige default wall finish and linear-light 3D shading are original
+owner-requested appearance corrections. They reuse the sRGB transfer functions
+already present in the texture renderers; no new external sources, dependencies
+or assets were consulted. Regression inputs are synthetic colored surfaces.
+
 ## Architectural primitives and straight stairs
 
 The body/opening/connection distinction and straight-stair assembly are original

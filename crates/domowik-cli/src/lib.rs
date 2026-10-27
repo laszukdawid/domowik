@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod appearance;
 pub mod architecture;
 pub mod check;
 pub mod label;

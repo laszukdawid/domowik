@@ -41,6 +41,9 @@ impl From<OpeningArg> for OpeningKind {
 
 #[derive(Subcommand)]
 enum Command {
+    /// List or change solid wall and placed-model colors without modifying models.
+    #[command(subcommand)]
+    Color(ColorCommand),
     /// Author reusable construction bodies, hosted cuts and bare connections.
     #[command(subcommand)]
     Construction(ConstructionCommand),
@@ -761,11 +764,49 @@ enum CacheCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum ColorCommand {
+    /// Inspect wall colors and each placed model's original material keys (JSON).
+    List { path: PathBuf },
+    /// Set the color of a whole wall, or reset it to the default.
+    Wall {
+        path: PathBuf,
+        #[arg(allow_hyphen_values = true)]
+        wall: String,
+        #[arg(long, required_unless_present = "reset", conflicts_with = "reset")]
+        color: Option<String>,
+        #[arg(long)]
+        reset: bool,
+    },
+    /// Recolor materials on one instance (UUID, short ID or unique exact name).
+    Asset {
+        path: PathBuf,
+        instance: String,
+        /// Repeat KEY=#RRGGBB; KEY=original restores a material.
+        #[arg(long, required_unless_present = "reset")]
+        material: Vec<String>,
+        #[arg(long, conflicts_with = "material")]
+        reset: bool,
+    },
+}
+
 fn main() -> ExitCode {
     // clap exits 2 on its own for parse errors, which matches the contract.
     let cli = Cli::parse();
 
     let result = match &cli.command {
+        Command::Color(command) => match command {
+            ColorCommand::List { path } => domowik_cli::appearance::list(path),
+            ColorCommand::Wall {
+                path, wall, color, ..
+            } => domowik_cli::appearance::wall(path, wall, color.as_deref()),
+            ColorCommand::Asset {
+                path,
+                instance,
+                material,
+                reset,
+            } => domowik_cli::appearance::asset(path, instance, material, *reset),
+        },
         Command::Construction(command) => {
             use domowik_format::{BodyRole, RectFootprint};
             match command {

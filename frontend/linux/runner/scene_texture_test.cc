@@ -20,6 +20,43 @@ static FlValue* packet() {
 
 int main(int argc,char** argv) {
   g_test_init(&argc,&argv,nullptr);
+  g_test_add_func("/scene/linear-light-beige",[]{
+    if(!g_getenv("DOMOWIK_TEST_GL")){g_test_skip("Run with DOMOWIK_TEST_GL=1 under Xvfb for the pixel regression");return;}
+    g_assert_true(gtk_init_check(nullptr,nullptr));
+    auto* window=gtk_window_new(GTK_WINDOW_TOPLEVEL);auto* area=gtk_gl_area_new();
+    gtk_gl_area_set_required_version(GTK_GL_AREA(area),3,2);
+    gtk_container_add(GTK_CONTAINER(window),area);gtk_widget_show_all(window);
+    gtk_gl_area_make_current(GTK_GL_AREA(area));
+    g_assert_null(gtk_gl_area_get_error(GTK_GL_AREA(area)));
+    auto* texture=reinterpret_cast<DomowikSceneTexture*>(g_object_new(domowik_scene_texture_get_type(),nullptr));
+    auto* r=texture->renderer;r->requested_width=r->requested_height=32;
+    r->camera={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    const auto decode=[](double v){return v<=0.04045?v/12.92:std::pow((v+0.055)/1.055,2.4);};
+    const auto encode=[](double v){return v<=0.0031308?v*12.92:1.055*std::pow(v,1.0/2.4)-0.055;};
+    for(bool textured:{false,true}){
+      clear_gpu(r);r->meshes.clear();r->groups.clear();r->scene_dirty=true;
+      std::vector<float> vertices;
+      for(auto p:{std::array<float,3>{-0.8f,-0.8f,0.f},{0.8f,-0.8f,0.f},{0.8f,0.8f,0.f},{-0.8f,-0.8f,0.f},{0.8f,0.8f,0.f},{-0.8f,0.8f,0.f}}){
+        vertices.insert(vertices.end(),p.begin(),p.end());vertices.insert(vertices.end(),{0,0,-1,1,1,1,1});
+      }
+      auto mesh=std::make_shared<Mesh>(std::move(vertices));
+      if(textured){mesh->rgba={128,128,128,255};for(int i=0;i<6;i++)mesh->coordinates.insert(mesh->coordinates.end(),{0.5f,0.5f,0,0,0});}
+      r->meshes.emplace("beige",mesh);
+      r->groups.push_back(Group{"beige",false,{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0.5f,1,1,0,0,0,1,0,0,0,1,232.f/255,220.f/255,196.f/255,1},0,0});
+      uint32_t target,name,width,height;GError* error=nullptr;
+      g_assert_true(populate(FL_TEXTURE_GL(texture),&target,&name,&width,&height,&error));g_assert_no_error(error);
+      glBindFramebuffer(GL_FRAMEBUFFER,r->framebuffer);uint8_t pixel[4];glReadPixels(16,16,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+      const double base[3]={232,220,196};
+      for(int i=0;i<3;i++){
+        const double expected=encode(decode(base[i]/255)*(textured?decode(128./255):1)*0.38)*255;
+        g_assert_cmpfloat(std::abs(pixel[i]-expected),<=,2.0);
+      }
+      g_assert_cmpuint(pixel[3],==,255);
+    }
+    clear_gpu(r);g_object_unref(texture);
+    {std::lock_guard<std::mutex> lock(retired_mutex);for(auto* old:retired)delete old;retired.clear();}
+    gtk_widget_destroy(window);
+  });
   g_test_add_func("/scene/prepare-outside-render-lock",[]{
     Renderer renderer;
     auto mesh=std::make_shared<Mesh>(std::vector<float>(30,0));
