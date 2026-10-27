@@ -596,7 +596,9 @@ fn model_media_type(path: &Path) -> Result<&'static str, String> {
         "glb" => Ok("model/gltf-binary"),
         "obj" => Ok("model/obj"),
         "zip" => Ok("application/zip"),
-        _ => Err("Supported model files: GLB, OBJ and ZIP".into()),
+        "usdz" => Ok("model/vnd.usdz+zip"),
+        "usd" | "usda" | "usdc" => Ok("model/vnd.pixar.usd"),
+        _ => Err("Supported model files: GLB, OBJ, ZIP and USD (.usd, .usda, .usdc, .usdz)".into()),
     }
 }
 
@@ -3011,6 +3013,44 @@ mod tests {
             request(h, json!({"kind":"list"})).unwrap()["models"],
             library["models"]
         );
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn usd_models_import_place_and_mesh_with_physical_units() {
+        let model = br#"#usda 1.0
+(
+metersPerUnit = 1
+)
+def Mesh "Lamp" {
+    int[] faceVertexCounts = [3, 3]
+    int[] faceVertexIndices = [0, 1, 2, 0, 2, 3]
+    point3f[] points = [(0, 0, 0), (0.5, 0, 0), (0.5, 2, 0.25), (0, 2, 0.25)]
+}
+"#;
+        let (h, level) = create();
+        let imported = import(h, "Lamp.usda", model).unwrap();
+        assert_eq!(imported["name"], "Lamp");
+        let placed = request(
+            h,
+            json!({"kind":"place","digest":imported["digest"],"levelId":level,"positionMm":[0,0]}),
+        )
+        .unwrap();
+        let listed = request(h, json!({"kind":"list"})).unwrap();
+        let instance = &listed["instances"][0];
+        assert_eq!(instance["dimensionsMm"], json!([500.0, 250.0]), "{placed}");
+        let digest = imported["digest"].as_str().unwrap();
+        let frame = scene_frame_of(h, json!({"levelIds":[level]})).unwrap();
+        assert!(
+            frame
+                .meshes
+                .iter()
+                .any(|(k, v)| k == digest && !v.is_empty()),
+            "USD passes the media gate"
+        );
+        let mesh = request(h, json!({"kind":"mesh","digest":digest})).unwrap();
+        assert_eq!(mesh["sourceTriangles"], 2);
+        assert!(import(h, "Lamp.fbx", model).is_err());
         assert_eq!(domowik_plan_close(h), status::OK);
     }
 

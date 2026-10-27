@@ -36,7 +36,8 @@ static void file_method(FlMethodChannel* channel, FlMethodCall* call,
   const gchar* method = fl_method_call_get_name(call);
   if (g_strcmp0(method, "pickAssetDirectory") != 0 &&
       g_strcmp0(method, "openPlan") != 0 &&
-      g_strcmp0(method, "savePlan") != 0) {
+      g_strcmp0(method, "savePlan") != 0 &&
+      g_strcmp0(method, "saveUsdz") != 0) {
     fl_method_call_respond_not_implemented(call, nullptr);
     return;
   }

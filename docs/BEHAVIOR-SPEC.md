@@ -4324,9 +4324,10 @@ section 9.
 **Normative for the experimental 2D editor.** Original owner-requested behavior:
 
 - Plan-level directory locations belong to one plan, never the application's bundled
-  catalog. Browsing recursively enumerates regular GLB, OBJ and ZIP files,
-  case-insensitively, without following symlinks. ZIP files are opaque model
-  bundles; neither their contents nor another application's catalogs are parsed.
+  catalog. Browsing recursively enumerates regular GLB, OBJ, ZIP and OpenUSD
+  (`.usd`, `.usda`, `.usdc`, `.usdz`) files, case-insensitively, without
+  following symlinks. ZIP files are opaque model bundles; neither their
+  contents nor another application's catalogs are parsed.
 - Directory discovery copies no model bytes into the plan. Placement reads the
   chosen file with the
   per-blob limit, hashes its exact bytes, embeds it and creates one instance in
@@ -4416,7 +4417,9 @@ catalog, never 100 models added to the browser's initial bundle.
 **Normative experimental-editor behavior.** Placement has no manual fixed-size
 inputs. Decode the selected model's scene geometry with static node transforms
 before measuring its X/Y/Z bounds (+Y up). GLB/glTF defines metres; convert
-extents to millimetres. OBJ/ZIP-OBJ has no supported physical-unit declaration:
+extents to millimetres. OpenUSD declares `metersPerUnit` (0.01 when absent, as
+USD specifies) and `upAxis` (Y, or Z mapped to +Y up); apply both before
+measuring. OBJ/ZIP-OBJ has no supported physical-unit declaration:
 preserve its XYZ proportions and assign 1000 mm to its longest extent. Require
 positive horizontal extents; flat height receives a 1 mm minimum. If supported
 bounds cannot be decoded, use 1000 × 1000 × 1000 mm and show the sizing failure.
@@ -4552,6 +4555,35 @@ Supported content is polygonal OBJ with diffuse MTL colors inside ZIP bundles,
 standalone OBJ, and glTF 2.0 binary meshes with static node transforms and Draco
 compression. No external resource fetching, animation, skin deformation or
 texture/PBR fidelity is implied by this initial orthographic preview.
+
+**OpenUSD models (owner request 2026-10-27).** Text (`.usda`), binary
+(`.usdc`) and packaged (`.usdz`) models are recognised by content, not file
+name; a ZIP is a USD package only when its first entry is a USD layer. The
+composed stage (references, payloads, variants and instancing) supplies
+`Mesh` prims under their `xformOp` stacks, with polygons fan-triangulated and
+inactive, abstract, invisible, `proxy` and `guide` prims skipped. Colour comes
+from the bound `UsdPreviewSurface` (`diffuseColor`, `opacity`, or a
+`UsdUVTexture` PNG/JPEG/WebP inside the package, scaled by its `scale`
+clamped to 0–1; texel alpha drives opacity only when the same texture also
+supplies `diffuseColor`, otherwise a connected texture contributes its alpha
+scale as constant opacity) per `GeomSubset` of family
+`materialBind` where present, else from `displayColor`/`displayOpacity`;
+per-vertex or face-varying colours are averaged per triangle. Bindings
+inherited by an instance apply to its prototype's geometry. Time-varying
+values use their earliest sample. Models must be self-contained: references,
+payloads and textures outside the input bytes are refused with a diagnostic,
+never fetched. Absolute, drive, UNC and URI asset paths are outside the input
+even when a package holds an entry of the same name, including inside an
+explicit package path such as `model.usdz[/x]`; relative paths may not climb
+out of a package; packages nested inside a package are refused. Before the
+reader runs, a package must hold at most 4096 stored (uncompressed) entries
+with relative names and at most 128 layers, and text layers (recognised by
+their `#usda` header after any leading whitespace) may nest `(`, `[` and `{`
+at most 128 deep and declare at most 100,000 prims in total. Binary (`.usdc`) layers rely on the reader's own decompression
+bound of 4 GiB per block, so a crafted binary layer can demand far more memory
+than its size; this is a known limitation, not a supported input. Subdivision,
+skinning and animation are not evaluated. Material keys are `usd:<material
+path>`.
 
 **Embedded base-colour textures (issue 0120, owner request 2026-10-17).**
 The experimental editor samples embedded GLB PNG, JPEG and WebP base-colour
@@ -4739,3 +4771,24 @@ and Meta aliases remain accepted for compatibility. Undo is primary-modifier+Z;
 Redo is primary-modifier+Shift+Z in both 2D and 3D. Do not advertise shortcuts
 that are not implemented. Shared guidance and shortcut recognition must not
 change document semantics, focus routing or gesture cancellation.
+
+### 11.3 USDZ scene export (owner request 2026-10-27)
+
+**Normative experimental behavior.** `domowik export-usdz` and the editor's
+save-menu **Export 3D (.usdz)** write every level of the plan, unghosted, as
+one USDZ package derived from the same scene the 3D view draws: walls with
+opening cuts, door and window parts, floors, construction bodies, stairs and
+placed models. Units are metres with +Y up; plan x maps to USD x and plan y to
+USD −z, and the root restores absolute plan coordinates. Each distinct
+displayed colour (vertex colour times instance tint) becomes a
+`UsdPreviewSurface` with linear `diffuseColor` and `opacity`, so viewers that
+ignore vertex colours still match the 3D view; embedded model base-colour
+textures are packaged as PNG and drive opacity as material alpha times texel
+alpha, as the renderer does. Repeated geometry is written once and
+referenced. Instance colour overrides are honoured. Model meshes are the
+bounded interactive meshes (at most 20,000 triangles each), not the original
+model bytes. Decoded models are bounded in aggregate to 10,000,000 vertex
+floats and 128 MiB of texture pixels; an export exceeding either is refused.
+Missing or undecodable models export as placeholder boxes and are reported by
+name, in the CLI's output and in the editor's status. Export is read-only: it changes neither the plan, its revision nor
+its saved state, and the same plan and assets produce identical bytes.

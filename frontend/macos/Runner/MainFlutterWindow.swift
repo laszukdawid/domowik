@@ -102,6 +102,12 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
         panel.nameFieldStringValue =
           (call.arguments as? String) ?? "plan.domo"
         result(panel.runModal() == .OK ? panel.url?.path : nil)
+      case "saveUsdz":
+        let panel = NSSavePanel()
+        panel.allowedFileTypes = ["usdz"]
+        panel.nameFieldStringValue =
+          (call.arguments as? String) ?? "plan.usdz"
+        result(panel.runModal() == .OK ? panel.url?.path : nil)
       default:
         result(FlutterMethodNotImplemented)
       }

@@ -70,7 +70,7 @@ typedef struct {
   uint64_t token;
 } domowik_buf;
 
-/* The ABI revision, currently 21. A caller reading a different number must
+/* The ABI revision, currently 22. A caller reading a different number must
  * not proceed.
  *
  * 10 is NOT backward-compatible, unlike every export- or field-only bump
@@ -318,7 +318,7 @@ int32_t domowik_plan_save(uint64_t handle, const char *path);
  * dirty, or refuses with DOMOWIK_REJECTED if the plan changed since that
  * encode, so an edit made while the host was storing the bytes stays unsaved.
  *
- * import_model embeds an uploaded GLB/OBJ/ZIP model (UTF-8 file `name` or
+ * import_model embeds an uploaded GLB/OBJ/ZIP/USD model (UTF-8 file `name` or
  * source path, its `bytes`) in the plan's library and returns JSON
  * {digest, name}; paths are retained in asset provenance. Place it with
  * domowik_plan_assets {"kind":"place","digest":...}.
@@ -340,6 +340,18 @@ int32_t domowik_plan_import_model(uint64_t handle, const uint8_t *name,
                                   uint64_t len, domowik_buf *out);
 int32_t domowik_plan_scene_frame(uint64_t handle, const uint8_t *req,
                                  uint64_t req_len, domowik_buf *out);
+
+/* ABI 22. Writes every level as one .usdz 3D scene (walls, openings, floors,
+ * construction bodies, stairs and placed models with their colours) into
+ * `out`, and into `out_diagnostics` a UTF-8 JSON array of warning strings
+ * that name every model exported as a placeholder box ([] when none). Both
+ * are token-owned buffers released together; free each. `out` and
+ * `out_diagnostics` must be non-null, non-overlapping domowik_buf pointers
+ * (INVALID_ARGUMENT otherwise). Read-only:
+ * revision and dirty state are unchanged. Failure writes neither buffer and
+ * records domowik_last_error. */
+int32_t domowik_plan_export_usdz(uint64_t handle, domowik_buf *out,
+                                 domowik_buf *out_diagnostics);
 
 /* Writes one level's DERIVED geometry as JSON: the occupied region, the room
  * faces with their areas, and the level's floor area.

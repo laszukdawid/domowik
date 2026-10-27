@@ -2,6 +2,7 @@
 
 static void check_chooser(const gchar* method, GtkFileChooserAction action,
                           const gchar* initial = nullptr) {
+  const bool usdz = g_strcmp0(method, "saveUsdz") == 0;
   auto* chooser = create_file_chooser(nullptr, method, initial);
   g_assert_nonnull(chooser);
   auto* files = GTK_FILE_CHOOSER(chooser);
@@ -14,8 +15,8 @@ static void check_chooser(const gchar* method, GtkFileChooserAction action,
     GtkFileFilterInfo info = {};
     info.contains = static_cast<GtkFileFilterFlags>(
         GTK_FILE_FILTER_FILENAME | GTK_FILE_FILTER_DISPLAY_NAME);
-    info.filename = "/tmp/house.domo";
-    info.display_name = "house.domo";
+    info.filename = usdz ? "/tmp/house.usdz" : "/tmp/house.domo";
+    info.display_name = usdz ? "house.usdz" : "house.domo";
     g_assert_true(gtk_file_filter_filter(filter, &info));
     info.filename = "/tmp/house.txt";
     info.display_name = "house.txt";
@@ -24,7 +25,7 @@ static void check_chooser(const gchar* method, GtkFileChooserAction action,
   if (action == GTK_FILE_CHOOSER_ACTION_SAVE) {
     g_assert_true(gtk_file_chooser_get_do_overwrite_confirmation(files));
     g_autofree gchar* name = gtk_file_chooser_get_current_name(files);
-    g_assert_cmpstr(name, ==, initial != nullptr ? initial : "plan.domo");
+    g_assert_cmpstr(name, ==, initial != nullptr ? initial : usdz ? "plan.usdz" : "plan.domo");
   }
   gtk_native_dialog_destroy(GTK_NATIVE_DIALOG(chooser));
   g_object_unref(chooser);
@@ -39,6 +40,10 @@ int main(int argc, char** argv) {
   g_test_add_func("/file-channel/savePlan", [] {
     check_chooser("savePlan", GTK_FILE_CHOOSER_ACTION_SAVE, "Our home.domo");
     check_chooser("savePlan", GTK_FILE_CHOOSER_ACTION_SAVE);
+  });
+  g_test_add_func("/file-channel/saveUsdz", [] {
+    check_chooser("saveUsdz", GTK_FILE_CHOOSER_ACTION_SAVE, "Our home.usdz");
+    check_chooser("saveUsdz", GTK_FILE_CHOOSER_ACTION_SAVE);
   });
   g_test_add_func("/file-channel/pickAssetDirectory", [] {
     check_chooser("pickAssetDirectory", GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, "/tmp");

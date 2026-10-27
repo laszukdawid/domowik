@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi' hide Size;
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
 import 'package:domowik_editor/core/ffi_core.dart';
@@ -10,10 +12,10 @@ import 'package:domowik_editor/plan_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-class _Dialogs implements FileDialogs {
+class _Dialogs implements FileDialogs, ExportDialogs {
   Future<bool> Function()? close;
   Future<String?> Function() opening = () async => null;
-  String? saving, suggested;
+  String? saving, suggested, exporting, exportSuggested;
   int saveCalls = 0;
   @override
   Future<PlanSource?> openPlan() async {
@@ -27,6 +29,17 @@ class _Dialogs implements FileDialogs {
     saveCalls++;
     final path = saving;
     return path == null ? null : PlanPathTarget(path);
+  }
+
+  @override
+  Future<PlanByteTarget?> saveUsdz(String name) async {
+    exportSuggested = name;
+    final path = exporting;
+    if (path == null) return null;
+    return PlanByteTarget(path, (bytes) async {
+      File(path).writeAsBytesSync(bytes);
+      return true;
+    });
   }
 
   @override
@@ -73,6 +86,80 @@ void main() {
     await tester.tap(find.text('Save as'));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Export 3D writes a usdz without saving or dirtying the plan', (
+    tester,
+  ) async {
+    await start(tester);
+    final path = '${scratch.path}/house.usdz';
+    dialogs.exporting = path;
+    await tester.tap(find.byKey(const ValueKey('save-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Export 3D (.usdz)'));
+    await tester.pumpAndSettle();
+    expect(dialogs.exportSuggested, 'plan.usdz');
+    final bytes = File(path).readAsBytesSync();
+    expect(String.fromCharCodes(bytes.take(2)), 'PK');
+    expect(
+      find.textContaining('Exported 3D scene', findRichText: true),
+      findsOneWidget,
+    );
+    expect(dialogs.saveCalls, 0);
+    expect(find.textContaining('Unsaved'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Export 3D names models exported as placeholder boxes', (
+    tester,
+  ) async {
+    // A plan holding one placed model whose bytes no decoder accepts.
+    final core = FfiCore(bridge);
+    final plan = '${scratch.path}/broken.domo';
+    final created = core.createDefault();
+    final h = created.handle;
+    final level =
+        (jsonDecode(core.snapshot(h).text!)['levels'] as List).first['id'];
+    final imported = core.importModel(
+      h,
+      'Broken.obj',
+      Uint8List.fromList(utf8.encode('this is not a model')),
+    );
+    expect(imported.succeeded, isTrue, reason: core.lastError(h));
+    final digest = jsonDecode(imported.text!)['digest'];
+    expect(
+      core
+          .assets(
+            h,
+            jsonEncode({
+              'kind': 'place',
+              'digest': digest,
+              'levelId': level,
+              'positionMm': [0, 0],
+            }),
+          )
+          .succeeded,
+      isTrue,
+      reason: core.lastError(h),
+    );
+    expect(core.savePath(h, plan), ok);
+    expect(core.close(h), ok);
+
+    dialogs.opening = () async => plan;
+    await start(tester);
+    await tester.tap(find.byTooltip('Open plan'));
+    await tester.pumpAndSettle();
+    dialogs.exporting = '${scratch.path}/broken.usdz';
+    await tester.tap(find.byKey(const ValueKey('save-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Export 3D (.usdz)'));
+    await tester.pumpAndSettle();
+    expect(File(dialogs.exporting!).existsSync(), isTrue);
+    expect(
+      find.textContaining('warnings: Broken', findRichText: true),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     'injected picker saves/reopens real plans and owns close callback',

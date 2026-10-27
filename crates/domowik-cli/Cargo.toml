@@ -25,6 +25,7 @@ domowik-document = { path = "../domowik-document" }
 domowik-edit = { path = "../domowik-edit" }
 domowik-geometry = { path = "../domowik-geometry" }
 domowik-models = { path = "../domowik-models" }
+domowik-scene = { path = "../domowik-scene" }
 clap = { workspace = true }
 tiny-skia = { workspace = true }
 ttf-parser = { workspace = true }

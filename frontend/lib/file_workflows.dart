@@ -21,6 +21,13 @@ abstract interface class UnsavedChangesGuard {
   void setUnsavedChanges(bool unsaved);
 }
 
+/// Dialogs that can also choose where a 3D `.usdz` export is written. The
+/// returned target's `write` stores the bytes and completes with whether
+/// storage was confirmed (a browser download cannot be).
+abstract interface class ExportDialogs {
+  Future<PlanByteTarget?> saveUsdz(String suggestedName);
+}
+
 class NativeFileDialogs implements FileDialogs {
   const NativeFileDialogs();
   static const _channel = MethodChannel('invalid.domowik-spike/files');

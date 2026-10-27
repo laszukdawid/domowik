@@ -163,6 +163,24 @@ class FfiCore implements DomowikCore {
       _request(bridge.planSceneFrame, handle, request, binary: true);
 
   @override
+  CoreReply exportUsdz(int handle) {
+    final out = native.alloc<native.DomowikBuf>(sizeOf<native.DomowikBuf>());
+    final notes = native.alloc<native.DomowikBuf>(sizeOf<native.DomowikBuf>());
+    try {
+      final code = bridge.planExportUsdz(handle, out, notes);
+      if (code != ok) return CoreReply.failed(code);
+      return CoreReply(
+        code,
+        bytes: bridge.takeBytes(out),
+        text: bridge.takeString(notes),
+      );
+    } finally {
+      native.release(out);
+      native.release(notes);
+    }
+  }
+
+  @override
   CoreReply undo(int handle) =>
       _reply((out) => bridge.planUndo(handle, out), false);
 

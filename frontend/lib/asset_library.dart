@@ -266,7 +266,7 @@ class _AssetLibraryDialogState extends State<AssetLibraryDialog> {
         child: Column(
           children: [
             const Text(
-              'Add GLB, OBJ or ZIP models. Defined dimensions are preserved; models with unknown units keep their proportions. Resize after placement.',
+              'Add GLB, OBJ, ZIP or USD models. Defined dimensions are preserved; models with unknown units keep their proportions. Resize after placement.',
             ),
             const SizedBox(height: 12),
             Wrap(

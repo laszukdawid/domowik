@@ -13,9 +13,15 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 earcutr = "=0.5.0"
+# USDZ export: the reviewed reader crate also writes binary layers and USDZ
+# packages; `image` encodes embedded model textures as PNG. Both are already
+# in the graph through domowik-models. See docs/third-party/openusd.md.
+openusd = { version = "=0.8.0", default-features = false }
+image = { version = "=0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]
 criterion.workspace = true
+zip.workspace = true
 
 [[bench]]
 name = "scene"

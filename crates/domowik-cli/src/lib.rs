@@ -587,6 +587,27 @@ pub fn cmd_export_svg(path: &Path, out: &Path, level_name: Option<&str>) -> Resu
     Ok(msg)
 }
 
+/// Exports every level as one `.usdz` 3D scene (walls, openings, floors,
+/// construction bodies, stairs and placed models with their colours), for USD
+/// viewers such as AR Quick Look, Blender or Omniverse. Missing or
+/// undecodable models are exported as placeholder boxes and listed.
+pub fn cmd_export_usdz(path: &Path, out: &Path) -> Result<String> {
+    let pkg = read_package(path)?;
+    let projection = pkg.project().map_err(CliError::from)?;
+    let export = domowik_scene::usd::usdz(&projection.document, &pkg.assets)
+        .map_err(|e| CliError::Failure(format!("could not export {}: {e}", path.display())))?;
+    std::fs::write(out, &export.bytes)
+        .map_err(|e| CliError::Failure(format!("could not write {}: {e}", out.display())))?;
+    let mut msg = format!(
+        "Wrote {} ({} level(s), {} triangle(s)).",
+        out.display(),
+        projection.document.levels.len(),
+        export.triangles
+    );
+    append_construction_diagnostics(&mut msg, &export.diagnostics);
+    Ok(msg)
+}
+
 /// Appends every room name the export declined to draw.
 ///
 /// On the SUCCESS message rather than as a failure: the file was written and
@@ -3364,6 +3385,21 @@ mod tests {
     }
 
     #[test]
+    fn export_usdz_writes_a_package_usd_readers_compose() {
+        let dir = tmp();
+        let plan = dir.path().join("plan.domo");
+        let out = dir.path().join("plan.usdz");
+        cmd_new(&plan, false).expect("new");
+        cmd_add_wall(&plan, 0.0, 0.0, 4000.0, 0.0, 120.0, 2500.0, None).expect("add");
+
+        let msg = cmd_export_usdz(&plan, &out).expect("export");
+        assert!(msg.contains("1 level(s)"), "got {msg}");
+        let bytes = std::fs::read(&out).expect("read usdz");
+        let size = domowik_models::dimensions(&bytes).expect("readable USD");
+        assert!((size.dimensions_mm[2] - 2500.).abs() < 1., "{size:?}");
+    }
+
+    #[test]
     fn export_svg_writes_a_file_a_browser_can_open() {
         let dir = tmp();
         let plan = dir.path().join("plan.domo");
@@ -5911,7 +5947,11 @@ mod tests {
         assert!(msg.contains("1 referenced asset(s)"), "got {msg}");
         assert!(msg.contains("all embedded and verified"), "got {msg}");
         // The three classes are reported whether or not a cache was named.
-        assert!(msg.contains("package 86 byte(s)"), "got {msg}");
+        // The fixture PNG's size is DEFLATE writer policy (FORMAT-SPEC §7).
+        let png = std::fs::metadata(dir.path().join("bg.png"))
+            .expect("png")
+            .len();
+        assert!(msg.contains(&format!("package {png} byte(s)")), "got {msg}");
         assert!(msg.contains("remote 0 byte(s) declared"), "got {msg}");
 
         let packed = read_package(&out).expect("read");

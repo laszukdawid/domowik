@@ -26,6 +26,6 @@ Future<PickedModelDirectory?> pickModelDirectory() async {
 
 /// The browser's single-file upload remains available in the Furniture dialog.
 Future<(String, Uint8List)?> pickModelFile() async {
-  final file = await pickFile('.glb,.obj,.zip');
+  final file = await pickFile('.glb,.obj,.zip,.usd,.usda,.usdc,.usdz');
   return file == null ? null : (file.name, file.bytes);
 }

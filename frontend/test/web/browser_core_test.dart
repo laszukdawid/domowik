@@ -13,8 +13,8 @@ void main() {
     core = await WebCore.instantiate(await fetchBytes('domowik_bridge.wasm'));
   });
 
-  test('the browser core is the ABI 21 bridge and round-trips a plan', () {
-    expect(core.abiVersion(), 21);
+  test('the browser core is the ABI 22 bridge and round-trips a plan', () {
+    expect(core.abiVersion(), 22);
     final plan = core.createDefault();
     expect(plan.code, ok);
     final snapshot = jsonDecode(core.snapshot(plan.handle).text!) as Map;
@@ -39,6 +39,10 @@ void main() {
         (jsonDecode(core.snapshot(reopened.handle).text!) as Map)['walls']
             as List;
     expect(walls, hasLength(1));
+    final usdz = core.exportUsdz(plan.handle);
+    expect(usdz.code, ok, reason: core.lastError(plan.handle));
+    expect(String.fromCharCodes(usdz.bytes!.take(2)), 'PK');
+    expect(jsonDecode(usdz.text!), isEmpty);
     expect(core.close(plan.handle), ok);
     expect(core.close(reopened.handle), ok);
     expect(core.outstandingBuffers(), 0);

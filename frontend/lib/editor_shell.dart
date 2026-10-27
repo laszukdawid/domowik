@@ -15,6 +15,7 @@ class EditorShell extends StatelessWidget {
     required this.onOpen,
     required this.onSave,
     required this.onSaveAs,
+    this.onExportUsdz,
     this.onAssets,
     this.onPreferences,
     this.account,
@@ -42,6 +43,10 @@ class EditorShell extends StatelessWidget {
   /// [onSave] cannot update silently (never saved, or a browser download)
   /// reaches the same dialog through [onSave].
   final VoidCallback onSaveAs;
+
+  /// Writes the whole plan as a `.usdz` 3D scene; absent where the platform
+  /// cannot choose an export location.
+  final VoidCallback? onExportUsdz;
   final VoidCallback? onAssets;
   final VoidCallback? onPreferences;
   final ValueChanged<String>? onViewModeChanged;
@@ -279,6 +284,7 @@ class EditorShell extends StatelessWidget {
                             _SaveSplitButton(
                               onSave: onSave,
                               onSaveAs: onSaveAs,
+                              onExportUsdz: onExportUsdz,
                             ),
                           ],
                         ),
@@ -433,15 +439,20 @@ class EditorShell extends StatelessWidget {
 /// A press anywhere left of the divider saves — everything but the last
 /// chevron-wide strip, roughly three quarters of the pill at the default
 /// text scale, since the chevron strip does not grow with the label. A
-/// press on that strip opens the menu items below it; the menu currently
-/// offers only Save As ([onSaveAs]). The control holds no state and is
+/// press on that strip opens the menu items below it: Save As ([onSaveAs])
+/// and, where available, a 3D export ([onExportUsdz]). The control holds no state and is
 /// always enabled: the file-action gate covers the whole header while a
 /// file workflow runs, and a failed save or open menu changes nothing.
 class _SaveSplitButton extends StatelessWidget {
-  const _SaveSplitButton({required this.onSave, required this.onSaveAs});
+  const _SaveSplitButton({
+    required this.onSave,
+    required this.onSaveAs,
+    this.onExportUsdz,
+  });
 
   final VoidCallback onSave;
   final VoidCallback onSaveAs;
+  final VoidCallback? onExportUsdz;
 
   @override
   Widget build(BuildContext context) {
@@ -496,8 +507,8 @@ class _SaveSplitButton extends StatelessWidget {
               key: const ValueKey('save-menu'),
               tooltip: 'More ways to save',
               position: PopupMenuPosition.under,
-              itemBuilder: (_) => const [
-                PopupMenuItem<String>(
+              itemBuilder: (_) => [
+                const PopupMenuItem<String>(
                   value: 'save-as',
                   child: Row(
                     children: [
@@ -507,9 +518,27 @@ class _SaveSplitButton extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (onExportUsdz != null)
+                  const PopupMenuItem<String>(
+                    key: ValueKey('export-usdz'),
+                    value: 'export-usdz',
+                    child: Row(
+                      children: [
+                        Icon(Icons.view_in_ar_outlined, size: 18),
+                        SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Export 3D (.usdz)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
               ],
               onSelected: (action) {
                 if (action == 'save-as') onSaveAs();
+                if (action == 'export-usdz') onExportUsdz?.call();
               },
               child: SizedBox(
                 width: 28,

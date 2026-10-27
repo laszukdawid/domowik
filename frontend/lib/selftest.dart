@@ -256,7 +256,7 @@ int runSelftest() {
     '         image:  $image\n'
     '         bundle: $bundle',
   );
-  _checkEq(bridge.abiVersion(), 21, 'abi version');
+  _checkEq(bridge.abiVersion(), 22, 'abi version');
 
   final handleOut = alloc<Uint64>(sizeOf<Uint64>());
   int handle;

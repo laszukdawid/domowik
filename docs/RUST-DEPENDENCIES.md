@@ -9,7 +9,7 @@ benchmark tooling and are not distributed.
 | Crate | Version | Kind | Declared licence |
 |-------|---------|------|------------------|
 | adler2 | 2.0.1 | runtime | 0BSD OR MIT OR Apache-2.0 |
-| aho-corasick | 1.1.5 | dev | Unlicense OR MIT |
+| aho-corasick | 1.1.5 | runtime | Unlicense OR MIT |
 | anes | 0.1.6 | dev | MIT OR Apache-2.0 |
 | anstream | 1.0.0 | runtime | MIT OR Apache-2.0 |
 | anstyle | 1.0.14 | runtime | MIT OR Apache-2.0 |
@@ -41,9 +41,11 @@ benchmark tooling and are not distributed.
 | criterion | 0.5.1 | dev | Apache-2.0 OR MIT |
 | criterion-plot | 0.5.0 | dev | MIT/Apache-2.0 |
 | crossbeam-utils | 0.8.22 | runtime | MIT OR Apache-2.0 |
-| crunchy | 0.2.4 | dev | MIT |
+| crunchy | 0.2.4 | runtime | MIT |
 | crypto-common | 0.1.7 | runtime | MIT OR Apache-2.0 |
 | derive_arbitrary | 1.4.2 | runtime | MIT OR Apache-2.0 |
+| derive_more | 2.1.1 | runtime | MIT |
+| derive_more-impl | 2.1.1 | runtime | MIT |
 | digest | 0.10.7 | runtime | MIT OR Apache-2.0 |
 | displaydoc | 0.2.7 | runtime | MIT OR Apache-2.0 |
 | draco-core | 2.2.1 | runtime | Apache-2.0 |
@@ -54,12 +56,13 @@ benchmark tooling and are not distributed.
 | fastrand | 2.5.0 | dev | Apache-2.0 OR MIT |
 | fdeflate | 0.3.7 | runtime | MIT OR Apache-2.0 |
 | flate2 | 1.1.10 | runtime | MIT OR Apache-2.0 |
+| fnv | 1.0.7 | runtime | Apache-2.0 / MIT |
 | futures-core | 0.3.34 | runtime | MIT OR Apache-2.0 |
 | futures-task | 0.3.34 | runtime | MIT OR Apache-2.0 |
 | futures-util | 0.3.34 | runtime | MIT OR Apache-2.0 |
 | generic-array | 0.14.7 | runtime | MIT |
 | getrandom | 0.4.3 | runtime | MIT OR Apache-2.0 |
-| half | 2.7.1 | dev | MIT OR Apache-2.0 |
+| half | 2.7.1 | runtime | MIT OR Apache-2.0 |
 | hashbrown | 0.17.1 | runtime | MIT OR Apache-2.0 |
 | heck | 0.5.0 | runtime | MIT OR Apache-2.0 |
 | hermit-abi | 0.5.2 | dev | MIT OR Apache-2.0 |
@@ -73,8 +76,13 @@ benchmark tooling and are not distributed.
 | itoa | 1.0.18 | runtime | MIT OR Apache-2.0 |
 | js-sys | 0.3.104 | runtime | MIT OR Apache-2.0 |
 | libc | 0.2.189 | runtime | MIT OR Apache-2.0 |
+| libm | 0.2.16 | runtime | MIT |
 | linux-raw-sys | 0.12.1 | dev | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | log | 0.4.34 | runtime | MIT OR Apache-2.0 |
+| logos | 0.16.1 | runtime | MIT OR Apache-2.0 |
+| logos-codegen | 0.16.1 | runtime | MIT OR Apache-2.0 |
+| logos-derive | 0.16.1 | runtime | MIT OR Apache-2.0 |
+| lz4_flex | 0.14.0 | runtime | MIT |
 | memchr | 2.8.3 | runtime | Unlicense OR MIT |
 | miniz_oxide | 0.8.9 | runtime | MIT OR Zlib OR Apache-2.0 |
 | miniz_oxide | 0.9.1 | runtime | MIT OR Zlib OR Apache-2.0 |
@@ -83,6 +91,7 @@ benchmark tooling and are not distributed.
 | once_cell | 1.21.4 | runtime | MIT OR Apache-2.0 |
 | once_cell_polyfill | 1.70.2 | runtime | MIT OR Apache-2.0 |
 | oorandom | 11.1.5 | dev | MIT |
+| openusd | 0.8.0 | runtime | MIT |
 | pin-project-lite | 0.2.17 | runtime | Apache-2.0 OR MIT |
 | png | 0.18.1 | runtime | MIT OR Apache-2.0 |
 | proc-macro2 | 1.0.107 | runtime | MIT OR Apache-2.0 |
@@ -91,11 +100,14 @@ benchmark tooling and are not distributed.
 | quote | 1.0.47 | runtime | MIT OR Apache-2.0 |
 | r-efi | 6.0.0 | runtime | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
 | regex | 1.13.1 | dev | MIT OR Apache-2.0 |
-| regex-automata | 0.4.18 | dev | MIT OR Apache-2.0 |
-| regex-syntax | 0.8.11 | dev | MIT OR Apache-2.0 |
+| regex-automata | 0.4.18 | runtime | MIT OR Apache-2.0 |
+| regex-lite | 0.1.9 | runtime | MIT OR Apache-2.0 |
+| regex-syntax | 0.8.11 | runtime | MIT OR Apache-2.0 |
+| rustc_version | 0.4.1 | dev | MIT OR Apache-2.0 |
 | rustix | 1.1.4 | dev | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | rustversion | 1.0.23 | dev | MIT OR Apache-2.0 |
 | same-file | 1.0.6 | dev | Unlicense/MIT |
+| semver | 1.0.28 | dev | MIT OR Apache-2.0 |
 | serde | 1.0.229 | runtime | MIT OR Apache-2.0 |
 | serde_core | 1.0.229 | runtime | MIT OR Apache-2.0 |
 | serde_derive | 1.0.229 | runtime | MIT OR Apache-2.0 |
@@ -105,6 +117,8 @@ benchmark tooling and are not distributed.
 | slab | 0.4.12 | runtime | MIT |
 | strict-num | 0.1.1 | runtime | MIT |
 | strsim | 0.11.1 | runtime | MIT |
+| strum | 0.28.0 | runtime | MIT |
+| strum_macros | 0.28.0 | runtime | MIT |
 | syn | 2.0.119 | runtime | MIT OR Apache-2.0 |
 | syn | 3.0.4 | runtime | MIT OR Apache-2.0 |
 | tempfile | 3.27.0 | dev | MIT OR Apache-2.0 |
@@ -114,6 +128,8 @@ benchmark tooling and are not distributed.
 | tiny-skia-path | 0.12.0 | runtime | BSD-3-Clause |
 | tinytemplate | 1.2.1 | dev | Apache-2.0 OR MIT |
 | ttf-parser | 0.25.1 | runtime | MIT OR Apache-2.0 |
+| twox-hash | 2.1.5 | runtime | MIT |
+| typed-path | 0.12.4 | runtime | MIT OR Apache-2.0 |
 | typenum | 1.20.1 | runtime | MIT OR Apache-2.0 |
 | unicode-ident | 1.0.24 | runtime | (MIT OR Apache-2.0) AND Unicode-3.0 |
 | utf8parse | 0.2.2 | runtime | Apache-2.0 OR MIT |
@@ -127,13 +143,14 @@ benchmark tooling and are not distributed.
 | winapi-util | 0.1.11 | dev | Unlicense OR MIT |
 | windows-link | 0.2.1 | runtime | MIT OR Apache-2.0 |
 | windows-sys | 0.61.2 | runtime | MIT OR Apache-2.0 |
-| zerocopy | 0.8.56 | dev | BSD-2-Clause OR Apache-2.0 OR MIT |
-| zerocopy-derive | 0.8.56 | dev | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy | 0.8.56 | runtime | BSD-2-Clause OR Apache-2.0 OR MIT |
+| zerocopy-derive | 0.8.56 | runtime | BSD-2-Clause OR Apache-2.0 OR MIT |
 | zip | 2.4.2 | runtime | MIT |
+| zip | 8.6.0 | runtime | MIT |
 | zlib-rs | 0.6.7 | runtime | Zlib |
 | zmij | 1.0.23 | runtime | MIT |
 | zopfli | 0.8.3 | runtime | Apache-2.0 |
 | zune-core | 0.5.3 | runtime | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | runtime | MIT OR Apache-2.0 OR Zlib |
 
-Total: 127 third-party crates (96 runtime, 31 dev).
+Total: 144 third-party crates (118 runtime, 26 dev).

@@ -42,6 +42,9 @@ LICENCE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE")
 # Bundled non-code assets, recorded by hand because no build tool knows about
 # them. The path is relative to the repository root.
 ASSETS_RECORD = "docs/third-party/assets.json"
+# Reviewed upstream licence texts for crates whose package omits them,
+# keyed `<crate>-<version>`; see docs/third-party/openusd.md.
+RECORDED_NOTICES = "docs/third-party/notices"
 # Longer texts are summarised by name: the point is attribution and the
 # obligation to reproduce, and a NOTICE that nobody opens because it is
 # megabytes long serves neither.
@@ -49,14 +52,22 @@ MAX_TEXT_BYTES = 40_000
 
 
 def licence_files(directory: str) -> list[str]:
-    if not os.path.isdir(directory):
-        return []
-    names = [
-        n
-        for n in sorted(os.listdir(directory))
-        if n.upper().startswith(LICENCE_PREFIXES)
-        and os.path.isfile(os.path.join(directory, n))
-    ]
+    """Licence files at the crate root, then any under `third-party/`.
+
+    `openusd` ships the TOST-1.0 licence and OpenUSD NOTICE for its generated
+    schema file only under `third-party/`; those obligations are distributed too.
+    """
+    names: list[str] = []
+    for sub in ("", "third-party"):
+        path = os.path.join(directory, sub)
+        if not os.path.isdir(path):
+            continue
+        names += [
+            os.path.join(sub, n) if sub else n
+            for n in sorted(os.listdir(path))
+            if n.upper().startswith(LICENCE_PREFIXES)
+            and os.path.isfile(os.path.join(path, n))
+        ]
     return names
 
 
@@ -158,6 +169,20 @@ def main() -> int:
             )
             out.append("")
             continue
+        recorded = os.path.join(
+            RECORDED_NOTICES, f"{pkg['name']}-{pkg['version']}"
+        )
+        if all(os.sep in n for n in names):
+            # Only bundled third-party texts; the crate's own licence is absent
+            # unless a reviewed upstream copy is recorded in the repository.
+            if os.path.isdir(os.path.join(root, recorded)):
+                for name in licence_files(os.path.join(root, recorded)):
+                    out.append(f"--- {name} (recorded from upstream: {recorded}) ---")
+                    with open(os.path.join(root, recorded, name), encoding="utf-8") as f:
+                        out.append(f.read().rstrip())
+                    out.append("")
+            else:
+                missing.append(f"{pkg['name']} {pkg['version']}")
         for name in names:
             path = os.path.join(directory, name)
             size = os.path.getsize(path)

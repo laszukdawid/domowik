@@ -101,6 +101,11 @@ abstract interface class DomowikCore {
   CoreReply importModel(int handle, String name, Uint8List bytes);
   CoreReply sceneFrame(int handle, String request);
 
+  /// Every level as one `.usdz` 3D scene in [CoreReply.bytes], and in
+  /// [CoreReply.text] a JSON array of export warnings, which name models
+  /// exported as placeholder boxes. Read-only: the plan's revision and dirty state are unchanged.
+  CoreReply exportUsdz(int handle);
+
   /// Runs an asset request away from the UI where the platform can (a native
   /// isolate) and inline where it cannot (the browser's single thread).
   /// Completes with decoded JSON-shaped data, or throws [CoreException]. Native

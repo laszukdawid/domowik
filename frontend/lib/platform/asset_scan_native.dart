@@ -36,6 +36,10 @@ Future<DirectoryModels> scanAssetDirectories(List<String> directories) async {
                 'glb',
                 'obj',
                 'zip',
+                'usd',
+                'usda',
+                'usdc',
+                'usdz',
               }.contains(name.substring(dot + 1).toLowerCase())) {
             models.add(
               LibraryModel(
