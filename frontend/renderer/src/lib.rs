@@ -962,47 +962,62 @@ mod tests {
             }
         };
         let coords = [0.5, 0.5, 0., 0., 0.].repeat(mesh.len() / 10);
-        for textured in [false, true] {
-            let textures = if textured {
-                vec![(
-                    "diagnostic:orientation",
-                    TextureData {
-                        width: 1,
-                        height: 1,
-                        layers: 1,
-                        rgba: &[128, 128, 128, 255],
-                        coordinates: &coords,
-                    },
-                )]
-            } else {
-                vec![]
-            };
-            r.set_scene_textured(
-                [("diagnostic:orientation", mesh.as_slice())],
-                &instances,
-                textures,
-            )
-            .unwrap();
-            let target = r.offscreen(32, 32);
-            let frame = r
-                .render(&target.create_view(&Default::default()), 32, 32, &IDENTITY)
+        // Ordinary solid leaves, glass, and glass on a ghosted level all use
+        // the same linear-light RGB, then the existing coverage blend pass.
+        for alpha in [1., 0.25, 0.075] {
+            instances[0].transparent = alpha < 1.;
+            instances[0].color[3] = alpha;
+            for textured in [false, true] {
+                let textures = if textured {
+                    vec![(
+                        "diagnostic:orientation",
+                        TextureData {
+                            width: 1,
+                            height: 1,
+                            layers: 1,
+                            rgba: &[128, 128, 128, 255],
+                            coordinates: &coords,
+                        },
+                    )]
+                } else {
+                    vec![]
+                };
+                r.set_scene_textured(
+                    [("diagnostic:orientation", mesh.as_slice())],
+                    &instances,
+                    textures,
+                )
                 .unwrap();
-            r.wait(frame).unwrap();
-            let pixels = r.read_pixels(&target).unwrap();
-            let pixel = &pixels[(16 * 32 + 16) * 4..][..4];
-            for (actual, base) in [pixel[2], pixel[1], pixel[0]]
-                .into_iter()
-                .zip([232., 220., 196.])
-            {
-                let expected = encode(
-                    decode(base / 255.) * if textured { decode(128. / 255.) } else { 1. } * 0.38,
-                ) * 255.;
-                assert!(
-                    (f64::from(actual) - expected).abs() <= 2.,
-                    "textured={textured}, actual={pixel:?}, expected channel={expected}"
-                );
+                let target = r.offscreen(32, 32);
+                let frame = r
+                    .render(&target.create_view(&Default::default()), 32, 32, &IDENTITY)
+                    .unwrap();
+                r.wait(frame).unwrap();
+                let pixels = r.read_pixels(&target).unwrap();
+                let pixel = &pixels[(16 * 32 + 16) * 4..][..4];
+                for (actual, base) in [pixel[2], pixel[1], pixel[0]]
+                    .into_iter()
+                    .zip([232., 220., 196.])
+                {
+                    let lit = encode(
+                        decode(base / 255.)
+                            * if textured { decode(128. / 255.) } else { 1. }
+                            * 0.38,
+                    );
+                    let channel = match base as u32 {
+                        232 => CLEAR.r,
+                        220 => CLEAR.g,
+                        _ => CLEAR.b,
+                    };
+                    let expected =
+                        (lit * f64::from(alpha) + channel * (1. - f64::from(alpha))) * 255.;
+                    assert!(
+                        (f64::from(actual) - expected).abs() <= 2.,
+                        "textured={textured}, actual={pixel:?}, expected channel={expected}"
+                    );
+                }
+                assert_eq!(pixel[3], 255);
             }
-            assert_eq!(pixel[3], 255);
         }
     }
 

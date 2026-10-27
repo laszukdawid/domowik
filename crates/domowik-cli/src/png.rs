@@ -542,7 +542,12 @@ fn render(
                     leaf.move_to(hx, hy);
                     leaf.line_to(tx, ty);
                     if let Some(line) = leaf.finish() {
-                        paint.set_color(rgb(DOOR_SILL));
+                        let color = domowik_format::appearance::door_plan_color(opening)
+                            .ok()
+                            .flatten()
+                            .map(|c| c.0.into())
+                            .unwrap_or(DOOR_SILL);
+                        paint.set_color(rgb(color));
                         pixmap.stroke_path(
                             &line,
                             &paint,

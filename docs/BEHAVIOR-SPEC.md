@@ -4602,6 +4602,29 @@ reports material keys, source colors and decode diagnostics. Invalid color
 values/palettes reject the whole command. Arbitrary textures, wall-side-specific
 finishes and regional floor painting are outside this solid-color increment.
 
+### Door colors and glass style
+
+**Normative for the experimental editor.** A door opening may carry an optional
+opaque sRGB `color` for its leaf and `doorStyle` of `solid` (the default) or
+`glass`. Style is independent of hinged/sliding mechanism, hinge and swing.
+Glass leaves use alpha 0.25 in 3D, multiplied by the level's ghost alpha;
+solid leaves use alpha 1. Frames remain unchanged. Color overrides replace RGB
+without changing this opacity. Uncolored solid doors retain their brown finish;
+uncolored glass doors use a light blue tint. This is simple translucency, not
+refraction or a photorealistic glass material. Doors remain pickable.
+
+The Selection inspector exposes **Style** and **Edit color** for doors, with
+the existing swatches, hex input and reset. Resetting color retains the style;
+switching style retains an explicit color. Each accepted change is one atomic,
+undoable edit; cancel and unchanged values write nothing. Changes survive
+saving, reopening, replay and compaction, and do not alter wall cuts, room
+topology or door dimensions. The CLI exposes the same edits with `color door`.
+2D door-leaf symbols and SVG/PNG exports use the explicit color or default glass
+tint, but keep technical strokes opaque so the door remains legible; unspecified
+solid symbols retain their existing technical ink. Opaque `styleRefs` remain
+uninterpreted. Window styling and arbitrary opacity sliders are outside this
+increment.
+
 ### 10.3 User configuration (issue 0077)
 
 Reusable asset library locations are local user/device preferences, available

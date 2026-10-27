@@ -26,6 +26,8 @@ later phase does not imply that earlier exit criteria are complete.
   The asset library offers list/grid browsing with on-demand model thumbnails.
   Solid wall colors (including bulk selection) and per-material placed-model
   colors are editable, undoable and saved in the plan; plan previews and 3D agree.
+  Hinged and sliding doors support leaf colors and solid/glass styles; glass
+  leaves are translucent in 3D while technical plan symbols remain legible.
   User-authored textures and separate wall-side finishes remain future work.
   The browser can discover 100 original generic models from a separate
   configurable public HTTPS catalog when Furniture opens; only chosen models

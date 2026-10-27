@@ -766,8 +766,21 @@ enum CacheCommand {
 
 #[derive(Subcommand)]
 enum ColorCommand {
-    /// Inspect wall colors and each placed model's original material keys (JSON).
+    /// Inspect wall/door colors, door styles and original model materials (JSON).
     List { path: PathBuf },
+    /// Set a door leaf's color and/or solid/glass style without changing geometry.
+    Door {
+        path: PathBuf,
+        door: String,
+        /// #RRGGBB or original (reset color while retaining style).
+        #[arg(long, required_unless_present_any = ["style", "reset"], conflicts_with = "reset")]
+        color: Option<String>,
+        #[arg(long, value_parser = ["solid", "glass"], conflicts_with = "reset")]
+        style: Option<String>,
+        /// Restore both the original color and solid style.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Set the color of a whole wall, or reset it to the default.
     Wall {
         path: PathBuf,
@@ -797,6 +810,19 @@ fn main() -> ExitCode {
     let result = match &cli.command {
         Command::Color(command) => match command {
             ColorCommand::List { path } => domowik_cli::appearance::list(path),
+            ColorCommand::Door {
+                path,
+                door,
+                color,
+                style,
+                reset,
+            } => {
+                let style = style.as_deref().map(|v| match v {
+                    "glass" => domowik_format::appearance::DoorStyle::Glass,
+                    _ => domowik_format::appearance::DoorStyle::Solid,
+                });
+                domowik_cli::appearance::door(path, door, color.as_deref(), style, *reset)
+            }
             ColorCommand::Wall {
                 path, wall, color, ..
             } => domowik_cli::appearance::wall(path, wall, color.as_deref()),

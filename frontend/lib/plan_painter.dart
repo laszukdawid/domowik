@@ -175,6 +175,10 @@ class Aperture {
     this.opensToward,
     this.hingeEnd,
     this.mechanism,
+    this.color,
+    this.doorStyle = 'solid',
+    this.leafColor,
+    this.originalColor,
     this.glyphSegments = const [],
   });
 
@@ -193,6 +197,10 @@ class Aperture {
   final String? opensToward;
   final String? hingeEnd;
   final String? mechanism;
+  final String? color;
+  final String doorStyle;
+  final String? leafColor;
+  final String? originalColor;
   final List<(Offset, Offset)> glyphSegments;
 
   static Aperture fromJson(Map<String, Object?> j) {
@@ -218,6 +226,10 @@ class Aperture {
       opensToward: j['opensToward'] as String?,
       hingeEnd: j['hingeEnd'] as String?,
       mechanism: j['mechanism'] as String?,
+      color: j['color'] as String?,
+      doorStyle: j['doorStyle'] as String? ?? 'solid',
+      leafColor: j['leafColor'] as String?,
+      originalColor: j['originalColor'] as String?,
       glyphSegments: [
         for (final segment
             in (j['glyphSegments'] as List<Object?>? ?? const []))
@@ -898,7 +910,11 @@ class PlanPainter extends CustomPainter {
           toScreen(segment.$2),
           Paint()
             ..color = _fade(
-              o.isDoor ? const Color(0xFF8A6F3C) : const Color(0xFF517B9C),
+              o.isDoor
+                  ? (o.leafColor == null
+                        ? const Color(0xFF8A6F3C)
+                        : solidColor(o.leafColor!))
+                  : const Color(0xFF517B9C),
               opacity,
             )
             ..strokeWidth = math.max(1.0, (o.isDoor ? 30.0 : 20.0) * scale),

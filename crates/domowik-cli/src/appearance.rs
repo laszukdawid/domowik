@@ -1,7 +1,7 @@
 //! Non-destructive solid colours, through shared edit builders and normal saves.
 use crate::{CliError, Plan, Result};
 use domowik_format::{
-    appearance::{self, RgbColor},
+    appearance::{self, DoorStyle, RgbColor},
     AssetInstance, Document,
 };
 use serde_json::json;
@@ -39,7 +39,44 @@ pub fn list(path: &Path) -> Result<String> {
             .and_then(|bytes| domowik_models::appearance::materials(bytes));
         assets.push(json!({"id":a.id,"shortId":crate::refs::short_id(a.id),"name":a.display_name,"levelId":a.level_id,"materialColors":appearance::material_colors(a).map_err(CliError::Usage)?,"materials":materials.as_ref().ok(),"diagnostic":materials.as_ref().err()}));
     }
-    Ok(serde_json::to_string_pretty(&json!({"walls":plan.document().walls.iter().map(|w| json!({"id":w.id,"shortId":crate::refs::short_id(w.id),"levelId":w.level_id,"color":appearance::wall_color(w).ok().flatten()})).collect::<Vec<_>>(),"assets":assets})).expect("finite colours"))
+    let doors: Vec<_> = plan.document().openings.iter()
+        .filter(|o| o.kind == domowik_format::OpeningKind::Door)
+        .map(|o| json!({"id":o.id,"shortId":crate::refs::short_id(o.id),"hostWallId":o.host_wall_id,"color":appearance::door_color(o).ok().flatten(),"doorStyle":appearance::door_style(o).ok()})).collect();
+    Ok(serde_json::to_string_pretty(&json!({"walls":plan.document().walls.iter().map(|w| json!({"id":w.id,"shortId":crate::refs::short_id(w.id),"levelId":w.level_id,"color":appearance::wall_color(w).ok().flatten()})).collect::<Vec<_>>(),"doors":doors,"assets":assets})).expect("finite colours"))
+}
+
+/// Patches door color and/or style, retaining unspecified values. `reset` clears
+/// both fields. All validation precedes the ordinary atomic save; no-ops do not save.
+pub fn door(
+    path: &Path,
+    reference: &str,
+    color: Option<&str>,
+    style: Option<DoorStyle>,
+    reset: bool,
+) -> Result<String> {
+    let mut plan = Plan::open(path)?;
+    let opening = crate::refs::resolve_opening(plan.document(), reference, path)?;
+    let color = if reset || color == Some("original") {
+        None
+    } else {
+        color
+            .map(RgbColor::parse)
+            .transpose()
+            .map_err(CliError::Usage)?
+            .or(appearance::door_color(opening).map_err(CliError::Usage)?)
+    };
+    let style = if reset {
+        DoorStyle::Solid
+    } else {
+        style.unwrap_or(appearance::door_style(opening).map_err(CliError::Usage)?)
+    };
+    let ops = domowik_edit::appearance::door(plan.document(), opening.id, color, style)
+        .map_err(CliError::Usage)?;
+    if ops.is_empty() {
+        return Ok("Door appearance is unchanged.".into());
+    }
+    plan.commit_and_save(ops)?;
+    Ok("Updated door appearance.".into())
 }
 
 pub fn wall(path: &Path, reference: &str, color: Option<&str>) -> Result<String> {

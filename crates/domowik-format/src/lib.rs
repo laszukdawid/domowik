@@ -1850,6 +1850,18 @@ impl Document {
             }
         }
         for opening in &self.openings {
+            for error in [
+                appearance::door_color(opening).err(),
+                appearance::door_style(opening).err(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                errors.push(ValidationError::InvalidAppearance {
+                    id: opening.id,
+                    message: error,
+                });
+            }
             check_style_refs(&mut errors, opening.id, "opening", &opening.style_refs);
         }
 

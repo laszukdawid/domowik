@@ -447,9 +447,8 @@ void main() {
       final scene = await openLevelScene(tester);
       final upper = scene.levels[0];
       await chooseVisibility(tester, upper, LevelVisibility.visible);
-      final passive = painter(
-        tester,
-      ).backgroundLevels.firstWhere((layer) => layer.levelId == upper);
+      final passive = painter(tester).backgroundLevels
+          .firstWhere((layer) => layer.levelId == upper);
       final oldWall = passive.walls.single;
       final drawStart = screenPoint(tester, const Offset(-500, -800));
       await tap(tester, find.byKey(const ValueKey('wall-chain-tool')));
@@ -462,9 +461,8 @@ void main() {
       await draw.up();
       await tester.pumpAndSettle();
       expect(painter(tester).walls, hasLength(2));
-      final after = painter(
-        tester,
-      ).backgroundLevels.firstWhere((layer) => layer.levelId == upper);
+      final after = painter(tester).backgroundLevels
+          .firstWhere((layer) => layer.levelId == upper);
       expect(after.derived, same(passive.derived));
       expect(after.walls.single.start, oldWall.start);
       expect(after.walls.single.end, oldWall.end);
@@ -768,9 +766,8 @@ void main() {
     await tester.pumpAndSettle();
     await tap(tester, find.byKey(const ValueKey('wall-properties-apply')));
     for (final original in before) {
-      final after = painter(
-        tester,
-      ).walls.firstWhere((w) => w.id == original.id);
+      final after = painter(tester).walls
+          .firstWhere((w) => w.id == original.id);
       expect(
         after.heightMm,
         original.id == ids.last ? original.heightMm : 2700,
@@ -838,9 +835,8 @@ void main() {
         await tester.pumpAndSettle();
         await tap(tester, find.byKey(const ValueKey('wall-properties-apply')));
         for (final original in before) {
-          final after = painter(
-            tester,
-          ).walls.firstWhere((w) => w.id == original.id);
+          final after = painter(tester).walls
+              .firstWhere((w) => w.id == original.id);
           expect(after.start, original.start);
           expect(after.end, original.end);
           expect(
@@ -857,9 +853,8 @@ void main() {
         historyButton(tester, 'Undo').onPressed!();
         await tester.pumpAndSettle();
         for (final original in before) {
-          final after = painter(
-            tester,
-          ).walls.firstWhere((w) => w.id == original.id);
+          final after = painter(tester).walls
+              .firstWhere((w) => w.id == original.id);
           expect(after.heightMm, original.heightMm);
           expect(after.thicknessMm, original.thicknessMm);
         }
@@ -1463,6 +1458,104 @@ void main() {
         expect(painter(tester).derived.openings.single.mechanism, expected);
       }
     });
+
+  for (final sliding in [false, true])
+    testWidgets(
+      'door appearance: ${sliding ? 'sliding' : 'hinged'} color, glass, undo and reopen',
+      (tester) async {
+        await start(tester);
+        await draw(tester);
+        if (sliding) {
+          await tap(tester, find.byKey(const ValueKey('door-type-menu')));
+          await tap(tester, find.text('Sliding door').last);
+        } else {
+          await tap(tester, find.text('Doors'));
+        }
+        final at = tester.getTopLeft(getCanvas()) + const Offset(225, 150);
+        await clickAt(tester, at, PointerDeviceKind.mouse);
+        await clickAt(tester, at, PointerDeviceKind.mouse);
+        final original = painter(tester).derived.openings.single;
+        final scroll = find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        );
+        Future<void> editColor() async {
+          final edit = find.byKey(const ValueKey('edit-door-color'));
+          await tester.scrollUntilVisible(edit, 120, scrollable: scroll);
+          await tap(tester, edit);
+        }
+
+        await editColor();
+        await tester.enterText(
+          find.byKey(const ValueKey('solid-color-door')),
+          '#dcc8b4',
+        );
+        await tap(tester, find.byKey(const ValueKey('apply-solid-colors')));
+        expect(painter(tester).derived.openings.single.color, '#DCC8B4');
+        expect(painter(tester).derived.openings.single.leafColor, '#DCC8B4');
+        await tap(tester, find.byTooltip('Undo'));
+        expect(painter(tester).derived.openings.single.color, isNull);
+        await tap(tester, find.byTooltip('Redo'));
+        final style = find.byKey(ValueKey('door-style-${original.id}-solid'));
+        await tester.scrollUntilVisible(style, -120, scrollable: scroll);
+        await tap(tester, style);
+        await tap(tester, find.text('Glass (transparent)').last);
+        final glass = painter(tester).derived.openings.single;
+        expect(glass.doorStyle, 'glass');
+        expect(glass.color, '#DCC8B4');
+        expect(glass.hinge, original.hinge);
+        expect(glass.tip, original.tip);
+        expect(glass.cut, original.cut);
+        expect(glass.mechanism, original.mechanism);
+        await tap(tester, find.byTooltip('Undo'));
+        expect(painter(tester).derived.openings.single.doorStyle, 'solid');
+        expect(
+          find.byKey(ValueKey('door-style-${original.id}-solid')),
+          findsOneWidget,
+        );
+        await tap(tester, find.byTooltip('Redo'));
+        await editColor();
+        await tester.enterText(
+          find.byKey(const ValueKey('solid-color-door')),
+          'invalid',
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.byKey(const ValueKey('apply-solid-colors')),
+              )
+              .onPressed,
+          isNull,
+        );
+        await tap(tester, find.text('Cancel'));
+        expect(painter(tester).derived.openings.single.color, '#DCC8B4');
+        final path = '${scratch.path}/door-appearance.domo';
+        dialog = (_) async => path;
+        await tap(tester, find.text('Save'));
+        await tap(tester, find.byTooltip('Open plan'));
+        final reopened = painter(tester).derived.openings.single;
+        expect(reopened.doorStyle, 'glass');
+        expect(reopened.color, '#DCC8B4');
+        expect(reopened.mechanism, original.mechanism);
+        await tap(tester, find.widgetWithText(ChoiceChip, 'Select'));
+        final cutCentre =
+            reopened.cut.reduce((a, b) => a + b) /
+            reopened.cut.length.toDouble();
+        await clickAt(
+          tester,
+          tester.getTopLeft(getCanvas()) + painter(tester).toScreen(cutCentre),
+          PointerDeviceKind.mouse,
+        );
+        expect(painter(tester).selected, reopened.id);
+        await editColor();
+        await tap(tester, find.byTooltip('Reset to original'));
+        await tap(tester, find.byKey(const ValueKey('apply-solid-colors')));
+        expect(painter(tester).derived.openings.single.color, isNull);
+        expect(painter(tester).derived.openings.single.doorStyle, 'glass');
+        expect(painter(tester).derived.openings.single.leafColor, '#80BFE6');
+      },
+    );
 
   testWidgets('a hinged door changes hinge end and swing side independently', (
     tester,
@@ -2721,9 +2814,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(walls(tester), 2);
-      final secondWallId = painter(
-        tester,
-      ).walls.firstWhere((wall) => wall.id != firstWallId).id;
+      final secondWallId = painter(tester).walls
+          .firstWhere((wall) => wall.id != firstWallId)
+          .id;
 
       final path = '${scratch.path}/wall-height-resolution.domo';
       dialog = (_) async => path;

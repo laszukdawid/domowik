@@ -2,8 +2,8 @@
 //! no I/O, callbacks or mutation. The caller commits the whole result atomically.
 use domowik_document::operation::Operation;
 use domowik_format::{
-    appearance::{self, MaterialColors, RgbColor},
-    Document,
+    appearance::{self, DoorStyle, MaterialColors, RgbColor},
+    Document, OpeningKind,
 };
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -68,4 +68,42 @@ pub fn asset(doc: &Document, id: Uuid, colors: &MaterialColors) -> Result<Vec<Op
             json!(colors)
         },
     ))
+}
+
+/// Replaces one door's optional leaf color and style as one operation. `None`
+/// resets color; solid removes the style override. Unknown targets and windows
+/// refuse without operations. No geometry, style references or other fields change.
+pub fn door(
+    doc: &Document,
+    id: Uuid,
+    color: Option<RgbColor>,
+    style: DoorStyle,
+) -> Result<Vec<Operation>, String> {
+    let opening = doc
+        .openings
+        .iter()
+        .find(|o| o.id == id)
+        .ok_or("unknown door")?;
+    if opening.kind != OpeningKind::Door {
+        return Err("appearance target must be a door".into());
+    }
+    let mut fields = Map::new();
+    if appearance::door_color(opening)? != color {
+        fields.insert("color".into(), json!(color));
+    }
+    if appearance::door_style(opening)? != style {
+        fields.insert(
+            "doorStyle".into(),
+            if style == DoorStyle::Solid {
+                Value::Null
+            } else {
+                json!(style)
+            },
+        );
+    }
+    Ok(if fields.is_empty() {
+        vec![]
+    } else {
+        vec![Operation::set_fields(id, fields)]
+    })
 }

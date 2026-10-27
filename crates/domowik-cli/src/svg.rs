@@ -402,9 +402,14 @@ fn draw_swing(svg: &mut String, opening: &Opening, a: Point, b: Point) {
         return;
     }
 
+    let color = domowik_format::appearance::door_plan_color(opening)
+        .ok()
+        .flatten()
+        .map(|c| c.hex())
+        .unwrap_or_else(|| "#8a6f3c".into());
     let _ = writeln!(
         svg,
-        r##"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="#8a6f3c" stroke-width="30"/>"##,
+        r##"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{color}" stroke-width="30"/>"##,
         fmt(hinge.x),
         fmt(hinge.y),
         fmt(tip.x),

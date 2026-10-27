@@ -253,7 +253,7 @@ int main(int argc, char **argv) {
   RESOLVE(outstanding_buffers, "domowik_outstanding_buffers");
   RESOLVE(open_plans, "domowik_open_plans");
 
-  check_eq(abi_version(), 20, "abi version");
+  check_eq(abi_version(), 21, "abi version");
 
   /* ---- a stateful round trip ---- */
   uint64_t h = 0;
