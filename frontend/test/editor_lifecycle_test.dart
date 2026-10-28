@@ -3231,6 +3231,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(camera(tester).zoom, 0.125);
       expect(camera(tester).toPlan(local), point);
+      // A browser trackpad pinch arrives as a scale signal.
+      await tester.sendEventToBinding(
+        PointerScaleEvent(position: position, scale: 2),
+      );
+      await tester.pumpAndSettle();
+      expect(camera(tester).zoom, 0.25);
+      expect(camera(tester).toPlan(local), point);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.sendKeyEvent(LogicalKeyboardKey.minus);
       await tester.pumpAndSettle();
