@@ -234,6 +234,9 @@ struct Plan {
     /// Local bounds of each `scene_models` mesh, computed once at decode so
     /// 3D picking and framing never rescan model vertices.
     scene_model_bounds: HashMap<String, domowik_scene::pick::Bounds>,
+    /// Keys in `scene_models` that are instance colour variants rather than
+    /// decoded source models. Variants the document no longer uses are evicted.
+    scene_color_variants: std::collections::BTreeSet<String>,
     scene_model_decodes: u64,
     scene_model_errors: std::collections::BTreeMap<String, String>,
     resolutions: Option<(
@@ -1352,6 +1355,7 @@ unsafe fn register_plan(
             metadata_changes: 0,
             scene_models: Default::default(),
             scene_model_bounds: Default::default(),
+            scene_color_variants: Default::default(),
             scene_model_decodes: 0,
             scene_model_errors: Default::default(),
             asset_hits: None,

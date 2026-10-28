@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -278,6 +279,22 @@ void install_mesh(Renderer* r,Renderer* old,const std::string& key,std::shared_p
   else {old->meshes.emplace(key,std::move(existing->second));existing->second=std::move(incoming);r->scene_dirty=true;}
   r->mesh_revision++;
 }
+// Installs a prepared scene under the scene mutex. Meshes it no longer
+// references (superseded colour variants, removed models) are retired first,
+// so trying colours cannot fill the texture budget; the view uploads a model
+// again when a later scene needs it. Instance-only scenes list every node.
+void commit_scene(Renderer* r,Renderer* old,PreparedScene& packet){
+  old->context=r->context;old->groups=std::move(r->groups);
+  std::set<std::string> used;for(const auto& g:packet.groups)used.insert(g.mesh);
+  for(auto it=r->meshes.begin();it!=r->meshes.end();){
+    if(used.count(it->first)){++it;continue;}
+    old->meshes.emplace(it->first,std::move(it->second));it=r->meshes.erase(it);r->mesh_revision++;
+  }
+  for(auto& [key,m]:packet.meshes)install_mesh(r,old,key,std::move(m));
+  r->groups=std::move(packet.groups);
+  if(!packet.camera.empty()){std::lock_guard<std::mutex> camera_lock(r->camera_mutex);std::copy(packet.camera.begin(),packet.camera.end(),r->camera.begin());r->requested_width=packet.width;r->requested_height=packet.height;r->camera_updates++;}
+  r->scene_dirty=true;r->scene_updates++;
+}
 void retire(Renderer* old){if(old->meshes.empty()&&old->groups.empty()){delete old;return;}std::lock_guard<std::mutex> lock(retired_mutex);retired.push_back(old);}
 void success(FlMethodCall* call,FlValue* value=nullptr){fl_method_call_respond_success(call,value,nullptr);}
 void reject(FlMethodCall* call,const char* message){fl_method_call_respond_error(call,"3d-renderer",message,nullptr,nullptr);}
@@ -301,11 +318,7 @@ void method(FlMethodChannel*,FlMethodCall* call,gpointer data){
       // Channel calls are serialized, but reject a stale preparation rather
       // than ever committing comparisons against a different mesh baseline.
       if(r->mesh_revision!=snapshot.revision){delete old;reject(call,"Scene mesh baseline changed");return;}
-      old->context=r->context;old->groups=std::move(r->groups);
-      for(auto& [key,m]:packet.meshes)install_mesh(r,old,key,std::move(m));
-      r->groups=std::move(packet.groups);
-      if(!packet.camera.empty()){std::lock_guard<std::mutex> camera_lock(r->camera_mutex);std::copy(packet.camera.begin(),packet.camera.end(),r->camera.begin());r->requested_width=packet.width;r->requested_height=packet.height;r->camera_updates++;}
-      r->scene_dirty=true;r->scene_updates++;
+      commit_scene(r,old,packet);
     }
     retire(old);notify(c);success(call);return;
   }
@@ -313,6 +326,9 @@ void method(FlMethodChannel*,FlMethodCall* call,gpointer data){
     FlValue* id=field(args,"id");auto incoming=std::make_shared<Mesh>();
     if(!id||fl_value_get_type(id)!=FL_VALUE_TYPE_STRING||!decode_mesh(args,*incoming)){reject(call,"Invalid triangle mesh or texture");return;}
     std::string key=fl_value_get_string(id);const auto snapshot=snapshot_meshes(r);
+    // Counts every resident mesh, including palettes the next scene commit
+    // will retire. Only near the budget (many large textured palettes at
+    // once) can this refuse an upload the incoming scene alone would fit.
     uint64_t total=incoming->rgba.size();for(const auto& [k,m]:snapshot.meshes)if(k!=key)total+=m->rgba.size();if(total>128*1024*1024){reject(call,"Scene textures exceed 128 MiB");return;}
     auto existing=snapshot.meshes.find(key);const bool changed=existing==snapshot.meshes.end()||!same_mesh(*existing->second,*incoming);
     auto* old=new Renderer();

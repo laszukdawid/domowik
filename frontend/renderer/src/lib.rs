@@ -619,6 +619,10 @@ impl Renderer {
             );
             self.stats.mesh_uploads += 1;
         }
+        // Transparent groups are not sorted by camera depth: two overlapping
+        // differently tinted panes (glass doors, ghosted levels) can blend in
+        // the wrong order. Rare in plans, and sorting would cost work on every
+        // camera move. The Linux GL presenter draws in the same order.
         // Group by (mesh, transparency) in first-appearance order so the draw
         // order, and hence blending, is deterministic for a given scene.
         let mut order: Vec<(String, bool)> = Vec::new();
