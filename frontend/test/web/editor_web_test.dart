@@ -531,6 +531,12 @@ void main() {
     await start(tester, config: store);
     await tester.tap(find.byTooltip('Preferences'));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('default-view-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2D + 3D split view').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('remember-layout-view')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('split-orientation')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Horizontal (top and bottom)').last);
@@ -540,6 +546,8 @@ void main() {
     final restarted = UserConfigStore(LocalConfigStorage(key));
     await restarted.load();
     expect(restarted.splitOrientation, SplitOrientation.horizontal);
+    expect(restarted.defaultViewMode, 'split');
+    expect(restarted.rememberedViewModes.values.single, '2d');
     expect(find.textContaining('Unsaved'), findsNothing);
   });
 

@@ -59,6 +59,8 @@ import 'plan_painter.dart';
 import 'wall_chain_state.dart';
 import 'benchmark_stats.dart';
 import 'staircase_properties_form.dart';
+import 'stair_drawing.dart';
+import 'stair_resize.dart';
 import 'live_property_edits.dart';
 
 // Preserve the editor's existing public imports while keeping scene payloads
@@ -89,7 +91,7 @@ bool get _firstFrameProbeRequested =>
 /// A mismatch is fatal on purpose. The header says a caller reading a
 /// different number must not proceed, and an app that proceeded anyway would
 /// be interpreting one struct layout as another.
-const int expectedAbi = 22;
+const int expectedAbi = 25;
 
 void main(List<String> arguments) {
   // Native builds may be launched as a headless probe; see platform/entry.dart.
@@ -130,6 +132,7 @@ class DomowikApp extends StatelessWidget {
 /// What a drag is doing, decided when it starts.
 enum _DragMode {
   staircase,
+  stairResize,
   none,
   draw,
   endpoint,
@@ -261,6 +264,7 @@ class _PlanPageState extends State<PlanPage>
   List<PlanLayer> _backgroundLevels = const [];
   Offset? _stairStart;
   List<PlanConstruction> _stairPreview = const [];
+  String? _resizingStairId, _stairResizeEdge;
   Offset? _stairHoverScreen;
   bool _stairPreviewReevalScheduled = false;
   String? _expandedStaircaseId;
@@ -280,6 +284,11 @@ class _PlanPageState extends State<PlanPage>
   /// reaches the document being edited from here: it is a key for config
   /// storage only.
   String? _documentId;
+
+  String? get _planPreferencesKey => _session?.levelPreferencesKey(
+    _documentId,
+    _levels.map((level) => level.id),
+  );
 
   List<String> _assetDirectories = const [];
   late final UserConfigStore _userConfig =
@@ -1027,6 +1036,7 @@ class _PlanPageState extends State<PlanPage>
     final next = _readModifierMask();
     if (next != _modifierMask) {
       final shiftChanged = ((next ^ _modifierMask) & shiftModifier) != 0;
+      final controlChanged = ((next ^ _modifierMask) & controlModifier) != 0;
       _modifierMask = next;
       _selection.observeContext(_selectionContext);
       if (shiftChanged &&
@@ -1034,6 +1044,17 @@ class _PlanPageState extends State<PlanPage>
           _dragClassified &&
           _pointerPosition != null) {
         _updateAssetRotation(_view.toPlan(_pointerPosition!));
+      }
+      if (controlChanged && _placing == 'staircase') {
+        final pointer = _mode == _DragMode.staircase && _dragClassified
+            ? _pointerPosition
+            : _stairStart != null && _activePointer == null
+            ? _stairHoverScreen
+            : null;
+        if (pointer != null) _updateStairPreview(_view.toPlan(pointer));
+      }
+      if (controlChanged && _mode == _DragMode.stairResize && _dragClassified) {
+        _updateStairResizePreview();
       }
     }
     final keyboard = HardwareKeyboard.instance;
@@ -1235,16 +1256,55 @@ class _PlanPageState extends State<PlanPage>
   }
 
   Future<void> _openPreferences() async {
-    if (!_acceptAssetPose()) return;
     await _configReady;
     if (!mounted) return;
+    await _fileAction(() async {
+      final key = _planPreferencesKey;
+      final previous = _userConfig.viewModeFor(key);
+      final remembered = _userConfig.rememberedViewModes.containsKey(key);
+      final saved = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PreferencesDialog(
+          store: _userConfig,
+          documentKey: key,
+          layoutName: _filePath?.split('/').last,
+          currentViewMode: _viewMode,
+        ),
+      );
+      if (!mounted || saved != true) return false;
+      setState(() {
+        final next = _userConfig.viewModeFor(key);
+        // An unrelated preference must not reset a temporary view choice.
+        if (next != previous ||
+            remembered != _userConfig.rememberedViewModes.containsKey(key)) {
+          _viewMode = next;
+        }
+      });
+      return true;
+    });
+  }
+
+  void _changeViewMode(String mode) {
+    if (_fileActionPending || !planViewModes.containsKey(mode)) return;
     _cancelDrag();
-    final saved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => PreferencesDialog(store: _userConfig),
-    );
-    if (mounted && saved == true) setState(() {});
+    setState(() => _viewMode = mode);
+    _rememberViewMode();
+  }
+
+  void _rememberViewMode() {
+    if (_benchmarking) return;
+    final key = _planPreferencesKey;
+    if (!_userConfig.rememberedViewModes.containsKey(key)) return;
+    _userConfig.saveRememberedViewMode(key, _viewMode).catchError((
+      Object error,
+    ) {
+      if (mounted && _planPreferencesKey == key) {
+        setState(
+          () => _setStatus('Could not remember view: $error', isError: true),
+        );
+      }
+    });
   }
 
   Future<void> _openAssetLibrary() async {
@@ -1809,6 +1869,7 @@ class _PlanPageState extends State<PlanPage>
       _poseDraftValid = true;
       if (show3d) _viewMode = 'split';
     });
+    if (show3d) _rememberViewMode();
   }
 
   void _previewAssetPose(List<double> values) {
@@ -2375,20 +2436,22 @@ class _PlanPageState extends State<PlanPage>
         final previousLevel = _levelId;
         _documentId = documentId;
         if (_resetLevelView) {
+          final key = _session?.levelPreferencesKey(
+            documentId,
+            levels.map((l) => l.id),
+          );
+          _viewMode = _benchmarking ? '2d' : _userConfig.viewModeFor(key);
           // Issue 0117: the reopen default is the device-remembered level for
           // this document identity when it still exists, not always the
           // first listed level; LevelViewState.reset falls back whenever
-          // there is no remembered value to match. The flags and every other
-          // view preference still reset per BEHAVIOR-SPEC §2.6.
+          // there is no remembered value to match. Level flags and camera
+          // framing still reset per BEHAVIOR-SPEC §2.6.
           _levelView.reset(
             levels,
             // A benchmark must not depend on, or change, the user's choice.
             rememberedActive: _benchmarking
                 ? null
-                : _userConfig.lastActiveLevels[_session?.levelPreferencesKey(
-                    documentId,
-                    levels.map((l) => l.id),
-                  )],
+                : _userConfig.lastActiveLevels[key],
           );
           _resetLevelView = false;
         } else {
@@ -2419,6 +2482,8 @@ class _PlanPageState extends State<PlanPage>
           for (final asset in _activeAssets) asset.id,
           for (final wall in _walls) wall.id,
           for (final opening in _derived.openings) opening.id,
+          for (final item in _derived.construction)
+            if (item.kind == 'staircase') item.id,
           ..._joins.keys,
         });
         _openPlans = bridge.openPlans();
@@ -2805,6 +2870,9 @@ class _PlanPageState extends State<PlanPage>
   Future<bool> _openFile() async {
     final source = await _fileDialogs.openPlan();
     if (source == null || !mounted) return false;
+    // Reopening must see the last chosen mode even if its write was queued.
+    await _userConfig.flush();
+    if (!mounted) return false;
     final session = _session;
     if (session == null) return false;
     final result = session.open(source);
@@ -2892,6 +2960,9 @@ class _PlanPageState extends State<PlanPage>
   /// dirty and its current file untouched.
   Future<bool> _storePlan(PlanSession session, PlanTarget target) async {
     final hadChanges = _dirty;
+    final rememberView = _userConfig.rememberedViewModes.containsKey(
+      _planPreferencesKey,
+    );
 
     try {
       final result = await session.save(target);
@@ -2899,6 +2970,13 @@ class _PlanPageState extends State<PlanPage>
       // A legacy plan's Save As changes its local file key, not its format.
       if (result.succeeded && _documentId == null && _levelId != null) {
         _rememberActiveLevel(_levelId!);
+        if (rememberView && !_benchmarking) {
+          // Save As changes a legacy file's local key. Carry its opt-in to
+          // the new destination, without changing the original file's hint.
+          _userConfig
+              .saveRememberedViewMode(_planPreferencesKey, _viewMode)
+              .catchError((Object _) {});
+        }
       }
       setState(() {
         if (result.succeeded) {
@@ -3146,10 +3224,7 @@ class _PlanPageState extends State<PlanPage>
             ? null
             : AccountButton(client: _accountClient),
         viewMode: _viewMode,
-        onViewModeChanged: (mode) {
-          _cancelDrag();
-          setState(() => _viewMode = mode);
-        },
+        onViewModeChanged: _changeViewMode,
         onUndo: _undoDepth > 0 || _poseHasChanges ? _changeHistory : null,
         onRedo: _redoDepth > 0 ? () => _changeHistory(redo: true) : null,
         tools: Row(
@@ -3513,7 +3588,7 @@ class _PlanPageState extends State<PlanPage>
     avatar: const Icon(Icons.stairs_outlined, size: 18),
     label: const Text('Stairs'),
     tooltip: _canAddStairs
-        ? 'Draw downstairs from this floor to the nearest level below'
+        ? 'Draw downstairs to the nearest level below; hold Ctrl for 15° increments'
         : 'Add a level below this floor before drawing stairs',
     selected: _placing == 'staircase',
     showCheckmark: false,
@@ -3533,11 +3608,16 @@ class _PlanPageState extends State<PlanPage>
           },
   );
 
-  Map<String, Object?> _stairDrawingRequest(Offset start, Offset end) => {
-    'upperLevelId': _levelId,
-    'startMm': [start.dx, start.dy],
-    'endMm': [end.dx, end.dy],
-  };
+  Map<String, Object?> _stairDrawingRequest(Offset start, Offset end) {
+    final endpoint = HardwareKeyboard.instance.isControlPressed
+        ? constrainStairDrawingEnd(start, end)
+        : end;
+    return {
+      'upperLevelId': _levelId,
+      'startMm': [start.dx, start.dy],
+      'endMm': [endpoint.dx, endpoint.dy],
+    };
+  }
 
   void _updateStairPreview(Offset end) {
     final start = _stairStart ?? _dragFrom, core = _bridge;
@@ -3556,6 +3636,74 @@ class _PlanPageState extends State<PlanPage>
               .toList()
         : <PlanConstruction>[];
     setState(() => _stairPreview = graphics);
+  }
+
+  List<StairResizeHandle> get _stairHandles {
+    if (_wallChainTool ||
+        _placing != null ||
+        _poseAssetId != null ||
+        _selection.ids.length != 1)
+      return const [];
+    final item = _derived.construction
+        .where((s) => s.id == _selected && s.kind == 'staircase')
+        .firstOrNull;
+    return item == null ? const [] : stairResizeHandles(item.outline, _view);
+  }
+
+  StairResizeHandle? _stairHandleAt(Offset screen, {bool touch = false}) {
+    final radius = touch ? 24.0 : 12.0;
+    final handles =
+        _stairHandles
+            .where((h) => (h.position - screen).distance <= radius)
+            .toList()
+          ..sort(
+            (a, b) => (a.position - screen).distanceSquared.compareTo(
+              (b.position - screen).distanceSquared,
+            ),
+          );
+    return handles.firstOrNull;
+  }
+
+  MouseCursor _stairResizeCursor(StairResizeHandle h) {
+    if (h.edge == 'lower' || h.edge == 'upper') return SystemMouseCursors.move;
+    final d = h.direction;
+    if (d.dx.abs() > d.dy.abs() * 2) return SystemMouseCursors.resizeLeftRight;
+    if (d.dy.abs() > d.dx.abs() * 2) return SystemMouseCursors.resizeUpDown;
+    return d.dx * d.dy >= 0
+        ? SystemMouseCursors.resizeUpLeftDownRight
+        : SystemMouseCursors.resizeUpRightDownLeft;
+  }
+
+  Map<String, Object?>? get _stairResizeRequest {
+    final from = _dragFrom, to = _dragTo;
+    if (_resizingStairId == null ||
+        _stairResizeEdge == null ||
+        from == null ||
+        to == null)
+      return null;
+    final delta = to - from;
+    return {
+      'staircaseId': _resizingStairId,
+      'levelId': _levelId,
+      'edge': _stairResizeEdge,
+      'deltaMm': [delta.dx, delta.dy],
+      'snapAngle': HardwareKeyboard.instance.isControlPressed,
+    };
+  }
+
+  void _updateStairResizePreview() {
+    final request = _stairResizeRequest, core = _bridge;
+    if (request == null || core == null) return;
+    final reply = core.stairPreview(_handle, jsonEncode(request));
+    setState(
+      () => _stairPreview = reply.succeeded
+          ? (jsonDecode(reply.text!) as List<Object?>)
+                .map(
+                  (v) => PlanConstruction.fromJson(v as Map<String, Object?>),
+                )
+                .toList()
+          : const [],
+    );
   }
 
   /// Canvas navigation uses the same transform as painting and gestures.
@@ -3581,6 +3729,7 @@ class _PlanPageState extends State<PlanPage>
       _dragTo = view.toPlan(_pointerPosition!);
       if ((_mode == _DragMode.draw ||
               _mode == _DragMode.staircase ||
+              _mode == _DragMode.stairResize ||
               _editingDrag ||
               _mode == _DragMode.opening) &&
           _dragClassified &&
@@ -3594,6 +3743,8 @@ class _PlanPageState extends State<PlanPage>
             _evaluateCreationSnap(cursor);
           } else if (_mode == _DragMode.staircase) {
             _updateStairPreview(cursor);
+          } else if (_mode == _DragMode.stairResize) {
+            _updateStairResizePreview();
           } else if (_editingDrag) {
             _evaluateEditSnap(cursor);
           } else if (_mode == _DragMode.opening) {
@@ -3701,6 +3852,8 @@ class _PlanPageState extends State<PlanPage>
       _stairStart = null;
       _stairPreview = const [];
       _stairHoverScreen = null;
+      _resizingStairId = null;
+      _stairResizeEdge = null;
       _dragWall = null;
       _dragOpening = null;
       _openingTargetHost = null;
@@ -4026,6 +4179,8 @@ class _PlanPageState extends State<PlanPage>
               if (_dragClassified) _scheduleDragPreview();
               if (_mode == _DragMode.staircase && _dragClassified)
                 _updateStairPreview(_view.toPlan(event.localPosition));
+              if (_mode == _DragMode.stairResize && _dragClassified)
+                _updateStairResizePreview();
             },
             onPointerUp: (event) {
               if (!event.localPosition.dx.isFinite ||
@@ -4094,6 +4249,13 @@ class _PlanPageState extends State<PlanPage>
                     _placing != null)
                   return;
                 final hits = _hitsAt(at);
+                final stairHandle = _stairHandleAt(event.localPosition);
+                if (stairHandle != null) {
+                  final cursor = _stairResizeCursor(stairHandle);
+                  if (cursor != _hoverCursor)
+                    setState(() => _hoverCursor = cursor);
+                  return;
+                }
                 final opening = _derived.openings
                     .where(
                       (o) =>
@@ -4153,6 +4315,11 @@ class _PlanPageState extends State<PlanPage>
                         : null,
                     modelPreviews: _modelPreviews,
                     constructionPreview: _stairPreview,
+                    resizingStairId: _resizingStairId,
+                    showStairResizeHandles:
+                        !_wallChainTool &&
+                        _placing == null &&
+                        _poseAssetId == null,
                     assetPreview:
                         _mode == _DragMode.asset &&
                             _dragClassified &&
@@ -4258,6 +4425,16 @@ class _PlanPageState extends State<PlanPage>
           ? _DragMode.poseAccept
           : _DragMode.none;
     }
+    final stairHandle = _stairHandleAt(
+      e.localPosition,
+      touch: e.kind == PointerDeviceKind.touch,
+    );
+    if (stairHandle != null) {
+      _resizingStairId = _selected;
+      _stairResizeEdge = stairHandle.edge;
+      _showSelectionInspector();
+      return _DragMode.stairResize;
+    }
     final selectedDoor = _derived.openings
         .where((o) => o.id == _selected && o.isDoor)
         .firstOrNull;
@@ -4331,6 +4508,7 @@ class _PlanPageState extends State<PlanPage>
       return _DragMode.opening;
     }
     if (hit.kind == 'placeholder-box') return _DragMode.selectOnly;
+    if (hit.kind == 'staircase') return _DragMode.group;
     if (hit.kind == 'asset-footprint') {
       _dragWall = hit.entityId;
       return _DragMode.asset;
@@ -4997,6 +5175,7 @@ class _PlanPageState extends State<PlanPage>
     // be diverted into a wall commit.
     final chaining = _wallChainTool && mode == _DragMode.draw;
     final snapFailed = _snapFailed;
+    final stairResizeRequest = _stairResizeRequest;
     setState(() {
       _dragFrom = null;
       _dragTo = null;
@@ -5013,7 +5192,20 @@ class _PlanPageState extends State<PlanPage>
       _snapRawStart = null;
       _assetRotationDrag = null;
       _poseDragInitial = null;
+      _resizingStairId = null;
+      _stairResizeEdge = null;
+      if (mode == _DragMode.stairResize) _stairPreview = const [];
     });
+
+    if (mode == _DragMode.stairResize) {
+      if (classified && from != to && stairResizeRequest != null) {
+        _gesture({
+          'kind': 'resizeStaircase',
+          'request': stairResizeRequest,
+        }, 'resize stairs');
+      }
+      return;
+    }
 
     // Releasing the handle keeps a draft only, including a click without drag.
     if (mode == _DragMode.staircase) {
@@ -5073,6 +5265,7 @@ class _PlanPageState extends State<PlanPage>
 
     switch (mode) {
       case _DragMode.staircase:
+      case _DragMode.stairResize:
         return;
       case _DragMode.asset:
         final asset = _activeAssets.where((a) => a.id == wall).firstOrNull;
@@ -5274,6 +5467,10 @@ class _PlanPageState extends State<PlanPage>
             ? 'selected an opening'
             : _activeAssets.any((asset) => asset.id == _selected)
             ? 'selected a model footprint'
+            : _derived.construction.any(
+                (item) => item.kind == 'staircase' && item.id == _selected,
+              )
+            ? 'selected stairs'
             : '${_selection.ids.length} selected; primary wall',
         isError: false,
       );
@@ -5431,6 +5628,13 @@ class _PlanPageState extends State<PlanPage>
     }
     if (_derived.openings.any((opening) => opening.id == id)) {
       _gesture({'kind': 'deleteOpening', 'openingId': id}, 'delete opening');
+      return;
+    }
+    if (_derived.construction.any(
+      (item) => item.kind == 'staircase' && item.id == id,
+    )) {
+      _livePropertyEdits.cancel();
+      _gesture({'kind': 'deleteStaircase', 'staircaseId': id}, 'delete stairs');
       return;
     }
     if (_joins.containsKey(id)) {
@@ -5801,6 +6005,9 @@ class _PlanPageState extends State<PlanPage>
     final selectedOpening = _derived.openings
         .where((o) => o.id == _selected)
         .firstOrNull;
+    final selectedStair = _derived.construction
+        .where((item) => item.kind == 'staircase' && item.id == _selected)
+        .firstOrNull;
     final floorPanel = ListView(
       key: const PageStorageKey('floor-inspector'),
       padding: const EdgeInsets.all(16),
@@ -5978,6 +6185,20 @@ class _PlanPageState extends State<PlanPage>
           Text(
             'Drag this corner to move all connected ends together.',
             style: theme.textTheme.bodySmall,
+          ),
+        ] else if (selectedStair != null) ...[
+          Text(selectedStair.name),
+          const Text(
+            'Drag to move; use side handles for width, or end handles for length and angle. Hold Ctrl for 15° increments. The floor opening follows.',
+          ),
+          Tooltip(
+            message: 'Delete stairs; keep the independent floor opening',
+            child: OutlinedButton.icon(
+              key: const ValueKey('delete-staircase'),
+              onPressed: _fileActionPending ? null : _deleteSelected,
+              icon: const Icon(Icons.delete_outline, size: 18),
+              label: const Text('Delete stairs'),
+            ),
           ),
         ] else if (selectedAsset != null) ...[
           Text(selectedAsset.name),

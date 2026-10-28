@@ -1,5 +1,12 @@
 version: '3'
 
+# rustc peaks at roughly 2 GB per job; the default one-job-per-core build
+# exhausted RAM and swap on a 12-core machine. Mirrors .cargo/config.toml but
+# also covers cargo invoked by the frontend tooling. Override when headroom
+# allows, e.g. `CARGO_BUILD_JOBS=8 task test`.
+env:
+  CARGO_BUILD_JOBS: '{{.CARGO_BUILD_JOBS | default "4"}}'
+
 tasks:
   run:
     desc: Build and run the domowik CLI

@@ -33,6 +33,9 @@ draft questions are not implementation instructions.
 
 ## Implementation conventions
 
+- Keep production deployment tooling and environment-specific hosting settings
+  out of this standalone editor repository. Hosted-service/operator repositories
+  own deployment; public build and test tools remain deployment-agnostic.
 - Core and CLI use Rust, in the root Cargo workspace under `crates/`.
   The Flutter editor and native/rendering workspace live in `frontend/`.
 - Rust owns document semantics and geometry. Do not duplicate authoritative

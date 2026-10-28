@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ffi' hide Size;
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
 import 'package:domowik_editor/core/ffi_core.dart';
@@ -136,6 +137,705 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  for (final scenario in <(String, Offset, double)>[
+    ('up', const Offset(15, -280), 90),
+    ('diagonal', const Offset(230, -250), 45),
+    ('sideways', const Offset(280, -15), 0),
+    ('15 degrees', const Offset(280, -80), 15),
+  ]) {
+    testWidgets(
+      'Ctrl stair drag constrains ${scenario.$1} and commits the preview',
+      (tester) async {
+        await start(tester);
+        await tester.tap(find.byKey(const ValueKey('add-stairs-tool')));
+        await tester.pumpAndSettle();
+        final before = core.document;
+        final view = painter(tester).view;
+        final top = tester.getTopLeft(canvas());
+        const localStart = Offset(200, 350);
+        final upperStart = view.toPlan(localStart);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        final drag = await tester.startGesture(
+          top + localStart,
+          kind: PointerDeviceKind.mouse,
+        );
+        await drag.moveTo(top + localStart + scenario.$2);
+        await tester.pumpAndSettle();
+        final preview = painter(tester).constructionPreview.single;
+        expect(core.document, before);
+        await drag.up();
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pumpAndSettle();
+        expect(
+          painter(tester).derived.construction.single.outline,
+          preview.outline,
+        );
+        final connection =
+            (core.document['levelConnections'] as List).single as Map;
+        final upper = (connection['to'] as Map)['positionMm'] as List;
+        final lower = (connection['from'] as Map)['positionMm'] as List;
+        expect(upper, [upperStart.dx, upperStart.dy]);
+        final direction =
+            Offset((lower[0] as num).toDouble(), (lower[1] as num).toDouble()) -
+            upperStart;
+        expect(
+          math.atan2(direction.dy, direction.dx) * 180 / math.pi,
+          closeTo(scenario.$3, 1e-9),
+        );
+        await tester.tap(find.byTooltip('Undo'));
+        await tester.pumpAndSettle();
+        expect(core.stairs, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'Ctrl changes a stationary stair preview and releases without drift',
+    (tester) async {
+      await start(tester);
+      await tester.tap(find.byKey(const ValueKey('add-stairs-tool')));
+      await tester.pumpAndSettle();
+      final before = core.document;
+      final top = tester.getTopLeft(canvas());
+      final drag = await tester.startGesture(
+        top + const Offset(200, 350),
+        kind: PointerDeviceKind.mouse,
+      );
+      await drag.moveTo(top + const Offset(480, 330));
+      await tester.pumpAndSettle();
+      final free = painter(tester).constructionPreview.single.outline;
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      final constrained = painter(tester).constructionPreview.single.outline;
+      expect(constrained, isNot(free));
+      expect(core.document, before);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(painter(tester).constructionPreview.single.outline, free);
+      await drag.up();
+      await tester.pumpAndSettle();
+      expect(painter(tester).derived.construction.single.outline, free);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'click-click stair drawing responds to Ctrl without another hover',
+    (tester) async {
+      await start(tester);
+      await tester.tap(find.byKey(const ValueKey('add-stairs-tool')));
+      await tester.pumpAndSettle();
+      final top = tester.getTopLeft(canvas());
+      await tester.tapAt(top + const Offset(200, 350));
+      final hover = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await hover.addPointer(location: top + const Offset(200, 350));
+      await hover.moveTo(top + const Offset(480, 330));
+      await tester.pumpAndSettle();
+      final free = painter(tester).constructionPreview.single.outline;
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlRight);
+      await tester.pumpAndSettle();
+      final constrained = painter(tester).constructionPreview.single.outline;
+      expect(constrained, isNot(free));
+      expect(core.stairs, isEmpty);
+      await tester.tapAt(top + const Offset(480, 330));
+      await tester.pumpAndSettle();
+      expect(painter(tester).derived.construction.single.outline, constrained);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlRight);
+      await hover.removePointer();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  Future<void> selectTool(WidgetTester tester) async {
+    await tester.tap(
+      find.descendant(
+        of: find.byType(ChoiceChip),
+        matching: find.text('Select'),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  Offset stairCenter(WidgetTester tester) {
+    final p = painter(tester);
+    final outline = p.derived.construction.single.outline;
+    final center = outline.reduce((a, b) => a + b) / outline.length.toDouble();
+    return tester.getTopLeft(canvas()) + p.view.toScreen(center);
+  }
+
+  for (final lower in [false, true]) {
+    for (final key in [
+      LogicalKeyboardKey.delete,
+      LogicalKeyboardKey.backspace,
+    ]) {
+      testWidgets(
+        '${key.keyLabel} deletes selected stairs from ${lower ? 'lower' : 'upper'} floor and undoes atomically',
+        (tester) async {
+          await start(tester);
+          await addStair(tester);
+          if (lower) {
+            await tester.tap(find.text('Level 1'));
+            await tester.pumpAndSettle();
+          }
+          await selectTool(tester);
+          await tester.tapAt(stairCenter(tester));
+          await tester.pumpAndSettle();
+          final before = core.document;
+          expect(painter(tester).selectedIds, hasLength(1));
+          await tester.sendKeyEvent(key);
+          await tester.pumpAndSettle();
+          final deleted = core.document;
+          expect(core.stairs, isEmpty);
+          expect(deleted['levelConnections'] ?? const [], isEmpty);
+          expect(deleted['hostedOpenings'], before['hostedOpenings']);
+          expect(painter(tester).selectedIds, isEmpty);
+          expect(painter(tester).stairHandles, isEmpty);
+          await tester.tap(find.byTooltip('Undo'));
+          await tester.pumpAndSettle();
+          expect(core.document, before);
+          expect(painter(tester).selectedIds, isEmpty);
+          await tester.tap(find.byTooltip('Redo'));
+          await tester.pumpAndSettle();
+          expect(core.document, deleted);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets('Selection panel deletes stairs with the same undoable command', (
+    tester,
+  ) async {
+    await start(tester);
+    await addStair(tester);
+    await selectTool(tester);
+    await tester.tapAt(stairCenter(tester));
+    await tester.pumpAndSettle();
+    final before = core.document;
+    await tester.tap(find.byKey(const ValueKey('delete-staircase')));
+    await tester.pumpAndSettle();
+    expect(core.stairs, isEmpty);
+    expect(core.document['levelConnections'] ?? const [], isEmpty);
+    expect(core.document['hostedOpenings'], before['hostedOpenings']);
+    await tester.tap(find.byTooltip('Undo'));
+    await tester.pumpAndSettle();
+    expect(core.document, before);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Delete and Backspace inside stair name fields never remove the assembly',
+    (tester) async {
+      await start(tester);
+      await addStair(tester);
+      final input = find.byKey(const PageStorageKey('stair-name'));
+      await tester.ensureVisible(input);
+      await tester.enterText(input, 'Synthetic stairs');
+      for (final key in [
+        LogicalKeyboardKey.delete,
+        LogicalKeyboardKey.backspace,
+      ]) {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+        expect(core.stairs, hasLength(1));
+        expect(core.document['levelConnections'], hasLength(1));
+        expect(core.document['hostedOpenings'], hasLength(1));
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final lower in [false, true]) {
+    for (final edge in ['left', 'right', 'lower', 'upper']) {
+      testWidgets(
+        '$edge handle resizes from ${lower ? 'lower' : 'upper'} floor with one undoable edit',
+        (tester) async {
+          await start(tester);
+          await addStair(tester);
+          if (lower) {
+            await tester.tap(find.text('Level 1'));
+            await tester.pumpAndSettle();
+          }
+          await selectTool(tester);
+          await tester.tapAt(stairCenter(tester));
+          await tester.pumpAndSettle();
+          expect(painter(tester).stairHandles, hasLength(4));
+          final before = core.document;
+          final outline = painter(tester).derived.construction.single.outline;
+          final handle = painter(tester).stairHandles
+              .singleWhere((h) => h.edge == edge);
+          final at = tester.getTopLeft(canvas()) + handle.position;
+          final inward = handle.direction / handle.direction.distance * -30;
+          final drag = await tester.startGesture(
+            at,
+            kind: lower && edge == 'left'
+                ? PointerDeviceKind.touch
+                : PointerDeviceKind.mouse,
+          );
+          await drag.moveTo(at + inward);
+          await tester.pumpAndSettle();
+          expect(core.document, before);
+          expect(painter(tester).resizingStairId, painter(tester).selected);
+          final preview = painter(tester).constructionPreview.single;
+          final fixed = switch (edge) {
+            'left' => [0, 1],
+            'right' => [2, 3],
+            'lower' => [1, 2],
+            _ => [0, 3],
+          };
+          for (final i in fixed) {
+            expect((outline[i] - preview.outline[i]).distance, lessThan(1e-6));
+          }
+          await drag.up();
+          await tester.pumpAndSettle();
+          final resized = core.document;
+          expect(resized, isNot(before));
+          expect(
+            painter(tester).derived.construction.single.outline,
+            preview.outline,
+          );
+          expect(painter(tester).constructionPreview, isEmpty);
+          expect(painter(tester).resizingStairId, isNull);
+          expect(painter(tester).stairHandles, hasLength(4));
+          final oldStair = (before['staircases'] as List).single as Map;
+          final newStair = (resized['staircases'] as List).single as Map;
+          expect(newStair['risers'], oldStair['risers']);
+          expect(newStair['guardHeightMm'], oldStair['guardHeightMm']);
+          if (edge == 'left' || edge == 'right') {
+            expect(newStair['widthMm'], lessThan(oldStair['widthMm'] as num));
+          } else {
+            expect(newStair['widthMm'], oldStair['widthMm']);
+          }
+          final connection =
+              (resized['levelConnections'] as List).single as Map;
+          final cut =
+              ((resized['hostedOpenings'] as List).single as Map)['footprint']
+                  as Map;
+          expect(cut['startMm'], (connection['from'] as Map)['positionMm']);
+          expect(cut['endMm'], (connection['to'] as Map)['positionMm']);
+          expect(cut['widthMm'], newStair['widthMm']);
+          await tester.tap(find.byTooltip('Undo'));
+          await tester.pumpAndSettle();
+          expect(core.document, before);
+          await tester.tap(find.byTooltip('Redo'));
+          await tester.pumpAndSettle();
+          expect(core.document, resized);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'cancelled, invalid and return-to-grab stair resizes never add history',
+    (tester) async {
+      await start(tester);
+      await addStair(tester);
+      await selectTool(tester);
+      await tester.tapAt(stairCenter(tester));
+      await tester.pumpAndSettle();
+      final before = core.document;
+      final selected = painter(tester).selected;
+      final handle = painter(tester).stairHandles.first;
+      final at = tester.getTopLeft(canvas()) + handle.position;
+      final inward = handle.direction / handle.direction.distance * -30;
+      for (final cancel in ['escape', 'pointer', 'focus']) {
+        final drag = await tester.startGesture(
+          at,
+          kind: PointerDeviceKind.mouse,
+        );
+        await drag.moveTo(at + inward);
+        await tester.pumpAndSettle();
+        expect(painter(tester).constructionPreview, isNotEmpty);
+        if (cancel == 'escape') {
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+          await drag.up();
+        } else if (cancel == 'pointer') {
+          await drag.cancel();
+        } else {
+          FocusManager.instance.primaryFocus?.unfocus();
+          await tester.pump();
+          await drag.up();
+        }
+        await tester.pumpAndSettle();
+        expect(core.document, before);
+        expect(painter(tester).constructionPreview, isEmpty);
+        expect(painter(tester).resizingStairId, isNull);
+        expect(painter(tester).selected, selected);
+      }
+      final invalid = await tester.startGesture(
+        at,
+        kind: PointerDeviceKind.mouse,
+      );
+      await invalid.moveTo(at + inward * 10);
+      await tester.pumpAndSettle();
+      expect(painter(tester).constructionPreview, isEmpty);
+      await invalid.up();
+      await tester.pumpAndSettle();
+      expect(core.document, before);
+      final noOp = await tester.startGesture(at, kind: PointerDeviceKind.mouse);
+      await noOp.moveTo(at + inward);
+      await noOp.moveTo(at);
+      await noOp.up();
+      await tester.pumpAndSettle();
+      expect(core.document, before);
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(core.stairs, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final lower in [false, true]) {
+    for (final edge in ['lower', 'upper']) {
+      testWidgets(
+        '$edge end changes length and angle from ${lower ? 'lower' : 'upper'} floor with live Ctrl snapping',
+        (tester) async {
+          await start(tester);
+          await addStair(tester);
+          if (lower) {
+            await tester.tap(find.text('Level 1'));
+            await tester.pumpAndSettle();
+          }
+          await selectTool(tester);
+          await tester.tapAt(stairCenter(tester));
+          await tester.pumpAndSettle();
+          final before = core.document;
+          final oldConnection =
+              (before['levelConnections'] as List).single as Map;
+          final pivot = edge == 'lower' ? 'to' : 'from';
+          final moving = edge == 'lower' ? 'from' : 'to';
+          final handle = painter(tester).stairHandles
+              .singleWhere((h) => h.edge == edge);
+          // Grab slightly off-centre: the edit must use displacement, not jump
+          // the endpoint to the precise cursor location.
+          final at =
+              tester.getTopLeft(canvas()) +
+              handle.position +
+              const Offset(3, 2);
+          final screenDelta = Offset(edge == 'lower' ? 60 : -60, -100);
+          final zoom = painter(tester).view.zoom;
+          final drag = await tester.startGesture(
+            at,
+            kind: PointerDeviceKind.mouse,
+          );
+          await drag.moveTo(at + screenDelta);
+          await tester.pumpAndSettle();
+          final free = painter(tester).constructionPreview.single.outline;
+          expect(core.document, before);
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+          await tester.pumpAndSettle();
+          final snapped = painter(tester).constructionPreview.single.outline;
+          expect(snapped, isNot(free));
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+          await tester.pumpAndSettle();
+          expect(painter(tester).constructionPreview.single.outline, free);
+          expect(core.document, before);
+          await drag.up();
+          await tester.pumpAndSettle();
+          final freelyChanged = core.document;
+          final freeConnection =
+              (freelyChanged['levelConnections'] as List).single as Map;
+          final oldPosition =
+              (oldConnection[moving] as Map)['positionMm'] as List;
+          final newPosition =
+              (freeConnection[moving] as Map)['positionMm'] as List;
+          expect(
+            newPosition[0],
+            closeTo((oldPosition[0] as num) + screenDelta.dx / zoom, 1e-6),
+          );
+          expect(
+            newPosition[1],
+            closeTo((oldPosition[1] as num) - screenDelta.dy / zoom, 1e-6),
+          );
+          expect(freeConnection[pivot], oldConnection[pivot]);
+          expect(painter(tester).derived.construction.single.outline, free);
+          await tester.tap(find.byTooltip('Undo'));
+          await tester.pumpAndSettle();
+          expect(core.document, before);
+          // Repeat the same grab and commit its constrained preview.
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+          final constrainedDrag = await tester.startGesture(
+            at,
+            kind: PointerDeviceKind.mouse,
+          );
+          await constrainedDrag.moveTo(at + screenDelta);
+          await tester.pumpAndSettle();
+          expect(painter(tester).constructionPreview.single.outline, snapped);
+          await constrainedDrag.up();
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+          await tester.pumpAndSettle();
+          final changed = core.document;
+          final connection =
+              (changed['levelConnections'] as List).single as Map;
+          expect(connection[pivot], oldConnection[pivot]);
+          expect(changed['staircases'], before['staircases']);
+          final from = (connection['from'] as Map)['positionMm'] as List;
+          final to = (connection['to'] as Map)['positionMm'] as List;
+          final steps =
+              math.atan2(
+                (to[1] as num).toDouble() - (from[1] as num).toDouble(),
+                (to[0] as num).toDouble() - (from[0] as num).toDouble(),
+              ) *
+              180 /
+              math.pi /
+              15;
+          expect(steps, closeTo(steps.roundToDouble(), 1e-10));
+          final cut =
+              ((changed['hostedOpenings'] as List).single as Map)['footprint']
+                  as Map;
+          expect(cut['startMm'], from);
+          expect(cut['endMm'], to);
+          expect(painter(tester).derived.construction.single.outline, snapped);
+          await tester.tap(find.byTooltip('Undo'));
+          await tester.pumpAndSettle();
+          expect(core.document, before);
+          await tester.tap(find.byTooltip('Redo'));
+          await tester.pumpAndSettle();
+          expect(core.document, changed);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'navigation reprojects a captured stair resize and commit matches it',
+    (tester) async {
+      await start(tester);
+      await addStair(tester);
+      await selectTool(tester);
+      await tester.tapAt(stairCenter(tester));
+      await tester.pumpAndSettle();
+      final before = core.document;
+      final handle = painter(tester).stairHandles.first;
+      final at = tester.getTopLeft(canvas()) + handle.position;
+      final drag = await tester.startGesture(at, kind: PointerDeviceKind.mouse);
+      await drag.moveTo(at - handle.direction / handle.direction.distance * 20);
+      await tester.pumpAndSettle();
+      final first = painter(tester).constructionPreview.single.outline;
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      final reprojected = painter(tester).constructionPreview.single.outline;
+      expect(reprojected, isNot(first));
+      expect(core.document, before);
+      await drag.up();
+      await tester.pumpAndSettle();
+      expect(painter(tester).derived.construction.single.outline, reprojected);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Escape cancels a Ctrl-constrained end rotation without delayed edits or history',
+    (tester) async {
+      await start(tester);
+      await addStair(tester);
+      await selectTool(tester);
+      await tester.tapAt(stairCenter(tester));
+      await tester.pumpAndSettle();
+      final before = core.document;
+      final selected = painter(tester).selected;
+      final handle = painter(tester).stairHandles
+          .singleWhere((h) => h.edge == 'upper');
+      final at = tester.getTopLeft(canvas()) + handle.position;
+      final drag = await tester.startGesture(at, kind: PointerDeviceKind.mouse);
+      await drag.moveTo(at + const Offset(-60, -100));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(painter(tester).constructionPreview, isNotEmpty);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await drag.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(core.document, before);
+      expect(painter(tester).constructionPreview, isEmpty);
+      expect(painter(tester).resizingStairId, isNull);
+      expect(painter(tester).selected, selected);
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(core.stairs, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final lower in [false, true]) {
+    testWidgets(
+      'stairs select and drag with their cut from the ${lower ? 'lower' : 'upper'} floor',
+      (tester) async {
+        await start(tester);
+        await addStair(tester);
+        if (lower) {
+          await tester.tap(find.text('Level 1'));
+          await tester.pumpAndSettle();
+        }
+        await selectTool(tester);
+        final before = core.document;
+        final id = (core.stairs.single as Map)['id'];
+        final at = stairCenter(tester);
+        await tester.tapAt(at);
+        await tester.pumpAndSettle();
+        expect(painter(tester).selectedIds, {id});
+        expect(painter(tester).selected, id);
+        expect(core.document, before);
+        final zoom = painter(tester).view.zoom;
+        const screenDelta = Offset(60, 30);
+        final drag = await tester.startGesture(
+          at,
+          kind: PointerDeviceKind.mouse,
+        );
+        await drag.moveTo(at + screenDelta);
+        await tester.pumpAndSettle();
+        expect(core.document, before);
+        expect(painter(tester).groupPreview!.$1, {id});
+        expect(
+          painter(tester).groupPreview!.$2.dx,
+          closeTo(screenDelta.dx / zoom, 1e-6),
+        );
+        await drag.up();
+        await tester.pumpAndSettle();
+        final moved = core.document;
+        expect(moved, isNot(before));
+        expect(painter(tester).selectedIds, {id});
+        expect(painter(tester).groupPreview, isNull);
+        final oldConnection =
+            (before['levelConnections'] as List).single as Map;
+        final newConnection = (moved['levelConnections'] as List).single as Map;
+        for (final end in ['from', 'to']) {
+          final a = oldConnection[end] as Map, b = newConnection[end] as Map;
+          expect(b['levelId'], a['levelId']);
+          expect(b['offsetMm'], a['offsetMm']);
+          final oldPosition = a['positionMm'] as List,
+              newPosition = b['positionMm'] as List;
+          expect(
+            newPosition[0],
+            closeTo((oldPosition[0] as num) + screenDelta.dx / zoom, 1e-6),
+          );
+          expect(
+            newPosition[1],
+            closeTo((oldPosition[1] as num) - screenDelta.dy / zoom, 1e-6),
+          );
+        }
+        final cut =
+            ((moved['hostedOpenings'] as List).single as Map)['footprint']
+                as Map;
+        expect(cut['startMm'], (newConnection['from'] as Map)['positionMm']);
+        expect(cut['endMm'], (newConnection['to'] as Map)['positionMm']);
+        expect(moved['staircases'], before['staircases']);
+        await tester.tap(find.byTooltip('Undo'));
+        await tester.pumpAndSettle();
+        expect(core.document, before);
+        await tester.tap(find.byTooltip('Redo'));
+        await tester.pumpAndSettle();
+        expect(core.document, moved);
+        await tester.tap(find.byKey(const ValueKey('inspector-floor-tab')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(lower ? 'Upper' : 'Level 1'));
+        await tester.pumpAndSettle();
+        await selectTool(tester);
+        await tester.tapAt(stairCenter(tester));
+        await tester.pumpAndSettle();
+        expect(painter(tester).selectedIds, {id});
+        expect(
+          painter(tester).derived.construction.single.direction,
+          lower ? 'DOWN' : 'UP',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'cancelling a stair drag restores selection and leaves history untouched',
+    (tester) async {
+      await start(tester);
+      await addStair(tester);
+      await selectTool(tester);
+      final before = core.document;
+      final at = stairCenter(tester);
+      for (final escape in [true, false]) {
+        final drag = await tester.startGesture(
+          at,
+          kind: PointerDeviceKind.mouse,
+        );
+        await drag.moveTo(at + const Offset(50, 30));
+        await tester.pumpAndSettle();
+        expect(painter(tester).selectedIds, isNotEmpty);
+        expect(painter(tester).groupPreview, isNotNull);
+        if (escape) {
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+          await drag.up();
+        } else {
+          await drag.cancel();
+        }
+        await tester.pumpAndSettle();
+        expect(core.document, before);
+        expect(painter(tester).selectedIds, isEmpty);
+        expect(painter(tester).groupPreview, isNull);
+      }
+      // Dragging out and back is also history-neutral.
+      final drag = await tester.startGesture(at, kind: PointerDeviceKind.mouse);
+      await drag.moveTo(at + const Offset(50, 30));
+      await drag.moveTo(at);
+      await drag.up();
+      await tester.pumpAndSettle();
+      expect(core.document, before);
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(
+        core.stairs,
+        isEmpty,
+      ); // Undo creation, not a cancelled/no-op move.
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'moved resized and rotated stairs and their opening survive saving and reopening',
+    (tester) async {
+      final directory = Directory(
+        Platform.environment['DOMOWIK_TEST_TMPDIR'] ??
+            Directory.systemTemp.path,
+      ).createTempSync('stair-move-save-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final path = '${directory.path}/synthetic.domo';
+      await start(tester, dialogs: _StairDialogs(path));
+      await addStair(tester);
+      await selectTool(tester);
+      await tester.dragFrom(stairCenter(tester), const Offset(50, 30));
+      await tester.pumpAndSettle();
+      final handle = painter(tester).stairHandles.first;
+      await tester.dragFrom(
+        tester.getTopLeft(canvas()) + handle.position,
+        handle.direction / handle.direction.distance * -20,
+      );
+      await tester.pumpAndSettle();
+      final endHandle = painter(tester).stairHandles
+          .singleWhere((h) => h.edge == 'upper');
+      await tester.dragFrom(
+        tester.getTopLeft(canvas()) + endHandle.position,
+        const Offset(-40, -25),
+      );
+      await tester.pumpAndSettle();
+      final moved = core.document;
+      await tester.tap(find.byKey(const ValueKey('save-action')));
+      await tester.pumpAndSettle();
+      final saved = core.openPath(path);
+      expect(saved.code, 0);
+      final snapshot = jsonDecode(core.snapshot(saved.handle).text!) as Map;
+      for (final collection in [
+        'levelConnections',
+        'staircases',
+        'hostedOpenings',
+      ]) {
+        expect(snapshot[collection], moved[collection]);
+      }
+      expect(core.close(saved.handle), 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'omitted stair diagnostics stay visible beside the valid drawing',

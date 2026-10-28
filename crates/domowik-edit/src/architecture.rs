@@ -372,6 +372,173 @@ pub fn delete_stair_operations(doc: &Document, id: Uuid) -> Result<Vec<Operation
     ])
 }
 
+/// Translate a stair and its aligned upper-floor cuts by a finite plan-mm delta.
+/// Endpoint levels/offsets, assembly parameters, IDs and optional fields survive.
+/// Custom or shared cuts refuse rather than inferring attachment. The owned,
+/// deterministic batch is validated atomically; zero movement emits no operations.
+/// No retained state, callbacks or threading requirements.
+pub fn translate_stair_operations(
+    doc: &Document,
+    id: Uuid,
+    delta: Point,
+) -> Result<Vec<Operation>, String> {
+    if !delta.x.is_finite() || !delta.y.is_finite() {
+        return Err("stair displacement must be finite".into());
+    }
+    let s = doc.staircase(id).ok_or("no such staircase")?;
+    let before = doc
+        .connection(s.connection_id)
+        .ok_or("missing stair connection")?;
+    if delta.x == 0.0 && delta.y == 0.0 {
+        return Ok(vec![]);
+    }
+    let mut connection = before.clone();
+    for endpoint in [&mut connection.from, &mut connection.to] {
+        endpoint.position_mm[0] += delta.x;
+        endpoint.position_mm[1] += delta.y;
+    }
+    set_stair_footprint_operations(
+        doc,
+        id,
+        &RectFootprint {
+            start_mm: connection.from.position_mm,
+            end_mm: connection.to.position_mm,
+            width_mm: s.width_mm,
+        },
+    )
+}
+
+/// An edge-resize intention. Delta is the raw pointer displacement in plan mm,
+/// not a proposed width or endpoint. The core owns projection and consequences.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResizeStairRequest {
+    pub staircase_id: Uuid,
+    pub level_id: Uuid,
+    #[serde(with = "StairResizeEdgeDef")]
+    pub edge: architecture::StairResizeEdge,
+    pub delta_mm: [f64; 2],
+    #[serde(default)]
+    pub snap_angle: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "architecture::StairResizeEdge", rename_all = "camelCase")]
+enum StairResizeEdgeDef {
+    Left,
+    Right,
+    Lower,
+    Upper,
+}
+
+/// Validated, deterministic atomic resize batch, retaining levels, elevations,
+/// step count, IDs and optional fields. Custom/shared cuts refuse. No-op requests
+/// emit no operations. No I/O, retained state, callbacks or mutation on failure.
+pub fn resize_stair_operations(
+    doc: &Document,
+    r: &ResizeStairRequest,
+) -> Result<Vec<Operation>, String> {
+    let s = doc.staircase(r.staircase_id).ok_or("no such staircase")?;
+    let c = doc
+        .connection(s.connection_id)
+        .ok_or("missing stair connection")?;
+    if r.level_id != c.from.level_id && r.level_id != c.to.level_id {
+        return Err("stair resize requires an endpoint level".into());
+    }
+    let footprint = architecture::stair_footprint(doc, s)?;
+    let resized = architecture::resize_stair_footprint_with_snap(
+        &footprint,
+        r.edge,
+        r.delta_mm.into(),
+        r.snap_angle,
+    )?;
+    set_stair_footprint_operations(doc, s.id, &resized)
+}
+
+/// Read-only graphics for the same resize builder used by commit. No document,
+/// history or generated identity changes; derives only the requested assembly.
+pub fn preview_resize_stair(
+    doc: &Document,
+    r: &ResizeStairRequest,
+) -> Result<Vec<PlanConstruction>, String> {
+    let ops = resize_stair_operations(doc, r)?;
+    let mut candidate = doc.clone();
+    for op in &ops {
+        apply_preview(&mut candidate, op);
+    }
+    candidate.staircases.retain(|s| s.id == r.staircase_id);
+    candidate.construction_bodies.clear();
+    architecture::plan(&candidate, r.level_id)
+}
+
+fn set_stair_footprint_operations(
+    doc: &Document,
+    id: Uuid,
+    f: &RectFootprint,
+) -> Result<Vec<Operation>, String> {
+    let s = doc.staircase(id).ok_or("no such staircase")?;
+    let before = doc
+        .connection(s.connection_id)
+        .ok_or("missing stair connection")?;
+    let mut connection = before.clone();
+    connection.from.position_mm = f.start_mm;
+    connection.to.position_mm = f.end_mm;
+    if connection == *before && s.width_mm == f.width_mm {
+        return Ok(vec![]);
+    }
+    let mut candidate = doc.clone();
+    candidate.insert_entity(Entity::LevelConnection(connection.clone()));
+    let mut stair = s.clone();
+    stair.width_mm = f.width_mm;
+    candidate.insert_entity(Entity::Staircase(stair));
+    let mut fields = serde_json::Map::new();
+    if connection.from != before.from {
+        fields.insert("from".into(), serde_json::json!(connection.from));
+    }
+    if connection.to != before.to {
+        fields.insert("to".into(), serde_json::json!(connection.to));
+    }
+    let mut ops = Vec::new();
+    if !fields.is_empty() {
+        ops.push(Operation::set_fields(connection.id, fields));
+    }
+    if s.width_mm != f.width_mm {
+        ops.push(crate::set_field(
+            s.id,
+            "widthMm",
+            serde_json::json!(f.width_mm),
+        ));
+    }
+    for opening_id in &s.opening_ids {
+        let cut = candidate
+            .hosted_openings
+            .iter_mut()
+            .find(|o| o.id == *opening_id)
+            .ok_or("missing associated opening")?;
+        if cut.host != OpeningHost::LevelFloor(before.to.level_id)
+            || cut.footprint.start_mm != before.from.position_mm
+            || cut.footprint.end_mm != before.to.position_mm
+            || cut.footprint.width_mm != s.width_mm
+            || doc
+                .staircases
+                .iter()
+                .any(|other| other.id != id && other.opening_ids.contains(opening_id))
+        {
+            return Err("associated opening has custom or shared geometry; adjust it explicitly before moving or resizing stairs".into());
+        }
+        cut.footprint.start_mm = connection.from.position_mm;
+        cut.footprint.end_mm = connection.to.position_mm;
+        cut.footprint.width_mm = f.width_mm;
+        ops.push(crate::set_field(
+            cut.id,
+            "footprint",
+            serde_json::json!(cut.footprint),
+        ));
+    }
+    validate(&candidate)?;
+    Ok(ops)
+}
+
 /// Replace editable stair parameters. Aligned associated upper-floor cuts track
 /// width in the same batch; custom cut geometry refuses rather than guessing.
 /// An unchanged request returns no operations and creates no history entry.

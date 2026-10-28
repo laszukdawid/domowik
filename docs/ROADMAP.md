@@ -9,6 +9,9 @@ later phase does not imply that earlier exit criteria are complete.
 - **Architectural foundations:** rectangular/sloped construction bodies, hosted
   body/floor cuts and explicit level connections. Straight stair assemblies share
   one identity across both levels, with direct **Stairs** click/drag drawing,
+  Ctrl-held 15° drawing constraints,
+  selection and drag movement from either floor (with aligned floor openings),
+  side/end handles for width, run and angle editing (Ctrl-held 15° constraints),
   Floor-panel name/count/elevation editing, CLI creation/conversion, undo,
   2D/export symbols and derived 3D treads/guards. Other assembly
   tools and general-profile construction remain future work; see
@@ -23,6 +26,8 @@ later phase does not imply that earlier exit criteria are complete.
   acceptance, bulk wall height/thickness editing, undo/redo and plan file workflows.
   Plans open on the first listed floor by default and remember the device's last
   active-floor choice, including for older files without document identity.
+  Device-local view preferences offer a global 2D/3D/split default and opt-in
+  last-used mode memory per layout, without changing plan files.
   The asset library offers list/grid browsing with on-demand model thumbnails.
   Solid wall colors (including bulk selection) and per-material placed-model
   colors are editable, undoable and saved in the plan; plan previews and 3D agree.

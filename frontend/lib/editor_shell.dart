@@ -169,7 +169,23 @@ class EditorShell extends StatelessWidget {
         );
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => CallbackShortcuts(
+    bindings: {
+      const SingleActivator(
+        LogicalKeyboardKey.keyS,
+        control: true,
+        includeRepeats: false,
+      ): onSave,
+      const SingleActivator(
+        LogicalKeyboardKey.keyS,
+        meta: true,
+        includeRepeats: false,
+      ): onSave,
+    },
+    child: _buildLayout(context),
+  );
+
+  Widget _buildLayout(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {

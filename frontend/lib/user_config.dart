@@ -11,6 +11,13 @@ enum SplitOrientation { vertical, horizontal }
 /// Visual presentation of the model chooser; never document state.
 enum AssetLibraryView { list, grid }
 
+/// Workspace modes shared by local preferences and the editor's view selector.
+const planViewModes = {
+  '2d': '2D plan',
+  '3d': '3D view',
+  'split': '2D + 3D split view',
+};
+
 /// Local user/device preferences. Unknown JSON keys survive updates. Reads are
 /// bounded and unsupported/corrupt files are never silently overwritten.
 class UserConfigStore {
@@ -28,8 +35,12 @@ class UserConfigStore {
   /// user switches between plans; once full, the least recently touched
   /// document's hint is dropped.
   static const int maxLastActiveLevels = 64;
+
+  /// Bounds device-local, opt-in view-mode overrides independently of floors.
+  static const int maxRememberedViewModes = 64;
   Map<String, Object?> _data = {'version': 1, 'assetDirectories': <String>[]};
   Map<String, String> _lastActiveLevels = const {};
+  Map<String, String> _rememberedViewModes = const {};
   bool _writable = true;
   Future<void>? _pendingSave;
   UnitSystem get unitSystem => _data['unitSystem'] == 'imperial'
@@ -42,6 +53,16 @@ class UserConfigStore {
   AssetLibraryView get assetLibraryView => _data['assetLibraryView'] == 'grid'
       ? AssetLibraryView.grid
       : AssetLibraryView.list;
+  String get defaultViewMode => _data['defaultViewMode'] as String? ?? '2d';
+
+  /// Presence opts a layout into remembering subsequent view-mode choices.
+  /// Keys use the same document identity / legacy-file fallback as floors.
+  Map<String, String> get rememberedViewModes =>
+      Map.unmodifiable(_rememberedViewModes);
+
+  /// A layout override wins; unnamed layouts without a key use the default.
+  String viewModeFor(String? documentKey) =>
+      _rememberedViewModes[documentKey] ?? defaultViewMode;
   List<String> get assetDirectories =>
       List.unmodifiable((_data['assetDirectories'] as List).cast<String>());
 
@@ -97,6 +118,28 @@ class UserConfigStore {
           split != 'horizontal') {
         throw const FormatException('Invalid split orientation');
       }
+      if (data.containsKey('defaultViewMode') &&
+          !planViewModes.containsKey(data['defaultViewMode'])) {
+        throw const FormatException('Invalid default view mode');
+      }
+      // Optional layout hints cannot poison otherwise valid preferences.
+      final rememberedViews = data.remove('rememberedViewModes');
+      final validViews = <String, String>{};
+      if (rememberedViews is Map) {
+        for (final entry in rememberedViews.entries.toList().reversed) {
+          if (entry.key is! String || (entry.key as String).isEmpty) continue;
+          if (entry.value is! String || !planViewModes.containsKey(entry.value))
+            continue;
+          validViews[entry.key as String] = entry.value as String;
+          if (validViews.length == maxRememberedViewModes) break;
+        }
+      }
+      _rememberedViewModes = Map.fromEntries(
+        validViews.entries.toList().reversed,
+      );
+      if (_rememberedViewModes.isNotEmpty) {
+        data['rememberedViewModes'] = _rememberedViewModes;
+      }
       // The remembered levels are a device hint, not user-authored data: any
       // entry that does not validate is DROPPED rather than rejected, so it
       // can never block the other preferences' saving — only this member is
@@ -151,17 +194,61 @@ class UserConfigStore {
   Future<void> saveAssetLibraryView(AssetLibraryView view) =>
       _save(() => {..._data, 'assetLibraryView': view.name});
 
-  /// Save the dialog's choices together; failed persistence applies neither.
+  /// Save the dialog's choices atomically; failed persistence applies none.
+  /// Omitting [documentKey] preserves layout overrides. Providing a key sets
+  /// its [rememberedViewMode], or clears its override when the mode is null.
   Future<void> savePreferences({
     required SplitOrientation splitOrientation,
     required UnitSystem unitSystem,
-  }) => _save(
-    () => {
+    String? defaultViewMode,
+    String? documentKey,
+    String? rememberedViewMode,
+  }) => _save(() {
+    if (defaultViewMode != null &&
+        !planViewModes.containsKey(defaultViewMode)) {
+      throw const FormatException('Invalid default view mode');
+    }
+    final data = {
       ..._data,
       'splitOrientation': splitOrientation.name,
       'unitSystem': unitSystem.name,
-    },
-  );
+      if (defaultViewMode != null) 'defaultViewMode': defaultViewMode,
+    };
+    return documentKey == null || documentKey.isEmpty
+        ? data
+        : _withRememberedViewMode(data, documentKey, rememberedViewMode);
+  });
+
+  /// Sets or clears one layout's opt-in override. Null/empty keys do nothing;
+  /// invalid modes throw. Updates share the ordered preference-write queue;
+  /// failure leaves the prior value intact. Identical choices skip storage.
+  Future<void> saveRememberedViewMode(String? documentKey, String? mode) async {
+    if (documentKey == null || documentKey.isEmpty) return;
+    await _save(() {
+      if (mode != null && !planViewModes.containsKey(mode)) {
+        throw const FormatException('Invalid remembered view mode');
+      }
+      if (_rememberedViewModes[documentKey] == mode) return null;
+      return _withRememberedViewMode(_data, documentKey, mode);
+    });
+  }
+
+  Map<String, Object?> _withRememberedViewMode(
+    Map<String, Object?> data,
+    String documentKey,
+    String? mode,
+  ) {
+    if (mode != null && !planViewModes.containsKey(mode)) {
+      throw const FormatException('Invalid remembered view mode');
+    }
+    final next = Map<String, String>.of(_rememberedViewModes)
+      ..remove(documentKey);
+    if (mode != null) next[documentKey] = mode;
+    while (next.length > maxRememberedViewModes) {
+      next.remove(next.keys.first);
+    }
+    return {...data, 'rememberedViewModes': next};
+  }
 
   /// Remembers one document's last active level. The key is its document ID
   /// or the editor's local legacy-file key; null records nothing.
@@ -228,6 +315,10 @@ class UserConfigStore {
     final remembered = data['lastActiveLevels'];
     _lastActiveLevels = remembered is Map<String, String>
         ? Map<String, String>.of(remembered)
+        : const {};
+    final views = data['rememberedViewModes'];
+    _rememberedViewModes = views is Map<String, String>
+        ? Map<String, String>.of(views)
         : const {};
   }
 }

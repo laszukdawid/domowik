@@ -187,7 +187,14 @@ pub mod status {
 /// queries and palette-aware previews. No symbols or buffer ownership changed.
 /// **22** adds [`domowik_plan_export_usdz`]: the whole plan as a `.usdz` 3D
 /// scene. Additive; the number moves for **9**'s reason.
-const ABI_VERSION: i32 = 22;
+/// **25** adds the `staircase` point/marquee hit class and stair targets in
+/// `translateSelection`. Both endpoints and aligned upper-floor cuts move in
+/// one validated batch. Symbols, buffer ownership and threading are unchanged.
+/// It also adds resizeStaircase and read-only edge-resize requests to the stair
+/// preview call, including free endpoint rotation and optional
+/// snapAngle for 15-degree end constraints. Width handles remain perpendicular.
+/// Earlier client/core revisions must be rebuilt together.
+const ABI_VERSION: i32 = 25;
 
 /// An owned byte buffer handed to the caller.
 ///
@@ -1726,6 +1733,8 @@ pub unsafe extern "C" fn domowik_plan_edit(
                     | EditRequest::SetDoorAppearance { .. }
                     | EditRequest::SetWallColors { .. }
                     | EditRequest::SetWalls { .. }
+                    | EditRequest::TranslateSelection { .. }
+                    | EditRequest::ResizeStaircase { .. }
                     | EditRequest::SetOpening { .. }
                     // Issue 0115: a reorder that finds the list already in
                     // this order commits nothing either.
@@ -1909,6 +1918,9 @@ enum EditRequest {
     },
     AddDescendingStaircase {
         request: domowik_edit::architecture::DescendingStairRequest,
+    },
+    ResizeStaircase {
+        request: domowik_edit::architecture::ResizeStairRequest,
     },
     #[serde(rename_all = "camelCase")]
     AddStaircase {
@@ -2173,6 +2185,9 @@ fn build_edit(doc: &Document, request: &EditRequest) -> Result<Vec<Operation>, S
         ),
         EditRequest::DeleteStaircase { staircase_id } => {
             domowik_edit::architecture::delete_stair_operations(doc, *staircase_id)
+        }
+        EditRequest::ResizeStaircase { request } => {
+            domowik_edit::architecture::resize_stair_operations(doc, request)
         }
         EditRequest::TranslateSelection { entity_ids, delta } => {
             domowik_edit::translate_selection_operations(
@@ -2976,17 +2991,30 @@ pub unsafe extern "C" fn domowik_plan_stair_preview(
         let Some(bytes) = borrow(req, req_len) else {
             return status::INVALID_ARGUMENT;
         };
-        let request: domowik_edit::architecture::DescendingStairRequest =
-            match serde_json::from_slice(bytes) {
-                Ok(r) => r,
-                Err(e) => return fail(&plan, status::MALFORMED_REQUEST, e.to_string()),
-            };
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum StairPreviewRequest {
+            Resize(domowik_edit::architecture::ResizeStairRequest),
+            Draw(domowik_edit::architecture::DescendingStairRequest),
+        }
+        let request: StairPreviewRequest = match serde_json::from_slice(bytes) {
+            Ok(r) => r,
+            Err(e) => return fail(&plan, status::MALFORMED_REQUEST, e.to_string()),
+        };
         let result = {
             let locked = plan.lock().unwrap_or_else(|e| e.into_inner());
-            domowik_edit::architecture::preview_descending_stair(
-                locked.session().document(),
-                &request,
-            )
+            match request {
+                StairPreviewRequest::Resize(r) => domowik_edit::architecture::preview_resize_stair(
+                    locked.session().document(),
+                    &r,
+                ),
+                StairPreviewRequest::Draw(r) => {
+                    domowik_edit::architecture::preview_descending_stair(
+                        locked.session().document(),
+                        &r,
+                    )
+                }
+            }
         };
         match result.and_then(|v| serde_json::to_vec(&v).map_err(|e| e.to_string())) {
             Ok(bytes) => release(bytes, out),
@@ -3164,7 +3192,9 @@ fn screen_radius(px: Option<f64>, zoom: Option<f64>) -> Result<Option<(f64, f64)
 ///   "distanceSquaredMm2":0.0}]
 /// ```
 ///
-/// `class` is one of `join-node`, `free-endpoint`, `region`. `entityId` is the
+/// `class` is one of `join-node`, `free-endpoint`, `opening`, `region`,
+/// `staircase`, `placeholder-box`, in precedence order. Stairs are eligible on
+/// either endpoint level and select the assembly ID. `entityId` is the
 /// JOIN at a node and the WALL at an endpoint or a region. Distances are
 /// SQUARED and never rooted, because R6.3.1 compares exact squared distances
 /// and a square root makes two candidates that differ compare equal.
@@ -3309,6 +3339,7 @@ pub unsafe extern "C" fn domowik_plan_hit_test(
                         HitClass::FreeEndpoint => "free-endpoint",
                         HitClass::Opening => "opening",
                         HitClass::Region => "region",
+                        HitClass::Staircase => "staircase",
                         HitClass::PlaceholderBox => "placeholder-box",
                         // Marquee-only (issue 0111): a point hit never carries
                         // it, because resolved instances are point-hit by the
@@ -4184,7 +4215,81 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty());
+            let hits = hits_at(h, level, 1800.0, 1000.0, 0.0);
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0]["class"], "staircase");
+            assert_eq!(hits[0]["entityId"], stair_id);
+            assert!(marquee_at(h, level, (1700.0, 900.0), (1900.0, 1100.0))
+                .contains(&stair_id.as_str().unwrap().to_owned()));
         }
+        assert_eq!(edit_json(h, serde_json::json!({"kind":"translateSelection","entityIds":[stair_id],"delta":[500,200]})).0, status::OK);
+        let moved = snapshot_json(h);
+        assert_eq!(
+            moved["levelConnections"][0]["from"]["positionMm"],
+            serde_json::json!([500.0, 1200.0])
+        );
+        assert_eq!(
+            moved["hostedOpenings"][0]["footprint"]["startMm"],
+            serde_json::json!([500.0, 1200.0])
+        );
+        let moved_state = state_of(h);
+        assert_eq!(edit_json(h, serde_json::json!({"kind":"translateSelection","entityIds":[stair_id],"delta":[0,0]})).0, status::OK);
+        assert_eq!(state_of(h), moved_state);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), after);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_redo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), moved);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), after);
+        let state = state_of(h);
+        let resize = serde_json::json!({"staircaseId":stair_id,"levelId":upper_id,"edge":"right","deltaMm":[0,200]});
+        let request = serde_json::to_vec(&resize).unwrap();
+        let (code, bytes) = call_returning(|out| unsafe {
+            domowik_plan_stair_preview(h, request.as_ptr(), request.len() as u64, out)
+        });
+        assert_eq!(code, status::OK);
+        let preview: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(snapshot_json(h), after);
+        assert_eq!(state_of(h), state);
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({"kind":"resizeStaircase","request":resize})
+            )
+            .0,
+            status::OK
+        );
+        let resized = snapshot_json(h);
+        assert_eq!(resized["staircases"][0]["widthMm"], 724.0);
+        assert_eq!(resized["hostedOpenings"][0]["footprint"]["widthMm"], 724.0);
+        let level_name = std::ffi::CString::new(upper_id.to_string()).unwrap();
+        let (code, bytes) =
+            call_returning(|out| unsafe { domowik_plan_derived(h, level_name.as_ptr(), out) });
+        assert_eq!(code, status::OK);
+        let drawn: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            drawn["construction"][0]["outlineMm"],
+            preview[0]["outlineMm"]
+        );
+        let state = state_of(h);
+        assert_eq!(edit_json(h, serde_json::json!({"kind":"resizeStaircase","request":{"staircaseId":stair_id,"levelId":upper_id,"edge":"right","deltaMm":[0,0]}})).0, status::OK);
+        assert_eq!(state_of(h), state);
+        assert_eq!(edit_json(h, serde_json::json!({"kind":"resizeStaircase","request":{"staircaseId":stair_id,"levelId":upper_id,"edge":"right","deltaMm":[0,10000]}})).0, status::REJECTED);
+        assert_eq!(state_of(h), state);
+        assert_eq!(
+            call_returning(|out| unsafe { domowik_plan_undo(h, out) }).0,
+            status::OK
+        );
+        assert_eq!(snapshot_json(h), after);
         let state = state_of(h);
         assert_eq!(
             edit_json(
@@ -8939,6 +9044,7 @@ mod tests {
                         HitClass::FreeEndpoint => "free-endpoint",
                         HitClass::Opening => "opening",
                         HitClass::Region => "region",
+                        HitClass::Staircase => "staircase",
                         HitClass::PlaceholderBox => "placeholder-box",
                         HitClass::AssetFootprint => "asset-footprint",
                     }

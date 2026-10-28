@@ -7,6 +7,13 @@ It is not a development diary or a claim of legal clearance. Follow the
 Dependency notices remain in [NOTICE](../NOTICE), the
 [Rust dependency inventory](RUST-DEPENDENCIES.md) and [third-party records](third-party/).
 
+## Save keyboard shortcuts
+
+Ctrl+S and Command+S invoke the existing explicit-save workflow, using Flutter's
+existing shortcut API. Implementation and synthetic keyboard/file regression
+tests are original; no external source, new dependency, distributed content or
+notice obligation was introduced.
+
 ## Optional server sign-in
 
 The native sign-in flow follows OAuth 2.0 for Native Apps (RFC 8252, loopback
@@ -63,7 +70,45 @@ Live stair-field updates, typing coalescing and the compact inspector layout are
 original owner-requested interactions. Their regression tests use synthetic data
 and existing Flutter/core APIs; no new sources, content or dependencies were added.
 
+Stair selection and translation are original owner-requested interactions.
+Hit testing reuses the existing filtered/exact rectangle witnesses and spatial
+index; movement reuses atomic entity operations. Tests and benchmarks use
+original synthetic plans and coordinates. No external sources, adapted code,
+dependencies, distributed content or notice obligations were added.
+
+Ctrl-held 15° stair drawing is original owner-requested input quantization,
+using elementary atan2/rounding and vector projection. Regression coordinates
+and UI gestures are original synthetic inputs. No external source, dependency,
+asset or notice obligation was introduced; Rust remains authoritative for
+assembly validation and derivation.
+
+Stair width/run resize handles are original owner-requested interactions.
+The Rust implementation uses elementary axis/normal projection and the existing
+rectangle, stair derivation and atomic-edit machinery. Dart places affordances
+on supplied edge midpoints only. Tests/benchmarks use original synthetic plans,
+displacements and raster probes; the user's screenshot is not committed as a
+fixture. No external source, adapted code, dependency, asset or notice obligation
+was introduced. No persistence schema change is involved.
+
+Free stair end rotation and Ctrl-held angle constraints are original
+owner-requested behavior. Rust applies endpoint displacements and elementary
+atan2/rounding/vector projection; it reuses the existing cut and atomic-edit
+builders. Tests and benchmarks use original synthetic endpoints and gestures.
+No external sources, adapted code, assets, dependencies or notices were added.
+
+Keyboard and Selection-panel stair deletion reuse the existing atomic stair
+removal command and primary-selection shortcut rules. This is original
+owner-requested behavior, tested with synthetic stairs, floor openings and UI
+key events; no external sources, assets, dependencies or notices were added.
+
 ## Active floor on reopen
+
+Global default workspace modes and opt-in per-layout last-used mode memory are
+original owner-requested interactions. They reuse the local config store and
+the active-floor document/legacy-file key rules; no plan-format change is
+involved. Tests use original synthetic plans, config bytes and UI interactions.
+No external publication, application source, test vectors, dependency or
+distributed content was consulted or added; no new notice obligations arise.
 
 The first-listed default, per-device last-active-floor memory for legacy files,
 and ordered preference writes are original owner-requested product choices in

@@ -193,8 +193,8 @@ class PlanAssets:
         self.lib = C.CDLL(
             str(ROOT / f"frontend/target/release/libdomowik_bridge.{suffix}")
         )
-        if self.lib.domowik_abi_version() != 21:
-            raise RuntimeError("This generator requires native bridge ABI 21")
+        if self.lib.domowik_abi_version() != 25:
+            raise RuntimeError("This generator requires native bridge ABI 25")
         self.lib.domowik_plan_open.argtypes = [C.c_char_p, C.POINTER(C.c_uint64)]
         self.lib.domowik_plan_import_model.argtypes = [
             C.c_uint64,

@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
 import 'package:domowik_editor/core/ffi_core.dart';
 import 'package:domowik_editor/core/domowik_core.dart' show DomowikCore;
+import 'package:domowik_editor/editor_shell.dart';
 import 'package:domowik_editor/three_d_view.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,89 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('save shortcuts escape 3D navigation without moving the camera', (
+    tester,
+  ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      ThreeDViewState.channel,
+      (call) async =>
+          call.method == 'create' ? {'textureId': 71, 'session': 1} : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        null,
+      ),
+    );
+    final key = GlobalKey<ThreeDViewState>();
+    var saves = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorShell(
+          fileName: 'plan.domo',
+          onNew: () {},
+          onOpen: () {},
+          onSave: () => saves++,
+          onSaveAs: () {},
+          onUndo: null,
+          onRedo: null,
+          tools: const SizedBox(),
+          inspector: const SizedBox(),
+          canvas: ThreeDView(
+            key: key,
+            core: _SceneCore({
+              'originMm': [0, 0],
+              'center': [0, 0, 0],
+              'radius': 1,
+              'meshes': <String, Object?>{},
+              'requiredModels': <String>[],
+              'nodes': <Object?>[],
+              'diagnostics': <String>[],
+            }),
+            handle: 1,
+            revision: 1,
+            levelIds: const ['level'],
+            ghostedIds: const [],
+            floorElevationMm: 0,
+            active: true,
+          ),
+          status: 'ready',
+          statusIsError: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Texture));
+    await tester.tap(find.byKey(const ValueKey('3d-walk')));
+    await tester.pumpAndSettle();
+    final eye = List.of(key.currentState!.camera.eye);
+    for (final modifier in [
+      LogicalKeyboardKey.controlLeft,
+      LogicalKeyboardKey.metaLeft,
+    ]) {
+      await tester.sendKeyDownEvent(modifier);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyS);
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyS);
+      await tester.sendKeyUpEvent(modifier);
+      await tester.pumpAndSettle();
+    }
+    expect(saves, 2);
+    expect(key.currentState!.camera.eye, eye);
+    // Bare S still walks backwards.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyS);
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyS);
+    await tester.pumpAndSettle();
+    expect(saves, 2);
+    expect(key.currentState!.camera.eye, isNot(eye));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'a long stair installs rebased geometry and camera in one scene packet',
     (tester) async {

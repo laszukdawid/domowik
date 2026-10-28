@@ -13,6 +13,110 @@ pub fn rectangle(f: &RectFootprint) -> Polygon {
     Polygon::new(f.corners().into_iter().map(Point::from).collect())
 }
 
+/// The grabbed edge of a lower-to-upper straight stair footprint. Left/right
+/// are relative to that axis, independently of which endpoint level is viewed.
+#[derive(Debug, Clone, Copy)]
+pub enum StairResizeEdge {
+    Left,
+    Right,
+    Lower,
+    Upper,
+}
+
+/// Resize a side by normal projection, or freely move an end by a finite
+/// plan-mm displacement. Opposite side/end stays fixed; end drags can rotate.
+/// Approximate binary64 arithmetic, no tolerance or clamping. Collapsed,
+/// out-of-bounds or overflowing footprints refuse without mutation.
+/// Pure, owned output with no retained state or threading requirements.
+pub fn resize_stair_footprint(
+    f: &RectFootprint,
+    edge: StairResizeEdge,
+    delta: Point,
+) -> Result<RectFootprint, String> {
+    resize_stair_footprint_with_snap(f, edge, delta, false)
+}
+
+/// As `resize_stair_footprint`, optionally constraining an end's direction from
+/// the fixed endpoint to absolute 15-degree rays. Length is the pointer's ray
+/// projection, using binary64 atan2/trigonometry and half steps away from zero.
+/// Cardinal/diagonal directions have exact components. Sides ignore snapping;
+/// zero drag leaves even an off-angle stair unchanged. Owned, read-only output.
+pub fn resize_stair_footprint_with_snap(
+    f: &RectFootprint,
+    edge: StairResizeEdge,
+    delta: Point,
+    snap_angle: bool,
+) -> Result<RectFootprint, String> {
+    if !f.valid() || !delta.x.is_finite() || !delta.y.is_finite() {
+        return Err("invalid stair resize footprint or displacement".into());
+    }
+    if delta.x == 0.0 && delta.y == 0.0 {
+        return Ok(f.clone());
+    }
+    let length = f.length_mm();
+    let u = [
+        (f.end_mm[0] - f.start_mm[0]) / length,
+        (f.end_mm[1] - f.start_mm[1]) / length,
+    ];
+    let n = [-u[1], u[0]];
+    let mut resized = f.clone();
+    match edge {
+        StairResizeEdge::Left | StairResizeEdge::Right => {
+            let amount = delta.x * n[0] + delta.y * n[1];
+            let sign = if matches!(edge, StairResizeEdge::Left) {
+                1.0
+            } else {
+                -1.0
+            };
+            resized.width_mm += sign * amount;
+            for p in [&mut resized.start_mm, &mut resized.end_mm] {
+                p[0] += n[0] * amount / 2.0;
+                p[1] += n[1] * amount / 2.0;
+            }
+        }
+        StairResizeEdge::Lower | StairResizeEdge::Upper => {
+            let lower = matches!(edge, StairResizeEdge::Lower);
+            let anchor = if lower { f.end_mm } else { f.start_mm };
+            let p = if lower {
+                &mut resized.start_mm
+            } else {
+                &mut resized.end_mm
+            };
+            p[0] += delta.x;
+            p[1] += delta.y;
+            if snap_angle {
+                let d = [p[0] - anchor[0], p[1] - anchor[1]];
+                let unit = std::f64::consts::PI / 12.0;
+                let step = (d[1].atan2(d[0]) / unit).round() as i32;
+                let direction = match step.rem_euclid(24) {
+                    0 => [1.0, 0.0],
+                    3 => [1.0, 1.0],
+                    6 => [0.0, 1.0],
+                    9 => [-1.0, 1.0],
+                    12 => [-1.0, 0.0],
+                    15 => [-1.0, -1.0],
+                    18 => [0.0, -1.0],
+                    21 => [1.0, -1.0],
+                    _ => [
+                        (f64::from(step) * unit).cos(),
+                        (f64::from(step) * unit).sin(),
+                    ],
+                };
+                let amount = (d[0] * direction[0] + d[1] * direction[1])
+                    / (direction[0] * direction[0] + direction[1] * direction[1]);
+                *p = [
+                    anchor[0] + direction[0] * amount,
+                    anchor[1] + direction[1] * amount,
+                ];
+            }
+        }
+    }
+    if !resized.valid() {
+        return Err("stair resize is collapsed or outside coordinate/dimension bounds".into());
+    }
+    Ok(resized)
+}
+
 /// Subtract only this host's cuts. Does not alter authoritative room topology.
 pub fn cut_surfaces(doc: &Document, host: OpeningHost, surfaces: &[Polygon]) -> Vec<Polygon> {
     let cuts: Vec<_> = doc
@@ -42,6 +146,18 @@ pub struct StairGeometry {
 /// collapsed/inverted elevations or coordinates outside the format domain.
 /// O(risers), bounded at 256 before allocating. No building-code guarantee.
 pub fn stair(doc: &Document, s: &Staircase) -> Result<StairGeometry, String> {
+    let f = stair_footprint(doc, s)?;
+    let c = doc
+        .connection(s.connection_id)
+        .ok_or("missing stair connection")?;
+    let lower = c.from.elevation_mm(doc).ok_or("missing lower level")?;
+    let upper = c.to.elevation_mm(doc).ok_or("missing upper level")?;
+    stair_from_footprint(doc, s, f, lower, upper)
+}
+
+/// Validated plan-mm footprint without allocating treads. Same admission as
+/// `stair`; binary64 construction, no tolerance, deterministic and read-only.
+pub fn stair_footprint(doc: &Document, s: &Staircase) -> Result<RectFootprint, String> {
     let c = doc
         .connection(s.connection_id)
         .ok_or("missing stair connection")?;
@@ -63,6 +179,19 @@ pub fn stair(doc: &Document, s: &Staircase) -> Result<StairGeometry, String> {
     {
         return Err("invalid stair geometry".into());
     }
+    Ok(f)
+}
+
+fn stair_from_footprint(
+    doc: &Document,
+    s: &Staircase,
+    f: RectFootprint,
+    lower: f64,
+    upper: f64,
+) -> Result<StairGeometry, String> {
+    let c = doc
+        .connection(s.connection_id)
+        .ok_or("missing stair connection")?;
     let n = usize::from(s.risers) - 1;
     let rise = upper - lower;
     let riser = rise / f64::from(s.risers);

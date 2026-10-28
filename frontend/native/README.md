@@ -20,7 +20,7 @@ See [Getting started](../../docs/GETTING-STARTED.md),
 ## ABI summary (internal, not a stable product contract)
 
 ```c
-int32_t domowik_abi_version(void); /* 22 */
+int32_t domowik_abi_version(void); /* 25 */
 int32_t domowik_plan_create(uint64_t* out_handle);
 int32_t domowik_plan_create_default(uint64_t* out_handle);
 int32_t domowik_plan_execute(uint64_t, const uint8_t*, uint64_t, domowik_buf*);
@@ -104,6 +104,24 @@ level selection and draft defaults. The returned construction graphics include
 Rust-derived Floor-panel properties. `setStaircase` applies name, count and
 absolute endpoint elevations atomically, storing elevations as offsets from the
 existing level datums. Preview never changes the document or undo history.
+
+ABI 25 includes stair footprints in point/marquee selection on either endpoint
+level. `translateSelection` accepts stair assembly IDs and translates both plan
+endpoints with aligned associated upper-floor cuts in one undoable batch.
+Custom or shared cuts refuse atomically. No new persisted fields are needed.
+
+ABI 25 adds `resizeStaircase {request:{staircaseId,levelId,edge,deltaMm}}`;
+`edge` is `left`, `right`, `lower` or `upper` relative to the stored lower-to-upper
+axis. The same request passed to `domowik_plan_stair_preview` is read-only.
+Rust projects side drags, retains the opposite side/end, and updates aligned cuts in
+one batch without changing riser count or elevations. Invalid dimensions and
+custom/shared cuts refuse atomically; unchanged edits add no history.
+
+An end handle can move freely in two dimensions, editing length
+and angle around the opposite endpoint. Optional `snapAngle` (default false)
+constrains its direction to absolute 15° increments using projected length.
+Side handles remain width-only. Preview and commit use the same Rust calculation;
+no persistence fields, symbols or ownership/threading rules change.
 
 The plan-local model library embeds placed content by digest. Model decoding,
 texturing and preview limits are described in [Compatibility](../../docs/COMPATIBILITY.md).

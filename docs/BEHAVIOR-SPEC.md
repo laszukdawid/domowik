@@ -394,7 +394,8 @@ lowest surviving level (A in this example); redo restores D as ghosted and
 does not reactivate it. B and C keep their flags throughout. Activating A
 while it is already active changes no session view state, but records that
 choice for reopening. Reopening applies section 2.6: active-floor memory is
-retained, while the other local view settings reset.
+retained, workspace mode follows section 2.6.1, and the remaining local view
+settings reset.
 
 ### 2.5 Background images
 
@@ -422,6 +423,8 @@ Every open applies:
   has been recorded and the level still exists. Otherwise, the first floor
   in the level-list presentation (section 2.2), including stored list order;
 - all other levels: visible and ghosted;
+- workspace mode: the remembered layout mode when enabled, otherwise the global
+  default (section 2.6.1);
 - view: fit with margin if the document has drawable content, otherwise the
   empty-document default view of section 1.3;
 - display unit millimetres; grid and rulers visible.
@@ -453,10 +456,41 @@ rows above, and the deletion-fallback rule of section 2.4 governs the
 session, not the stored value. The store is the editor's existing platform
 config store and holds at most the most-recently touched limit of
 documents' remembered levels; identity of other devices' storage is not
-this state's business (no sync), and every other view preference in this
-section always resets as stated. The list-first default and legacy-file keys
+this state's business (no sync). Workspace mode follows section 2.6.1; the
+remaining view preferences reset as stated. The list-first default and legacy-file keys
 are original owner-requested product decisions; no external application material
 or format change is involved.
+
+#### 2.6.1 Device-local workspace mode
+
+Preferences offers a global default workspace mode: **2D plan**, **3D view**, or
+**2D + 3D split view**. The initial default is 2D. Each layout can separately
+opt into **Remember last used view for this layout**, initially off. Enabling
+it records the layout's current mode; subsequent view-selector choices and
+an editing action that opens split view update that layout's remembered mode.
+Disabling it removes the override and applies the global default. Without an
+override, view-selector choices affect the current session only; opening a
+layout or creating a new plan resolves the mode afresh. A layout override wins
+over the global default. Saving a changed global default applies it to the
+current layout only when that layout has no override; saving unrelated
+preferences does not reset its current mode.
+
+Mode memory uses the same device-local plan key as active-floor memory above.
+Saving a legacy plan under a new path carries an enabled mode override to its
+resulting key. The store retains at most 64 layout overrides, evicting the
+least recently updated when a new override exceeds this bound. Identical mode
+choices need not rewrite storage. Queued mode and other preference updates
+persist in invocation order; normal desktop close waits for them to settle.
+Invalid optional layout hints are ignored, falling back to the global default;
+invalid global preferences leave the existing config protected from overwrite.
+An explicit preference save applies its settings atomically only after storage
+succeeds. A failed automatic mode write does not reject the view change.
+
+These preferences never change the `.domo` file, document dirty state, operations,
+undo/redo or CLI output. There is no cross-device synchronization. Mode memory
+does not restore 2D zoom/pan, the 3D camera, divider position or level visibility;
+the existing split-orientation preference remains global. This is an original
+owner-requested product choice, not an imported application behavior or format.
 
 ### 2.7 Duplicating a level
 

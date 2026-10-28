@@ -1,33 +1,29 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:domowik_editor/platform/config_storage_native.dart';
 import 'package:domowik_editor/user_config.dart';
 import 'package:domowik_editor/measurement_units.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test(
-    'asset library view defaults to list and survives unrelated preference saves',
-    () async {
-      final root = await Directory.systemTemp.createTemp(
-        'domowik-library-view-',
-      );
-      addTearDown(() => root.delete(recursive: true));
-      final file = File('${root.path}/config.json');
-      final store = UserConfigStore(FileConfigStorage(file));
-      expect(store.assetLibraryView, AssetLibraryView.list);
-      await store.saveAssetLibraryView(AssetLibraryView.grid);
-      await store.saveDirectories(['/library']);
-      final restarted = UserConfigStore(FileConfigStorage(file));
-      await restarted.load();
-      expect(restarted.assetLibraryView, AssetLibraryView.grid);
-      await restarted.saveAssetLibraryView(AssetLibraryView.list);
-      await store.load();
-      expect(store.assetLibraryView, AssetLibraryView.list);
-      expect(store.assetDirectories, ['/library']);
-    },
-  );
+  test('asset library view defaults to list and survives unrelated preference saves', () async {
+    final root = await Directory.systemTemp.createTemp('domowik-library-view-');
+    addTearDown(() => root.delete(recursive: true));
+    final file = File('${root.path}/config.json');
+    final store = UserConfigStore(FileConfigStorage(file));
+    expect(store.assetLibraryView, AssetLibraryView.list);
+    await store.saveAssetLibraryView(AssetLibraryView.grid);
+    await store.saveDirectories(['/library']);
+    final restarted = UserConfigStore(FileConfigStorage(file));
+    await restarted.load();
+    expect(restarted.assetLibraryView, AssetLibraryView.grid);
+    await restarted.saveAssetLibraryView(AssetLibraryView.list);
+    await store.load();
+    expect(store.assetLibraryView, AssetLibraryView.list);
+    expect(store.assetDirectories, ['/library']);
+  });
   test(
     'split defaults and saved choices preserve libraries and unknown keys',
     () async {
@@ -105,6 +101,8 @@ void main() {
       '{"version":1,"unitSystem":"unknown"}',
       '{"version":1,"unitSystem":null}',
       '{"version":1,"assetLibraryView":"tiles"}',
+      '{"version":1,"defaultViewMode":"unknown"}',
+      '{"version":1,"defaultViewMode":null}',
     ]) {
       await file.writeAsString(content);
       final store = UserConfigStore(FileConfigStorage(file));
@@ -149,6 +147,134 @@ void main() {
       );
     },
   );
+
+  group('layout view preferences', () {
+    test(
+      'global fallback and layout overrides survive restart independently',
+      () async {
+        final storage = _DelayedStorage();
+        final store = UserConfigStore(storage);
+        expect(store.viewModeFor('A'), '2d');
+        await store.savePreferences(
+          splitOrientation: SplitOrientation.horizontal,
+          unitSystem: UnitSystem.imperial,
+          defaultViewMode: 'split',
+          documentKey: 'A',
+          rememberedViewMode: '3d',
+        );
+        await store.saveLastActiveLevel('A', 'floor');
+        await store.saveDirectories(['/library']);
+        final restarted = UserConfigStore(storage);
+        await restarted.load();
+        expect(restarted.viewModeFor('A'), '3d');
+        expect(restarted.viewModeFor('B'), 'split');
+        expect(restarted.viewModeFor(null), 'split');
+        expect(restarted.lastActiveLevels, {'A': 'floor'});
+        await restarted.savePreferences(
+          splitOrientation: SplitOrientation.vertical,
+          unitSystem: UnitSystem.metric,
+          documentKey: 'A',
+        );
+        expect(restarted.rememberedViewModes, isEmpty);
+        expect(restarted.viewModeFor('A'), 'split');
+        expect(restarted.assetDirectories, ['/library']);
+      },
+    );
+
+    test('queued view changes, forgetting and other settings keep invocation order', () async {
+      final storage = _DelayedStorage();
+      final store = UserConfigStore(storage);
+      storage.delay = Completer<void>();
+      final updates = [
+        store.saveRememberedViewMode('A', 'split'),
+        store.saveRememberedViewMode('A', '3d'),
+        store.saveRememberedViewMode('B', 'split'),
+        store.saveRememberedViewMode('A', null),
+        store.savePreferences(
+          splitOrientation: SplitOrientation.horizontal,
+          unitSystem: UnitSystem.imperial,
+          defaultViewMode: '3d',
+        ),
+      ];
+      final flushed = store.flush();
+      storage.delay!.complete();
+      await Future.wait([...updates, flushed]);
+      final restarted = UserConfigStore(storage);
+      await restarted.load();
+      expect(restarted.rememberedViewModes, {'B': 'split'});
+      expect(restarted.viewModeFor('A'), '3d');
+      expect(restarted.splitOrientation, SplitOrientation.horizontal);
+      expect(restarted.unitSystem, UnitSystem.imperial);
+    });
+
+    test('invalid hints are pruned, newest entries retained and unknown keys preserved', () async {
+      final storage = _DelayedStorage()
+        ..bytes = utf8.encode(
+          jsonEncode({
+            'version': 1,
+            'futurePreference': 42,
+            'rememberedViewModes': {
+              for (var i = 0; i < 70; i++) 'plan-$i': 'split',
+              '': '2d',
+              'invalid': 'future-mode',
+              'wrong-type': 5,
+            },
+          }),
+        );
+      final store = UserConfigStore(storage);
+      await store.load();
+      expect(
+        store.rememberedViewModes.length,
+        UserConfigStore.maxRememberedViewModes,
+      );
+      expect(store.rememberedViewModes.keys.first, 'plan-6');
+      await store.saveRememberedViewMode('plan-6', '3d');
+      await store.saveRememberedViewMode('new', '2d');
+      expect(store.rememberedViewModes['plan-6'], '3d');
+      expect(store.rememberedViewModes.containsKey('plan-7'), isFalse);
+      final restarted = UserConfigStore(storage);
+      await restarted.load();
+      expect(restarted.rememberedViewModes, store.rememberedViewModes);
+      expect(
+        (jsonDecode(utf8.decode(storage.bytes!)) as Map)['futurePreference'],
+        42,
+      );
+      storage.bytes = utf8.encode('{"version":1,"rememberedViewModes":false}');
+      await restarted.load();
+      expect(restarted.rememberedViewModes, isEmpty);
+    });
+
+    test(
+      'no-op hints skip storage; failed or invalid updates apply nothing',
+      () async {
+        final storage = _DelayedStorage();
+        final store = UserConfigStore(storage);
+        await store.saveRememberedViewMode('A', 'split');
+        storage.fail = true;
+        await store.saveRememberedViewMode('A', 'split');
+        await store.saveRememberedViewMode(null, '3d');
+        await expectLater(
+          store.savePreferences(
+            splitOrientation: SplitOrientation.horizontal,
+            unitSystem: UnitSystem.imperial,
+            defaultViewMode: '3d',
+            documentKey: 'A',
+          ),
+          throwsStateError,
+        );
+        expect(store.viewModeFor('A'), 'split');
+        expect(store.defaultViewMode, '2d');
+        expect(store.splitOrientation, SplitOrientation.vertical);
+        await expectLater(
+          store.saveRememberedViewMode('A', 'invalid'),
+          throwsFormatException,
+        );
+        storage.fail = false;
+        await store.saveRememberedViewMode('A', '2d');
+        expect(store.viewModeFor('A'), '2d');
+      },
+    );
+  });
 
   group('remembered active levels (issue 0117)', () {
     test(
@@ -204,46 +330,43 @@ void main() {
       expect(store.lastActiveLevels, {'plan': 'B'});
     });
 
-    test(
-      'invalid entries are dropped, never block saving, and unknown keys survive',
-      () async {
-        final root = await Directory.systemTemp.createTemp('domowik-hint-');
-        addTearDown(() => root.delete(recursive: true));
-        final file = File('${root.path}/config.json');
-        // A non-map member, empty keys, non-string values, an empty value:
-        // every BAD shape is pruned; the valid entry and the unknown keys stay.
-        await file.writeAsString(
-          jsonEncode({
-            'version': 1,
-            'assetDirectories': ['/library'],
-            'lastActiveLevels': {
-              'document-A': 'level-1',
-              '': 'level-1',
-              'document-B': 5,
-              'document-C': '',
-            },
-            'futurePreference': 42,
-          }),
-        );
-        final store = UserConfigStore(FileConfigStorage(file));
-        await store.load();
-        expect(store.lastActiveLevels, {'document-A': 'level-1'});
+    test('invalid entries are dropped, never block saving, and unknown keys survive', () async {
+      final root = await Directory.systemTemp.createTemp('domowik-hint-');
+      addTearDown(() => root.delete(recursive: true));
+      final file = File('${root.path}/config.json');
+      // A non-map member, empty keys, non-string values, an empty value:
+      // every BAD shape is pruned; the valid entry and the unknown keys stay.
+      await file.writeAsString(
+        jsonEncode({
+          'version': 1,
+          'assetDirectories': ['/library'],
+          'lastActiveLevels': {
+            'document-A': 'level-1',
+            '': 'level-1',
+            'document-B': 5,
+            'document-C': '',
+          },
+          'futurePreference': 42,
+        }),
+      );
+      final store = UserConfigStore(FileConfigStorage(file));
+      await store.load();
+      expect(store.lastActiveLevels, {'document-A': 'level-1'});
 
-        // Pruning the device hint did not poison the store: the other
-        // preferences still save, carrying the valid hint along, and none of
-        // the bad entries return.
-        await store.saveSplitOrientation(SplitOrientation.horizontal);
-        final restarted = UserConfigStore(FileConfigStorage(file));
-        await restarted.load();
-        expect(restarted.splitOrientation, SplitOrientation.horizontal);
-        expect(restarted.assetDirectories, ['/library']);
-        expect(restarted.lastActiveLevels, {'document-A': 'level-1'});
-        expect(
-          (jsonDecode(await file.readAsString()) as Map)['futurePreference'],
-          42,
-        );
-      },
-    );
+      // Pruning the device hint did not poison the store: the other
+      // preferences still save, carrying the valid hint along, and none of
+      // the bad entries return.
+      await store.saveSplitOrientation(SplitOrientation.horizontal);
+      final restarted = UserConfigStore(FileConfigStorage(file));
+      await restarted.load();
+      expect(restarted.splitOrientation, SplitOrientation.horizontal);
+      expect(restarted.assetDirectories, ['/library']);
+      expect(restarted.lastActiveLevels, {'document-A': 'level-1'});
+      expect(
+        (jsonDecode(await file.readAsString()) as Map)['futurePreference'],
+        42,
+      );
+    });
 
     test(
       'overrides record per document, skip identical values, and keep the cap',

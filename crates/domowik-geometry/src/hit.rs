@@ -48,6 +48,8 @@ pub enum HitClass {
     Opening,
     /// A wall's OWN occupied rectangle — not the cluster union.
     Region,
+    /// A straight stair's ideal footprint, on either endpoint level.
+    Staircase,
     /// A DEGRADED asset instance's deterministic placeholder box (§9.6).
     ///
     /// Ranked last, as R7.1.3 declares it. Candidacy is never inferred here:
@@ -249,6 +251,7 @@ pub struct HitIndex {
     /// whose drawn polygon collapses in binary64 still has its ideal shape
     /// (issue 0012: Codex review counterexample D).
     regions: KeyedTree<Uuid, WallSolid, (Uuid, PreparedRect)>,
+    stairs: KeyedTree<Uuid, domowik_format::RectFootprint, (Uuid, PreparedRect)>,
     /// Each opening's ideal band over its host's full thickness, stamped by
     /// what it is computed from: its own position and width and its host's
     /// solid.
@@ -424,6 +427,7 @@ impl HitIndex {
         Self {
             level: level_id,
             regions: KeyedTree::default(),
+            stairs: KeyedTree::default(),
             openings: KeyedTree::default(),
             endpoints: KeyedTree::default(),
             placeholders: Vec::new(),
@@ -460,6 +464,25 @@ impl HitIndex {
                     a: solid.start,
                     b: solid.end,
                     thickness: solid.thickness_mm,
+                    along: Along::Wall,
+                };
+                Some((rect_bounds(&shape)?, (id, PreparedRect::of(shape))))
+            },
+        );
+
+        changed += self.stairs.sync(
+            doc.staircases.iter().filter_map(|s| {
+                let c = doc.connection(s.connection_id)?;
+                if c.from.level_id != level && c.to.level_id != level {
+                    return None;
+                }
+                Some((s.id, crate::architecture::stair_footprint(doc, s).ok()?))
+            }),
+            |&id, f| {
+                let shape = Shape::Rect {
+                    a: f.start_mm.into(),
+                    b: f.end_mm.into(),
+                    thickness: f.width_mm,
                     along: Along::Wall,
                 };
                 Some((rect_bounds(&shape)?, (id, PreparedRect::of(shape))))
@@ -534,6 +557,7 @@ impl HitIndex {
     /// and debugging.
     pub fn validate(&self) {
         self.regions.validate();
+        self.stairs.validate();
         self.openings.validate();
         self.endpoints.validate();
     }
@@ -645,6 +669,17 @@ impl HitIndex {
             );
         });
 
+        self.stairs.tree().query(&search, |_, _, (id, shape)| {
+            admit(
+                &mut cands,
+                radius,
+                shape.witness(point),
+                HitClass::Staircase,
+                *id,
+                Tail::Region(shape),
+            );
+        });
+
         // Placeholder boxes (R7.1.3 class 4): the closest point of an
         // axis-aligned box is a CLAMP — query or bound coordinates — so its
         // exact admission needs no construction.
@@ -737,6 +772,11 @@ impl HitIndex {
                 }
             } else if rect_meets_box(&prepared.shape, &rect) {
                 keyed.push_rect(prepared.bbox_min(), HitClass::Region, *id);
+            }
+        });
+        self.stairs.tree().query(&rect, |_, _, (id, prepared)| {
+            if rect_meets_box(&prepared.shape, &rect) {
+                keyed.push_rect(prepared.bbox_min(), HitClass::Staircase, *id);
             }
         });
         for p in &self.placeholders {
@@ -852,6 +892,27 @@ pub fn marquee_all(
             && rect_meets_box(&shape, &rect)
         {
             keyed.push_rect(BboxMin::of(shape), HitClass::Region, wall.id);
+        }
+    }
+    for s in &doc.staircases {
+        let Some(c) = doc.connection(s.connection_id) else {
+            continue;
+        };
+        if c.from.level_id != level_id && c.to.level_id != level_id {
+            continue;
+        }
+        let Ok(f) = crate::architecture::stair_footprint(doc, s) else {
+            continue;
+        };
+        let shape = Shape::Rect {
+            a: f.start_mm.into(),
+            b: f.end_mm.into(),
+            thickness: f.width_mm,
+            along: Along::Wall,
+        };
+        if rect_bounds(&shape).is_some_and(|b| b.intersects(&rect)) && rect_meets_box(&shape, &rect)
+        {
+            keyed.push_rect(BboxMin::of(shape), HitClass::Staircase, s.id);
         }
     }
     for p in placeholders {

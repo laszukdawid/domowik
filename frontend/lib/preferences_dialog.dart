@@ -5,9 +5,18 @@ import 'measurement_units.dart';
 
 /// User/device preferences; persistence must succeed before closing with Save.
 class PreferencesDialog extends StatefulWidget {
-  const PreferencesDialog({super.key, required this.store});
+  const PreferencesDialog({
+    super.key,
+    required this.store,
+    this.documentKey,
+    this.layoutName,
+    this.currentViewMode = '2d',
+  });
 
   final UserConfigStore store;
+  final String? documentKey;
+  final String? layoutName;
+  final String currentViewMode;
 
   @override
   State<PreferencesDialog> createState() => _PreferencesDialogState();
@@ -16,6 +25,10 @@ class PreferencesDialog extends StatefulWidget {
 class _PreferencesDialogState extends State<PreferencesDialog> {
   late SplitOrientation _orientation = widget.store.splitOrientation;
   late UnitSystem _units = widget.store.unitSystem;
+  late String _defaultView = widget.store.defaultViewMode;
+  late bool _rememberView = widget.store.rememberedViewModes.containsKey(
+    widget.documentKey,
+  );
   bool _saving = false;
   String? _error;
 
@@ -28,6 +41,9 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
       await widget.store.savePreferences(
         splitOrientation: _orientation,
         unitSystem: _units,
+        defaultViewMode: _defaultView,
+        documentKey: widget.documentKey,
+        rememberedViewMode: _rememberView ? widget.currentViewMode : null,
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (error) {
@@ -51,6 +67,36 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            DropdownButtonFormField<String>(
+              key: const ValueKey('default-view-mode'),
+              initialValue: _defaultView,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Default view'),
+              items: [
+                for (final entry in planViewModes.entries)
+                  DropdownMenuItem(value: entry.key, child: Text(entry.value)),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) => setState(() => _defaultView = value!),
+            ),
+            if (widget.documentKey != null) ...[
+              CheckboxListTile(
+                key: const ValueKey('remember-layout-view'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Remember last used view for this layout'),
+                subtitle: Text(widget.layoutName ?? 'Untitled plan'),
+                value: _rememberView,
+                onChanged: _saving
+                    ? null
+                    : (value) => setState(() => _rememberView = value!),
+              ),
+              const Text(
+                'When enabled, this layout reopens in its last used view. '
+                'Otherwise it uses the default view. Stored on this device only.',
+              ),
+            ],
+            const SizedBox(height: 12),
             DropdownButtonFormField<UnitSystem>(
               key: const ValueKey('unit-system'),
               initialValue: _units,
@@ -92,7 +138,7 @@ class _PreferencesDialogState extends State<PreferencesDialog> {
             ),
             const SizedBox(height: 12),
             const Text(
-              'Saved for all plans on this device. Imperial fields use decimal inches; rulers use feet. Stored plan measurements are unchanged.',
+              'Units and split orientation apply to all plans on this device. Imperial fields use decimal inches; rulers use feet. Stored plan measurements are unchanged.',
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
