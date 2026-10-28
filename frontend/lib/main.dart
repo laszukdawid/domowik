@@ -4072,6 +4072,14 @@ class _PlanPageState extends State<PlanPage>
                     ),
                   ),
                 );
+              } else if (event is PointerScaleEvent) {
+                // Browsers deliver a macOS trackpad pinch as ctrl+wheel,
+                // which the web engine reports as a scale signal.
+                setState(
+                  () => _applyView(
+                    _view.zoomAt(event.scale, event.localPosition),
+                  ),
+                );
               }
             },
             onPointerDown: (event) {

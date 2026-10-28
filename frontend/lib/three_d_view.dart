@@ -979,6 +979,13 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
                                   math.exp(e.scrollDelta.dy * 0.002),
                                 );
                               });
+                        } else if (e is PointerScaleEvent) {
+                          // Web pinch (ctrl+wheel); scale > 1 zooms in.
+                          GestureBinding.instance.pointerSignalResolver
+                              .register(e, (_) {
+                                _interrupt();
+                                _zoomAt(e.localPosition, 1 / e.scale);
+                              });
                         }
                       },
                       onPointerPanZoomStart: (_) {

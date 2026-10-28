@@ -1014,6 +1014,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(camera.target, isNot(target));
 
+      // A browser trackpad pinch (scale signal) zooms in.
+      final farther = camera.distance;
+      await tester.sendEventToBinding(scroll.scale(2));
+      await tester.pumpAndSettle();
+      expect(camera.distance, lessThan(farther));
+
       // An edit makes the presented scene stale until it reloads: a click
       // then neither selects nor clears.
       call(
