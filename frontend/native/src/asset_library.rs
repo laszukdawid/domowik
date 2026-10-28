@@ -1481,6 +1481,12 @@ pub(crate) fn derive_scene(
                 asset.digest = key;
                 continue;
             }
+            // A concurrent derivation of this revision may have cached it.
+            if let Some(cached) = locked.scene_models.get(&key) {
+                entry.insert(cached.clone());
+                asset.digest = key;
+                continue;
+            }
             let total: usize = locked.scene_models.values().map(|m| m.cache_bytes()).sum();
             let size = mesh.cache_bytes();
             // Known limit, kept for simplicity: each variant copies its model's
