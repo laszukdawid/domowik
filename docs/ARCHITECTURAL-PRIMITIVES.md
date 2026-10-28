@@ -54,6 +54,18 @@ upper-floor opening atomically. Escape, tool/level/file changes, focus loss and
 interruption by navigation cancel uncommitted drawing. Pan/zoom only reprojects
 the preview and never creates a staircase.
 
+Holding **Ctrl** while drawing stairs constrains the direction to the nearest
+absolute 15° increment in plan coordinates, for both dragging and click-click
+drawing. The endpoint is the raw pointer's projection onto the constrained ray;
+the upper/start endpoint stays fixed. Pressing/releasing Ctrl updates the preview
+without requiring pointer movement; release restores the raw direction without
+drift. Preview and commit use the same current modifier and endpoint calculation.
+This is explicit pointer-input quantization using approximate binary64 headings
+and trigonometry, not the exact-real, radius-based wall angle-target inventory.
+Cardinal and 45° rays use exact component directions; other increments remain
+approximate. Existing Rust bounds, validation and stair derivation still apply.
+Wall snapping, stair movement and furniture rotation are unchanged.
+
 Drawing defaults are width 900 mm, guard height 1000 mm and
 `ceil(rise/175)` risers clamped to [2,256], named `Stairs N`. They are draft
 choices, not code-compliance guarantees. The drawn plan endpoints determine the
@@ -80,6 +92,88 @@ Elevation acknowledgements reconcile only binary64 datum-round-trip noise
 (less than `10^-8` mm); unchanged accepted text retains Rust's precise value
 without generating another edit. History and external edits still reset local
 pending work.
+
+### Selecting and moving stairs
+
+In the 2D **Select** tool, clicking a stair footprint selects its assembly ID
+and highlights it. It is eligible on either endpoint floor, never an unrelated
+or merely visible passive floor. Point hits rank after wall regions and before
+asset placeholders, using the existing exact rectangle distance/ring/ID order;
+marquee selection uses the same footprint and existing min-corner/class/ID key.
+Invalid, omitted stair drawings are not selection candidates.
+
+Dragging translates both connection plan endpoints and aligned associated
+upper-floor openings by the same millimetre displacement. Levels, elevation
+offsets, width, riser count, guards and identities remain unchanged. Custom or
+shared associated openings refuse the entire move rather than guessing an
+attachment. Stairs can accompany a group whose members share an eligible floor.
+The drag preview translates Rust-supplied drawing geometry only; it does not
+change the document. Release commits one atomic undoable batch; Escape, focus
+loss and pointer cancellation restore the pre-gesture selection without edits.
+Zero displacement creates no history entry. Stair properties remain in **Floor**.
+The 3D scene
+updates after commit, not during the stair drag.
+
+No persistence fields or format-version changes are required. Bridge ABI 25
+adds the `staircase` hit class and stair targets to `translateSelection`, with
+unchanged ownership, threading and error transport.
+
+With canvas focus, **Delete** or **Backspace** removes the primary selected
+stair through the same atomic command as **Remove stairs** in the Floor panel.
+The Selection panel also offers **Delete stairs**. The private connection is
+removed and independent floor openings are retained. Undo restores the assembly
+and connection together, without reviving transient selection. Text-field Delete
+and Backspace continue to edit text, not plan entities. Multi-selection follows
+the existing primary-object deletion rule, not a new bulk-delete operation.
+
+### Resizing stairs with handles
+
+Selecting a single stair exposes four midpoint handles in the 2D **Select** tool,
+on either connected floor. Side handles change width while keeping the opposite
+side fixed. End handles freely change both run length and angle while keeping
+the opposite endpoint fixed. Left/right mean
+the sides of the stored lower-to-upper axis, regardless of the displayed UP/DOWN
+symbol. Handle hits take precedence over nearby wall bodies; body dragging still
+moves the stair. Handles are not offered for a multi-selection or a drawing tool.
+
+Rust projects a side handle's raw plan-millimetre pointer displacement from the
+initial grab onto the side normal. A side resize shifts both connection endpoints
+by half the perpendicular displacement and updates width. An end resize changes
+only the grabbed plan endpoint by the full two-dimensional displacement, rotating
+the flight around the opposite endpoint. Hold **Ctrl** for nearest absolute 15°
+direction constraints relative to that fixed endpoint, using projected length as
+when drawing stairs. Pressing/releasing Ctrl updates a stationary preview and
+releasing restores the raw direction without drift. Side handles ignore Ctrl.
+Zero displacement preserves the original stair even if its angle is not snapped.
+Levels, elevation offsets, riser count, name,
+guard height, IDs and unknown optional fields remain unchanged. Goings and pitch
+are rederived; resizing does not certify building-code compliance.
+
+Aligned associated upper-floor openings follow in the same atomic batch.
+Custom/shared cuts, crossing the opposite side edge, collapsed endpoint pairs,
+zero/negative dimensions,
+non-finite input and existing coordinate/dimension-bound violations refuse the
+entire edit rather than clamping, flipping or overwriting unrelated geometry.
+Unchanged requests add no history. Exterior stairs without a cut can resize.
+
+Preview is read-only Rust-derived construction graphics, sharing the commit
+builder. Release commits one undoable edit. Escape, capture/focus loss, tool or
+floor changes and navigation interruption discard preview and restore selection.
+Pan/zoom reprojects input and preview consistently. 3D updates after commit.
+The handle affordance uses midpoints of the supplied rectangle's corners, ordered
+lower-right, upper-right, upper-left, lower-left; Dart does not derive physical
+resize consequences. Projection and offsets are deterministic approximate
+binary64 operations with no extra tolerance or minimum size. Angle constraints
+use approximate atan2/trigonometry, rounded half steps away from zero; cardinal
+and diagonal rays use exact component directions. A free end may rotate through
+any angle; lower/upper endpoint identities and elevations are not swapped.
+
+Bridge ABI 25 adds `resizeStaircase` and a resize request to the existing read-only
+stair preview call, with unchanged symbols, buffer ownership, threading and
+panic/error transport. No persistence field or format-version change is needed.
+End drags permit free rotation with optional
+`snapAngle` (default false) in the shared preview/edit request. Older libraries
+must not silently project an updated client's rotation back onto the old axis.
 
 ### Validation and consequences
 

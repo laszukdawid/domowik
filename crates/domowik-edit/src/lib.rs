@@ -1643,6 +1643,8 @@ pub fn set_walls_operations(
 /// Each selected wall and its attached nodes move once; contacts are resolved
 /// only after all coordinates have been projected. Models retain their other
 /// transform fields. Openings may accompany their selected host, not move alone.
+/// Stairs translate both endpoints and aligned cuts, and are eligible on either
+/// endpoint level. All selected entities must share at least one eligible level.
 /// Unknown/unsupported IDs, mixed levels, non-finite displacement, or refusing
 /// final contacts fail the whole builder. Session admission enforces coordinate
 /// bounds and asset mutation policy. Zero displacement emits no operations.
@@ -1656,9 +1658,26 @@ pub fn translate_selection_operations(
     }
     let ids: std::collections::BTreeSet<_> = ids.iter().copied().collect();
     let mut level = None;
+    let mut eligible_levels: Option<std::collections::BTreeSet<Uuid>> = None;
     let mut nodes = std::collections::BTreeSet::new();
     let mut edit = WallEdit::default();
     for id in &ids {
+        if let Some(stair) = doc.staircase(*id) {
+            let connection = doc
+                .connection(stair.connection_id)
+                .ok_or("missing stair connection")?;
+            let levels = std::collections::BTreeSet::from([
+                connection.from.level_id,
+                connection.to.level_id,
+            ]);
+            eligible_levels = Some(match eligible_levels {
+                Some(previous) => previous.intersection(&levels).copied().collect(),
+                None => levels,
+            });
+            edit.operations
+                .extend(architecture::translate_stair_operations(doc, *id, delta)?);
+            continue;
+        }
         let entity_level = if let Some(wall) = doc.wall(*id) {
             for role in [Role::Start, Role::End] {
                 nodes.insert((*id, role == Role::Start));
@@ -1692,6 +1711,14 @@ pub fn translate_selection_operations(
             return Err("group movement must stay on one level".into());
         }
         level = Some(entity_level);
+        let levels = std::collections::BTreeSet::from([entity_level]);
+        eligible_levels = Some(match eligible_levels {
+            Some(previous) => previous.intersection(&levels).copied().collect(),
+            None => levels,
+        });
+    }
+    if eligible_levels.is_some_and(|levels| levels.is_empty()) {
+        return Err("group movement must stay on one level".into());
     }
     if delta.x == 0.0 && delta.y == 0.0 {
         return Ok(Vec::new());

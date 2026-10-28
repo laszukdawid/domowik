@@ -32,6 +32,16 @@ opening in one undoable edit.
 The drawing toolbar scrolls horizontally when the window is too narrow for all
 controls; scroll it to reach the snap and navigation controls at its right end.
 
+In **Select**, click stairs to reveal their handles on either floor. Drag a side
+handle to change width, or an end handle to change length and angle around the
+opposite endpoint. Hold **Ctrl** to constrain the angle to 15° increments; release
+it for free adjustment. The associated floor opening follows, and Undo restores
+the whole edit. Step count and elevations stay unchanged.
+
+Press **Delete** or **Backspace** with the canvas focused to remove selected
+stairs, or use **Delete stairs** in the Selection panel. Undo restores them.
+Like the Floor panel's remove action, this keeps the independent floor opening.
+
 Stairs appear on both endpoint levels with UP/DOWN arrows and in 3D. In the
 **Floor** panel, expand a staircase to edit its **name**, **starting elevation**
 (upper end), **ending elevation** (lower end), **steps (risers)**, width or guard
@@ -223,6 +233,10 @@ confirmed it wrote). A new plan has no file yet, and a download cannot be
 rewritten, so there **Save** asks where to write. **Save as** always asks
 where to write, and the plan follows the chosen file. Cancelling the picker
 makes no save. Dirty plans are marked beside the filename.
+
+**Ctrl+S** (**Command+S** on macOS) runs the same Save action from the 2D or
+3D view, toolbar or inspector. It reuses the current file wherever the host
+supports rewriting it.
 
 New, Open, window close and application quit ask before leaving unsaved work:
 
@@ -422,13 +436,24 @@ openings update in 3D when you release them.
 
 ## Preferences and local configuration
 
+**Default view** chooses **2D plan**, **3D view**, or **2D + 3D split view** for
+new plans and layouts without a remembered view. The initial default is 2D.
+
+To reopen a particular layout in its last used mode, open it, choose the desired
+view, then enable **Remember last used view for this layout** in Preferences and
+choose **Save**. Further view changes are remembered automatically. Disable the
+option to return that layout to the global default. These choices are stored on
+this device only, without saving or modifying the `.domo` file. They remember
+the view mode, not zoom, camera position or divider size.
+
 Open **Preferences** in the header to change **2D / 3D split**:
 
 - **Vertical (left and right)** is the default: 2D left, 3D right.
 - **Horizontal (top and bottom)** stacks the views.
 
-Choose **Save** to persist the setting for all plans on this device, or
-**Cancel** to leave it unchanged. Preferences are separate from plan history.
+Choose **Save** to persist the settings, or **Cancel** to leave them unchanged.
+The split orientation and default view apply globally on this device; remembered
+views apply per layout. Preferences are separate from plan history.
 
 The local configuration also stores reusable asset-directory locations:
 

@@ -19,6 +19,7 @@ import 'package:flutter/material.dart';
 
 import 'editor_fonts.dart';
 import 'plan_viewport.dart';
+import 'stair_resize.dart';
 import 'measurement_units.dart';
 import 'asset_library.dart';
 import 'asset_rotation.dart';
@@ -412,6 +413,8 @@ class PlanPainter extends CustomPainter {
     this.groupPreview,
     this.modelPreviews = const {},
     this.constructionPreview = const [],
+    this.resizingStairId,
+    this.showStairResizeHandles = true,
   });
 
   final List<Wall> walls;
@@ -429,6 +432,23 @@ class PlanPainter extends CustomPainter {
   final (Set<String>, Offset)? groupPreview;
   final Map<String, ui.Image> modelPreviews;
   final List<PlanConstruction> constructionPreview;
+  final String? resizingStairId;
+  final bool showStairResizeHandles;
+
+  List<StairResizeHandle> get stairHandles {
+    if (!showStairResizeHandles ||
+        selected == null ||
+        selectedIds.length > 1 ||
+        groupPreview != null)
+      return const [];
+    final item =
+        (resizingStairId == selected && constructionPreview.isNotEmpty
+                ? constructionPreview
+                : derived.construction)
+            .where((s) => s.id == selected && s.kind == 'staircase')
+            .firstOrNull;
+    return item == null ? const [] : stairResizeHandles(item.outline, view);
+  }
 
   final PlanViewport view;
   final UnitSystem units;
@@ -625,6 +645,21 @@ class PlanPainter extends CustomPainter {
     _paintSelectionAndDraft(canvas);
 
     if (showGrid) _paintGrid(canvas, size, rulers: true);
+    for (final handle in stairHandles) {
+      final rect = Rect.fromCenter(
+        center: handle.position,
+        width: 10,
+        height: 10,
+      );
+      canvas.drawRect(rect, Paint()..color = Colors.white);
+      canvas.drawRect(
+        rect,
+        Paint()
+          ..color = const Color(0xFFE0663A)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+    }
     final handle = assetRotationHandle;
     if (handle != null) {
       final asset = assets.firstWhere((a) => a.id == rotatingAssetId);
@@ -838,6 +873,19 @@ class PlanPainter extends CustomPainter {
     if (colored && opacity < 1) canvas.restore();
 
     for (final item in levelDerived.construction) {
+      if (item.id == resizingStairId &&
+          constructionPreview.isNotEmpty &&
+          !identical(levelDerived.construction, constructionPreview))
+        continue;
+      canvas.save();
+      final moving = groupPreview;
+      // Both floor drawings represent the same assembly. Move the passive
+      // drawing too, but keep selection emphasis exclusive to the active one.
+      if (moving != null && moving.$1.contains(item.id)) {
+        canvas.translate(moving.$2.dx * scale, -moving.$2.dy * scale);
+      }
+      final selectedConstruction =
+          countWalls && (item.id == selected || selectedIds.contains(item.id));
       final path = Path()..fillType = PathFillType.evenOdd;
       for (final ring in [item.outline, ...item.holes]) {
         if (ring.isEmpty) continue;
@@ -851,10 +899,23 @@ class PlanPainter extends CustomPainter {
       }
       canvas.drawPath(
         path,
-        Paint()..color = _fade(const Color(0xFFE6DFD2), opacity),
+        Paint()
+          ..color = _fade(
+            selectedConstruction
+                ? const Color(0x66E0663A)
+                : const Color(0xFFE6DFD2),
+            opacity,
+          ),
       );
       final ink = Paint()
-        ..color = _fade(const Color(0xFF405363), opacity)
+        ..color = _fade(
+          selectedConstruction
+              ? (item.id == selected
+                    ? const Color(0xFFE0663A)
+                    : const Color(0xFF73A7A0))
+              : const Color(0xFF405363),
+          opacity,
+        )
         ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(1.0, 12 * scale);
       canvas.drawPath(path, ink);
@@ -877,6 +938,7 @@ class PlanPainter extends CustomPainter {
         text.paint(canvas, at - Offset(text.width / 2, text.height + 3));
         text.dispose();
       }
+      canvas.restore();
     }
 
     // Centre lines are drawn only when the core has not produced a region yet
@@ -1227,6 +1289,8 @@ class PlanPainter extends CustomPainter {
   @override
   bool shouldRepaint(PlanPainter old) =>
       old.constructionPreview != constructionPreview ||
+      old.resizingStairId != resizingStairId ||
+      old.showStairResizeHandles != showStairResizeHandles ||
       old.units != units ||
       old.assets != assets ||
       old.assetPreview != assetPreview ||

@@ -2076,6 +2076,54 @@ void main() {
     expect(painter(tester).selected, wall.id);
   });
 
+  for (final modifier in [
+    LogicalKeyboardKey.controlLeft,
+    LogicalKeyboardKey.metaLeft,
+  ]) {
+    testWidgets('${modifier.keyLabel}+S saves edits back to the same file', (
+      tester,
+    ) async {
+      await start(tester);
+      await draw(tester);
+      final path = '${scratch.path}/shortcut.domo';
+      dialog = (_) async => path;
+      Future<void> save() async {
+        await tester.sendKeyDownEvent(modifier);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+        await tester.sendKeyUpEvent(modifier);
+        await tester.pumpAndSettle();
+      }
+
+      await save();
+      expect(dialogs, ['savePlan']);
+      expect(dirty(), isFalse);
+      await tap(tester, find.byTooltip('Undo'));
+      expect(walls(tester), 0);
+      expect(dirty(), isTrue);
+      dialogs.clear();
+      await save();
+      expect(dialogs, isEmpty, reason: 'a saved file needs no save picker');
+      expect(dirty(), isFalse);
+
+      await tap(tester, find.byTooltip('Open plan'));
+      expect(walls(tester), 0, reason: 'the same file contains the saved undo');
+      await draw(tester);
+      dialogs.clear();
+      await save();
+      expect(dialogs, isEmpty, reason: 'an opened file needs no save picker');
+      expect(dirty(), isFalse);
+      final core = FfiCore(bridge);
+      final stored = core.openPath(path);
+      expect(stored.code, ok);
+      try {
+        final document = jsonDecode(core.snapshot(stored.handle).text!) as Map;
+        expect(document['walls'], hasLength(1));
+      } finally {
+        core.close(stored.handle);
+      }
+    });
+  }
+
   testWidgets(
     'New cancel preserves the real document; discard adopts a clean replacement',
     (tester) async {

@@ -36,6 +36,48 @@ void main() {
     ),
   );
 
+  testWidgets('save shortcuts work from the canvas and a focused text field', (
+    tester,
+  ) async {
+    final calls = <String>[];
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(
+      shell(
+        calls,
+        canvas: Focus(
+          focusNode: focus,
+          autofocus: true,
+          child: const TextField(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final textFocused in [false, true]) {
+      if (textFocused) {
+        await tester.tap(find.byType(TextField));
+        await tester.pumpAndSettle();
+      }
+      for (final modifier in [
+        LogicalKeyboardKey.controlLeft,
+        LogicalKeyboardKey.metaLeft,
+      ]) {
+        await tester.sendKeyDownEvent(modifier);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.keyS);
+        await tester.sendKeyRepeatEvent(LogicalKeyboardKey.keyS);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.keyS);
+        await tester.sendKeyUpEvent(modifier);
+        await tester.pump();
+      }
+    }
+    expect(calls, ['save', 'save', 'save', 'save']);
+    focus.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+    expect(calls, hasLength(4), reason: 'bare S does not save');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('desktop file and tool actions reach their own callbacks', (
     tester,
   ) async {

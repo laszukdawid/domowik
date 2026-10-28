@@ -1,0 +1,7 @@
+# Cap parallel codegen so a full workspace build fits alongside a browser and
+# editor session. With the default of one job per core, twelve concurrent rustc
+# processes (0.4-2 GB each) exhausted 32 GB RAM and 8 GB swap and triggered a
+# global OOM kill on a 12-core machine. Override with `CARGO_BUILD_JOBS` or
+# `cargo build -j N` when more headroom is available.
+[build]
+jobs = 4

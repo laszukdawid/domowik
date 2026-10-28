@@ -858,6 +858,13 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
                       }
                       if (event is! KeyDownEvent && event is! KeyRepeatEvent)
                         return KeyEventResult.ignored;
+                      // Let the shell handle Save instead of walking backwards.
+                      final keyboard = HardwareKeyboard.instance;
+                      if (key == LogicalKeyboardKey.keyS &&
+                          (keyboard.isControlPressed ||
+                              keyboard.isMetaPressed)) {
+                        return KeyEventResult.ignored;
+                      }
                       final history = EditorWorkflows.heldHistoryShortcut(key);
                       if (history != null) {
                         (history == HistoryShortcut.redo

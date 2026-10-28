@@ -75,7 +75,7 @@ void main(List<String> args) {
   final out = alloc<DomowikBuf>(sizeOf<DomowikBuf>());
   final handleOut = alloc<Uint64>(sizeOf<Uint64>());
 
-  checkEq(b.abiVersion(), 22, 'abi version');
+  checkEq(b.abiVersion(), 25, 'abi version');
 
   // ---- a stateful round trip ----
   checkEq(b.planCreateDefault(handleOut), ok, 'clean editor baseline');

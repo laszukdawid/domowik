@@ -37,6 +37,46 @@ fn workloads(c: &mut Criterion) {
     };
     d.level_connections.push(connection);
     d.staircases.push(s);
+    let index = domowik_geometry::hit::HitIndex::build(&d, lower);
+    let footprint = architecture::stair_footprint(&d, &d.staircases[0]).unwrap();
+    c.bench_function("architecture/stair_edge_resize", |b| {
+        b.iter(|| {
+            architecture::resize_stair_footprint(
+                black_box(&footprint),
+                architecture::StairResizeEdge::Left,
+                black_box(Point::new(100.0, -100.0)),
+            )
+            .unwrap()
+        })
+    });
+    c.bench_function("architecture/stair_end_rotate_and_snap", |b| {
+        b.iter(|| {
+            architecture::resize_stair_footprint_with_snap(
+                black_box(&footprint),
+                architecture::StairResizeEdge::Upper,
+                black_box(Point::new(500.0, 300.0)),
+                true,
+            )
+            .unwrap()
+        })
+    });
+    c.bench_function("architecture/stair_hit_cached", |b| {
+        b.iter(|| index.hit_test(black_box(Point::new(1800.0, 400.0)), black_box(60.0)))
+    });
+    c.bench_function("architecture/stair_marquee_cached", |b| {
+        b.iter(|| {
+            index.marquee(black_box(domowik_geometry::spatial::Aabb {
+                min_x: 1000.0,
+                min_y: -500.0,
+                max_x: 2000.0,
+                max_y: 500.0,
+            }))
+        })
+    });
+    let mut synced = index.clone();
+    c.bench_function("architecture/stair_hit_sync_unchanged", |b| {
+        b.iter(|| synced.sync(black_box(&d), &[]))
+    });
     c.bench_function("architecture/straight_stair_15_risers", |b| {
         b.iter(|| architecture::stair(black_box(&d), black_box(&d.staircases[0])).unwrap())
     });

@@ -70,7 +70,7 @@ typedef struct {
   uint64_t token;
 } domowik_buf;
 
-/* The ABI revision, currently 22. A caller reading a different number must
+/* The ABI revision, currently 25. A caller reading a different number must
  * not proceed.
  *
  * 10 is NOT backward-compatible, unlike every export- or field-only bump
@@ -105,6 +105,17 @@ int32_t domowik_abi_version(void);
  * Calls are synchronous and serialized per plan; no history on preview, no
  * callbacks or retained pointers, standard panic/status and buffer ownership.
  * Available on native and browser hosts. Invalid requests leave out untouched. */
+/* ABI 25 also accepts {staircaseId,levelId,edge,deltaMm:[dx,dy]} here and via
+ * edit {kind:"resizeStaircase",request:{...}}. edge is left/right/lower/upper
+ * relative to the lower-to-upper axis. Side displacement is projected by Rust;
+ * End drags move the grabbed endpoint freely in 2D, rotating around the
+ * opposite endpoint. Optional snapAngle (default false) constrains end directions
+ * to 15-degree increments; sides ignore it. Elevations/count remain unchanged.
+ * Aligned cuts follow atomically; custom/shared cuts, nonpositive width,
+ * collapsed endpoint pairs and out-of-bound sizes/coordinates refuse.
+ * No-op edits succeed without history.
+ * Preview returns only this stair's construction graphics on an endpoint level;
+ * it never edits the plan. Ownership, errors, threading and hosts are unchanged. */
 int32_t domowik_plan_stair_preview(uint64_t handle,const uint8_t *req,
                                  uint64_t req_len,domowik_buf *out);
 
@@ -275,6 +286,12 @@ int32_t domowik_plan_snapshot(uint64_t handle, domowik_buf *out);
  * A caller assembling operations by hand gets none of that and quietly
  * produces a different document.
  *
+ * ABI 25 adds staircase targets to translateSelection {entityIds,delta:[dx,dy]}.
+ * Stairs are eligible on either endpoint level. Both plan endpoints and aligned
+ * associated upper-floor cuts translate in one batch; custom/shared cuts refuse.
+ * Zero displacement succeeds without history. Coordinate bounds and normal
+ * admission apply. No new symbols or ownership/threading requirements.
+ *
  * ABI 17 adds setWalls {wallIds, thicknessMm?, heightMm?}: selected same-level
  * walls only, one atomic batch. Unknown/non-wall/cross-level IDs reject the whole
  * request. Duplicate IDs apply once in stable ID order; omitted or unchanged
@@ -384,7 +401,10 @@ int32_t domowik_plan_derived(uint64_t handle, const char *level_id,
  *   [{"class":"join-node","entityId":"<uuid>","closestMm":[x,y],
  *     "distanceSquaredMm2":0.0}]
  *
- * `class` is join-node, free-endpoint, region or placeholder-box; the last is
+ * `class` is join-node, free-endpoint, opening, region, staircase or
+ * placeholder-box (in precedence order). ABI 25 adds staircase: the assembly
+ * footprint is selectable on either endpoint level, returning its assembly ID.
+ * The last class is
  * defined for completeness and is NOT currently emitted, because this spike
  * passes no degraded instances to the hit path. `entityId` is the JOIN at a
  * node and the WALL at an endpoint or region. Distances are SQUARED and never
