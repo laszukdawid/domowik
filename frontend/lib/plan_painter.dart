@@ -258,6 +258,7 @@ class Derived {
     this.constructionDiagnostics = const [],
     this.floorSurfaces,
     this.wallPaints = const [],
+    this.wallSides = const {},
     List<Ring>? drawn,
   }) : _drawn = drawn;
 
@@ -283,6 +284,10 @@ class Derived {
   final List<Ring>? floorSurfaces;
   final List<WallPaintView> wallPaints;
 
+  /// Per wall id: the room beside, and effective colour of, each
+  /// `[Left, Right]` face, as resolved by the core.
+  final Map<String, WallSidesView> wallSides;
+
   static const empty = Derived([], [], [], 0.0);
 }
 
@@ -292,6 +297,14 @@ class WallPaintView {
       ring = Ring.fromJson({...j, 'holes': const <Object?>[]});
   final String? color;
   final Ring ring;
+}
+
+class WallSidesView {
+  WallSidesView.fromJson(Map<String, Object?> j)
+    : rooms = (j['rooms'] as List<Object?>).cast<String?>(),
+      colors = (j['colors'] as List<Object?>).cast<String?>();
+  final List<String?> rooms;
+  final List<String?> colors;
 }
 
 /// Paint-only architectural geometry supplied by Rust, on either stair level.

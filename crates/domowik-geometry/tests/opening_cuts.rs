@@ -666,3 +666,29 @@ fn opposite_and_redundant_cuts_and_seam_free_pieces() {
         vec![w[0].rectangle().unwrap().to_vec()]
     );
 }
+
+#[test]
+fn side_pieces_split_a_cut_wall_at_its_axis_and_tile_its_pieces() {
+    use domowik_geometry::cuts::{wall_pieces, wall_side_pieces};
+    let walls = [wall((0.0, 0.0), (4000.0, 0.0), 200.0)];
+    let area = |rings: Vec<Vec<Point>>| -> f64 {
+        rings.into_iter().map(|r| Polygon::new(r).area_mm2()).sum()
+    };
+    // A full-depth door and a shallow Left niche: the Right half survives
+    // behind the niche, the Left half does not exist at the door.
+    let cuts = [
+        cut(&walls, 0, 0.25, 900.0, 200.0, Side::Right),
+        cut(&walls, 0, 0.75, 600.0, 80.0, Side::Left),
+    ];
+    let whole = area(wall_pieces(&walls[0], &cuts));
+    let left = wall_side_pieces(&walls[0], &cuts, Side::Left);
+    let right = wall_side_pieces(&walls[0], &cuts, Side::Right);
+    assert!(left.iter().flatten().all(|p| p.y >= 0.0));
+    assert!(right.iter().flatten().all(|p| p.y <= 0.0));
+    assert_eq!(right.len(), 2, "the door separates the Right half");
+    assert_eq!(area(right.clone()), (4000.0 - 900.0) * 100.0);
+    assert_eq!(area(left) + area(right), whole);
+    // Uncut walls split into two exact half rectangles.
+    let uncut = wall_side_pieces(&walls[0], &[], Side::Left);
+    assert_eq!(area(uncut), 4000.0 * 100.0);
+}

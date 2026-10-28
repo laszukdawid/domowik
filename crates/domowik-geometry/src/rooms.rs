@@ -18,11 +18,13 @@
 //! implementation-private keys R5.1.8 permits: they index one call's own
 //! [`LevelRooms::faces`] and mean nothing across two calls.
 
+use crate::aabb_tree::AabbTree;
 use crate::arrangement::{classify_point, Containment};
 use crate::incremental::LevelGeometry;
 use crate::polygon::Polygon;
+use crate::spatial::Aabb;
 use crate::walls;
-use domowik_format::{Document, Point};
+use domowik_format::{Document, Point, Side};
 use uuid::Uuid;
 
 /// A record's derived status. Exactly one holds at any time (R5.2.4).
@@ -475,6 +477,115 @@ pub fn display_area_m2(area_mm2: f64) -> String {
     }
     let hundredths = hundredths as i128;
     format!("{}.{:02}", hundredths / 100, hundredths % 100)
+}
+
+/// Distance from a wall face line within which a room boundary edge lies on
+/// that face: ten topology quanta (ED-0110), far below any real wall gap.
+const FACE_TOLERANCE_MM: f64 = 10.0 / 1024.0;
+
+/// Wall faces bounding `face` over positive length, as `(wall id, side)`,
+/// sorted and unique. An edge lies on a face when both its ends are within
+/// [`FACE_TOLERANCE_MM`] of the face line and its projection overlaps the
+/// wall's axis span by more than that tolerance, so collinear walls sharing
+/// one room edge both match. Faces are wall-granular: a face that also bounds
+/// another room is still reported whole. `solids` must be the face's level.
+/// Deterministic; `O(edges × walls)`.
+pub fn bounding_wall_faces(solids: &walls::LevelSolids, face: &Polygon) -> Vec<(Uuid, Side)> {
+    let mut out = Vec::new();
+    for (i, w) in solids.walls.iter().enumerate() {
+        for side in faces_touching(w, face) {
+            out.push((solids.ids[i], side));
+        }
+    }
+    out.sort_by_key(|(id, side)| (*id, *side == Side::Right));
+    out.dedup();
+    out
+}
+
+/// The first effective record, in canonical face order, whose face bounds
+/// each `[Left, Right]` wall face; parallel to `solids.walls`. For labelling.
+/// Walls are indexed once in an AABB tree and only the edges of faces with
+/// an effective record are visited, so the cost is `O(W log W + E·k)` for
+/// `E` such edges and `k` walls near each; nothing is built when no face has
+/// a record. `solids` must be the level `rooms` was projected from.
+pub fn wall_face_records(
+    rooms: &LevelRooms,
+    solids: &walls::LevelSolids,
+) -> Vec<[Option<Uuid>; 2]> {
+    let mut out = vec![[None, None]; solids.walls.len()];
+    let named: Vec<_> = (0..rooms.faces.len())
+        .filter_map(|f| Some((rooms.effective_record(f)?, &rooms.faces[f])))
+        .collect();
+    if named.is_empty() {
+        return out;
+    }
+    let mut index = AabbTree::new();
+    let items = solids
+        .walls
+        .iter()
+        .enumerate()
+        .filter_map(|(i, w)| Some((Aabb::of(&w.rectangle()?)?, i)))
+        .collect();
+    index.extend_empty(items);
+    for (record, face) in named {
+        for ring in std::iter::once(&face.outer).chain(face.holes.iter()) {
+            for k in 0..ring.len() {
+                let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+                let mut probe = Aabb::from_corners(a, b);
+                probe.min_x -= FACE_TOLERANCE_MM;
+                probe.min_y -= FACE_TOLERANCE_MM;
+                probe.max_x += FACE_TOLERANCE_MM;
+                probe.max_y += FACE_TOLERANCE_MM;
+                index.query(&probe, |_, _, &i| {
+                    if let Some(side) = edge_side(&solids.walls[i], a, b) {
+                        out[i][usize::from(side == Side::Right)].get_or_insert(record);
+                    }
+                });
+            }
+        }
+    }
+    out
+}
+
+fn faces_touching(w: &walls::WallSolid, face: &Polygon) -> Vec<Side> {
+    let mut sides = Vec::new();
+    for ring in std::iter::once(&face.outer).chain(face.holes.iter()) {
+        for k in 0..ring.len() {
+            if let Some(side) = edge_side(w, ring[k], ring[(k + 1) % ring.len()]) {
+                if !sides.contains(&side) {
+                    sides.push(side);
+                }
+            }
+        }
+    }
+    sides
+}
+
+/// The face of `w` the boundary edge `a→b` lies on, if any.
+fn edge_side(w: &walls::WallSolid, a: Point, b: Point) -> Option<Side> {
+    let (dx, dy) = (w.end.x - w.start.x, w.end.y - w.start.y);
+    let len = dx.hypot(dy);
+    if !(len.is_finite() && len > 0.0) {
+        return None;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let half = w.thickness_mm / 2.0;
+    // Frame coordinates: `s` along the axis from start, `η` toward Left.
+    let frame = |p: Point| {
+        let (x, y) = (p.x - w.start.x, p.y - w.start.y);
+        (x * ux + y * uy, -x * uy + y * ux)
+    };
+    let (a, b) = (frame(a), frame(b));
+    let overlap = a.0.max(b.0).min(len) - a.0.min(b.0).max(0.0);
+    if overlap <= FACE_TOLERANCE_MM {
+        return None;
+    }
+    [(Side::Left, half), (Side::Right, -half)]
+        .into_iter()
+        .find(|(_, eta)| {
+            (a.1 - eta).abs() <= FACE_TOLERANCE_MM && (b.1 - eta).abs() <= FACE_TOLERANCE_MM
+        })
+        .map(|(side, _)| side)
 }
 
 #[cfg(test)]

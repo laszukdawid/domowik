@@ -4636,16 +4636,29 @@ remain unchanged.
 
 ### Solid wall and instance colors
 
-**Normative for the experimental editor.** A wall may carry one optional opaque
-sRGB `color`, applied to both sides, caps and recess backing in 3D and its wall
-mass in 2D and SVG/PNG exports. Absence retains each view's existing default.
-The default 3D wall finish is light warm beige (`#E8DCC4`); an unspecified 2D
-wall retains its technical ink default. This is presentation only: joins, cuts,
-room topology and dimensions do not change. Splits copy the color; reversal
-preserves it. For mixed-color overlaps
-in 2D the lowest wall UUID paints last; a join patch takes its lowest-member
-wall's color in both 2D and 3D. Paint is clipped to the canonical drawn region,
-so no opening cut is filled back in.
+**Normative for the experimental editor.** Each wall face has an optional
+opaque sRGB color: `colorLeft`/`colorRight` for one face, falling back to the
+both-sides `color` (FORMAT-SPEC). In 3D each half of the wall's thickness, and
+of any recess backing, takes its face's color; caps follow the half they
+close. In 2D and SVG/PNG exports the wall mass is split along its axis the same
+way. A wall whose faces agree stays one undivided mass and one 3D box. Absence
+retains each view's existing default. The default 3D wall finish is light warm
+beige (`#E8DCC4`); an unspecified 2D wall retains its technical ink default.
+This is presentation only: joins, cuts, room topology and dimensions do not
+change. Splits copy every color field; reversal swaps the side fields so each
+finish stays on the same physical face. For mixed-color overlaps in 2D the
+lowest wall UUID paints last. A join patch is divided by its members' axes into
+wedges around the node; each wedge takes the color of the lower-UUID face of
+the two members bounding it, in 2D and 3D, so a room painted one color has
+clean inside corners. A join whose wedges agree stays one patch. Paint is
+clipped to the canonical drawn region, so no opening cut is filled back in.
+
+**Painting a room.** Painting a named room colors every wall face that bounds
+its detected area over positive length, as one atomic undoable batch. Faces
+are wall-granular: a face that continues past the room into another room is
+painted whole; split the wall to separate them. A room with no enclosed area
+or no bounding walls is refused without operations; a repeated paint emits
+none.
 
 A placed model may carry `materialColors`: solid RGB replacements for individual
 source materials. Stable keys are scoped to its exact content digest: `gltf:N`
@@ -4660,13 +4673,20 @@ unchanged, and another instance of the same model is unaffected. Unknown materia
 keys are preserved but inert, not remapped to a nearby name or index.
 
 The Selection inspector exposes **Edit color** for one or several same-level
-walls and **Edit colors** for a model. Hex input, swatches and reset-to-original
+walls and **Edit colors** for a model. For one wall the dialog offers one field
+per face, named after the first named room, in canonical face order, that the
+face bounds (`Kitchen side`); a face with no room beside it reads `Other side`, or `Left`/`Right`
+when neither has one, and a wall with the same room on both sides adds
+`(left)`/`(right)`. Several walls share one both-sides field. Each named room
+in the Rooms panel offers **Paint walls**; an unnamed room must be named first. Hex input, swatches and reset-to-original
 are supported; cancel writes nothing. Each Apply is one atomic undoable batch;
 unchanged values emit none. Colors survive saving, reopening, replay, compaction
-and model copy/paste. The CLI exposes the same edits under `color`; `color list`
-reports material keys, source colors and decode diagnostics. Invalid color
-values/palettes reject the whole command. Arbitrary textures, wall-side-specific
-finishes and regional floor painting are outside this solid-color increment.
+and model copy/paste. The CLI exposes the same edits under `color`: `color wall --side
+left|right` paints one face and `color room` paints a room; `color list`
+reports effective face colors, material keys, source colors and decode
+diagnostics. Invalid color
+values/palettes reject the whole command. Arbitrary textures, finishes for part of
+a wall face and regional floor painting are outside this solid-color increment.
 
 ### Door colors and glass style
 

@@ -404,3 +404,80 @@ fn retained_floors_build_the_same_scene_as_the_one_shot_builder() {
     .unwrap();
     assert!(err.contains("no floor geometry"), "{err}");
 }
+
+#[test]
+fn differing_faces_split_walls_and_corners_while_equal_faces_stay_whole() {
+    let mut doc = Document::with_ground_floor();
+    let level = doc.levels[0].id;
+    let mut a = Wall::new(
+        level,
+        Point::new(0., 0.),
+        Point::new(4000., 0.),
+        120.,
+        2500.,
+    );
+    let mut b = Wall::new(
+        level,
+        Point::new(4000., 0.),
+        Point::new(4000., 3000.),
+        120.,
+        2500.,
+    );
+    for w in [&mut a, &mut b] {
+        w.unknown
+            .insert("colorLeft".into(), serde_json::json!("#B77964"));
+    }
+    let (a_id, b_id) = (a.id, b.id);
+    doc.joins.push(domowik_format::WallJoin::new(vec![
+        domowik_format::JoinMember::new(a_id, domowik_format::Role::End),
+        domowik_format::JoinMember::new(b_id, domowik_format::Role::Start),
+    ]));
+    doc.walls.extend([a, b]);
+    let red = [183. / 255., 121. / 255., 100. / 255., 1.];
+    let beige = [232. / 255., 220. / 255., 196. / 255., 1.];
+    let scene = domowik_scene::build(&doc, &[level], &BTreeSet::new(), &BTreeMap::new()).unwrap();
+    let node = |id: String| scene.nodes.iter().find(|n| n.id == id).unwrap();
+    let (left, right) = (
+        node(format!("wall:{a_id}:0:0:L")),
+        node(format!("wall:{a_id}:0:0:R")),
+    );
+    assert_eq!((left.color, right.color), (red, beige));
+    // Each half is half the thickness, its centre a quarter-thickness off axis.
+    for half in [left, right] {
+        assert!((half.matrix[10] - 0.06).abs() < 1e-6, "{:?}", half.matrix);
+    }
+    let gap = (left.matrix[14] - right.matrix[14]).abs();
+    assert!((gap - 0.06).abs() < 1e-6, "{gap}");
+    // The corner splits into its inner (red, both Left faces) and outer wedges.
+    let joins: Vec<_> = scene
+        .nodes
+        .iter()
+        .filter(|n| n.id.starts_with("join:"))
+        .collect();
+    assert!(
+        joins.len() >= 2,
+        "{:?}",
+        joins.iter().map(|n| &n.id).collect::<Vec<_>>()
+    );
+    assert!(joins.iter().any(|n| n.color == red) && joins.iter().any(|n| n.color == beige));
+    assert!(domowik_scene::pick::node_entity(&left.id).is_some());
+
+    for w in &mut doc.walls {
+        w.unknown.remove("colorLeft");
+        w.unknown
+            .insert("color".into(), serde_json::json!("#B77964"));
+    }
+    let whole = domowik_scene::build(&doc, &[level], &BTreeSet::new(), &BTreeMap::new()).unwrap();
+    assert!(whole
+        .nodes
+        .iter()
+        .all(|n| !n.id.ends_with(":L") && !n.id.ends_with(":R")));
+    assert_eq!(
+        whole
+            .nodes
+            .iter()
+            .filter(|n| n.id.starts_with("join:"))
+            .count(),
+        1
+    );
+}

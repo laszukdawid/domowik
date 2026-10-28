@@ -248,7 +248,12 @@ refuse write-back otherwise; silent stripping is forbidden.
 
 **Optional solid appearance fields.** A `wall` may carry `color`, a seven-byte
 string `#RRGGBB` representing opaque 8-bit sRGB (hex input is case-insensitive;
-authoring commands emit uppercase). An `assetInstance` may carry
+authoring commands emit uppercase). A `wall` may also carry `colorLeft` and
+`colorRight` in the same representation, naming its `Left` (`+n̂`) and `Right`
+(`−n̂`) faces as for openings. A face's effective color is its side field, else
+`color`, else the view default. Authoring commands write a canonical form:
+`color` alone when both faces agree, otherwise only the side fields. An
+`assetInstance` may carry
 `materialColors`, an object mapping nonempty, case-sensitive material keys of at
 most 1024 UTF-8 bytes to the same color strings, with at most 256 entries. These
 are recognized optional presentation fields, carried through the existing flat
@@ -259,10 +264,13 @@ BEHAVIOR-SPEC's solid-color section owns material identity and rendering.
 
 Compatibility assessment: no entity kind, asset-root reference, required feature
 or schema label changes (`0.1` and `0.2` remain supported). Older readers preserve
-the optional fields under §8 U2 but do not display the overrides. Color cannot
+the optional fields under §8 U2 but do not display the overrides; a reader
+that knows `color` but not the side fields shows a wall with differing faces in
+its default finish. Color cannot
 change geometry, references or editing safety; it does not reinterpret opaque
-`styleRefs`. Synthetic tests cover opaque preservation, replay, undo/redo,
-split inheritance and package roundtrips. User plans are not format fixtures.
+`styleRefs`. Reversing a wall swaps `colorLeft` and `colorRight`. Synthetic
+tests cover opaque preservation, replay, undo/redo, split inheritance, reversal
+and package roundtrips. User plans are not format fixtures.
 
 For a door `opening`, optional `color` uses the same `#RRGGBB` representation,
 and optional `doorStyle` is the string `solid` or `glass`. Absence means the

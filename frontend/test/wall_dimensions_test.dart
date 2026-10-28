@@ -174,10 +174,12 @@ void main() {
         ),
       );
       await tap(tester, edit);
-      await tester.enterText(
-        find.byKey(const ValueKey('solid-color-wall')),
-        '#d8cdb7',
-      );
+      for (final side in ['left', 'right']) {
+        await tester.enterText(
+          find.byKey(ValueKey('solid-color-$side')),
+          '#d8cdb7',
+        );
+      }
       await tap(tester, find.byKey(const ValueKey('apply-solid-colors')));
       final changed = painter(tester).walls.single;
       expect(changed.color, '#D8CDB7');
@@ -191,4 +193,32 @@ void main() {
       expect(painter(tester).walls.single.color, '#D8CDB7');
     },
   );
+
+  testWidgets('each wall face takes its own color and paints its half', (
+    tester,
+  ) async {
+    await start(tester);
+    final wall = await drawAndSelect(tester);
+    final edit = find.byKey(const ValueKey('edit-wall-color'));
+    await tester.scrollUntilVisible(
+      edit,
+      300,
+      scrollable: find.descendant(
+        of: find.byType(ListView),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tap(tester, edit);
+    expect(find.text('Left side'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('solid-color-left')),
+      '#b77964',
+    );
+    await tap(tester, find.byKey(const ValueKey('apply-solid-colors')));
+    final derived = painter(tester).derived;
+    expect(derived.wallSides[wall.id]!.colors, ['#B77964', null]);
+    expect(derived.wallPaints.map((p) => p.color).toSet(), {'#B77964', null});
+    await tap(tester, find.byTooltip('Undo'));
+    expect(painter(tester).derived.wallPaints, isEmpty);
+  });
 }

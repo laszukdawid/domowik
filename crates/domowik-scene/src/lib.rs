@@ -5,7 +5,7 @@
 //! Imported geometry is supplied through a digest-keyed caller cache; missing
 //! models receive diagnostic boxes. See BEHAVIOR-SPEC §11 and issue-0078 evidence.
 
-use domowik_format::{Document, Point};
+use domowik_format::{Document, Point, Side};
 use domowik_geometry::{polygon::Polygon, walls};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,12 +23,17 @@ pub const VERTEX_FLOATS: usize = 10;
 const DEFAULT_WALL_COLOR: domowik_format::appearance::RgbColor =
     domowik_format::appearance::RgbColor([232, 220, 196]);
 
-fn wall_color(wall: Option<&domowik_format::Wall>, alpha: f32) -> [f32; 4] {
-    let [r, g, b] = wall
-        .and_then(|w| domowik_format::appearance::wall_color(w).ok().flatten())
-        .unwrap_or(DEFAULT_WALL_COLOR)
-        .rgb();
+fn wall_faces_default(alpha: f32) -> [f32; 4] {
+    let [r, g, b] = DEFAULT_WALL_COLOR.rgb();
     [r, g, b, alpha]
+}
+
+/// Display `[Left, Right]` face colours of a wall, defaults applied.
+fn wall_faces(wall: &domowik_format::Wall, alpha: f32) -> [[f32; 4]; 2] {
+    domowik_format::appearance::wall_faces(wall).map(|c| {
+        let [r, g, b] = c.unwrap_or(DEFAULT_WALL_COLOR).rgb();
+        [r, g, b, alpha]
+    })
 }
 
 #[derive(Serialize)]
@@ -310,6 +315,45 @@ impl Builder {
             1.,
         );
     }
+    /// A wall slab across `[η0, η1]` of the thickness (`η` toward Left),
+    /// split at the axis into `:L`/`:R` halves when the face colours differ.
+    #[allow(clippy::too_many_arguments)]
+    fn wall_slab(
+        &mut self,
+        id: String,
+        a: Point,
+        b: Point,
+        bottom: f64,
+        height: f64,
+        (e0, e1): (f64, f64),
+        [left, right]: [[f32; 4]; 2],
+    ) {
+        let length = (b.x - a.x).hypot(b.y - a.y);
+        if length <= 0. {
+            return;
+        }
+        let n = Point::new(-(b.y - a.y) / length, (b.x - a.x) / length);
+        let mut slab = |id: String, e0: f64, e1: f64, color| {
+            let c = (e0 + e1) / 2.;
+            self.box_segment(
+                id,
+                Point::new(a.x + n.x * c, a.y + n.y * c),
+                Point::new(b.x + n.x * c, b.y + n.y * c),
+                bottom,
+                height,
+                e1 - e0,
+                color,
+            );
+        };
+        if left == right || e0 >= 0. {
+            slab(id, e0, e1, left);
+        } else if e1 <= 0. {
+            slab(id, e0, e1, right);
+        } else {
+            slab(format!("{id}:R"), e0, 0., right);
+            slab(format!("{id}:L"), 0., e1, left);
+        }
+    }
     fn polygon(
         &mut self,
         id: String,
@@ -545,7 +589,8 @@ pub fn build_with_floors(
             b.construction(doc, body, &format!("body:{}", body.id), alpha, true)?;
         }
         for w in doc.walls_on_level(level.id) {
-            let color = wall_color(Some(w), alpha);
+            let faces = wall_faces(w, alpha);
+            let half = w.thickness_mm / 2.;
             let a = w.start();
             let z = w.end();
             let length = (z.x - a.x).hypot(z.y - a.y);
@@ -580,14 +625,14 @@ pub fn build_with_floors(
                     intervals = vec![(0., o.sill_mm), (o.sill_mm + o.height_mm, w.height_mm)];
                 }
                 for (j, (bottom, top)) in intervals.into_iter().enumerate() {
-                    b.box_segment(
+                    b.wall_slab(
                         format!("wall:{}:{i}:{j}", w.id),
                         at(span[0]),
                         at(span[1]),
                         level.elevation_mm + bottom,
                         top - bottom,
-                        w.thickness_mm,
-                        color,
+                        (-half, half),
+                        faces,
                     );
                 }
             }
@@ -656,45 +701,58 @@ pub fn build_with_floors(
                     [0.95, 0.95, 0.94, alpha],
                 );
                 if o.depth_mm < w.thickness_mm {
-                    let side = if o.side == domowik_format::Side::Left {
-                        -1.
+                    let backing = if o.side == domowik_format::Side::Left {
+                        (-half, half - o.depth_mm)
                     } else {
-                        1.
+                        (-half + o.depth_mm, half)
                     };
-                    let shift = Point::new(
-                        -(z.y - a.y) / length * o.depth_mm * side / 2.,
-                        (z.x - a.x) / length * o.depth_mm * side / 2.,
-                    );
-                    b.box_segment(
+                    b.wall_slab(
                         format!("recess:{}", o.id),
-                        Point::new(left.x + shift.x, left.y + shift.y),
-                        Point::new(right.x + shift.x, right.y + shift.y),
+                        left,
+                        right,
                         bottom,
                         o.height_mm,
-                        w.thickness_mm - o.depth_mm,
-                        color,
+                        backing,
+                        faces,
                     );
                 }
             }
         }
         for (i, join) in solids.joins.iter().enumerate() {
-            let patch = walls::join_patch(&solids.walls, join);
-            if patch.len() < 3 {
-                continue;
-            }
-            let height = join
+            let members: Vec<_> = join
                 .members
                 .iter()
                 .filter_map(|m| doc.wall(solids.ids[m.wall]))
+                .collect();
+            let height = members
+                .iter()
                 .map(|w| w.height_mm)
                 .fold(f64::INFINITY, f64::min);
-            if height.is_finite() {
-                let owner = join
-                    .members
-                    .iter()
-                    .filter_map(|m| doc.wall(solids.ids[m.wall]))
-                    .min_by_key(|w| w.id);
-                let color = wall_color(owner, alpha);
+            if !height.is_finite() {
+                continue;
+            }
+            // Each wedge between member axes takes the lower-UUID bounding
+            // face; a join whose wedges agree stays one patch.
+            let wedges: Vec<_> = walls::join_wedges(&solids.walls, join)
+                .into_iter()
+                .map(|wedge| {
+                    let (wall, side) = *wedge
+                        .faces
+                        .iter()
+                        .min_by_key(|(w, _)| solids.ids[*w])
+                        .expect("two faces");
+                    let color = doc
+                        .wall(solids.ids[wall])
+                        .map(|w| wall_faces(w, alpha)[usize::from(side == Side::Right)])
+                        .unwrap_or(wall_faces_default(alpha));
+                    (color, wedge.pieces)
+                })
+                .collect();
+            let Some(first) = wedges.first() else {
+                continue;
+            };
+            if wedges.iter().all(|(c, _)| *c == first.0) {
+                let patch = walls::join_patch(&solids.walls, join);
                 b.polygon(
                     format!("join:{}:{i}", level.id),
                     &Polygon {
@@ -703,8 +761,25 @@ pub fn build_with_floors(
                     },
                     level.elevation_mm,
                     height,
-                    color,
+                    first.0,
                 )?;
+                continue;
+            }
+            let mut k = 0;
+            for (color, pieces) in wedges {
+                for outer in pieces {
+                    b.polygon(
+                        format!("join:{}:{i}:{k}", level.id),
+                        &Polygon {
+                            outer,
+                            holes: vec![],
+                        },
+                        level.elevation_mm,
+                        height,
+                        color,
+                    )?;
+                    k += 1;
+                }
             }
         }
         for a in doc.asset_instances_on_level(level.id) {

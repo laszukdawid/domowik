@@ -1678,7 +1678,11 @@ class _PlanPageState extends State<PlanPage>
     });
   }
 
+  /// One wall: each face is named by the room beside it. Several walls:
+  /// both faces together, since sides differ per wall orientation.
   Future<void> _editWallColors(List<Wall> walls) async {
+    final sides = walls.length == 1 ? _derived.wallSides[walls.first.id] : null;
+    if (sides != null) return _editWallFaces(walls.first, sides);
     await _fileAction(() async {
       final common = walls.every((w) => w.color == walls.first.color)
           ? walls.first.color
@@ -1701,6 +1705,66 @@ class _PlanPageState extends State<PlanPage>
         'wallIds': walls.map((w) => w.id).toList(),
         'color': colors['wall'],
       }, 'Edit wall colors');
+      return true;
+    });
+  }
+
+  Future<void> _editWallFaces(Wall wall, WallSidesView sides) async {
+    final [left, right] = sides.rooms;
+    final names = left != null && left == right
+        ? ['$left (left)', '$right (right)']
+        : [
+            left ?? (right == null ? 'Left' : 'Other'),
+            right ?? (left == null ? 'Right' : 'Other'),
+          ];
+    await _fileAction(() async {
+      final handle = _handle;
+      final colors = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (_) => SolidColorsDialog(
+          title: 'Wall color',
+          materials: [
+            SolidColorMaterial('left', '${names[0]} side', '#E8DCC4'),
+            SolidColorMaterial('right', '${names[1]} side', '#E8DCC4'),
+          ],
+          colors: {
+            if (sides.colors[0] != null) 'left': sides.colors[0]!,
+            if (sides.colors[1] != null) 'right': sides.colors[1]!,
+          },
+        ),
+      );
+      if (!mounted || colors == null || _handle != handle) return false;
+      _gesture({
+        'kind': 'setWallFaces',
+        'wallId': wall.id,
+        'faces': [colors['left'], colors['right']],
+      }, 'Edit wall colors');
+      return true;
+    });
+  }
+
+  /// Colors every wall face bounding a named room in one undoable step.
+  Future<void> _paintRoom(Ring room) async {
+    final roomId = room.recordId;
+    if (roomId == null) return;
+    await _fileAction(() async {
+      final handle = _handle;
+      final colors = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (_) => SolidColorsDialog(
+          title: '${room.label ?? 'Room'} · wall color',
+          materials: const [
+            SolidColorMaterial('walls', 'Walls facing this room', '#E8DCC4'),
+          ],
+          colors: const {},
+        ),
+      );
+      if (!mounted || colors == null || _handle != handle) return false;
+      _gesture({
+        'kind': 'paintRoom',
+        'roomId': roomId,
+        'color': colors['walls'],
+      }, 'Paint room walls');
       return true;
     });
   }
@@ -2528,6 +2592,11 @@ class _PlanPageState extends State<PlanPage>
         wallPaints: (j['wallPaints'] as List<Object?>? ?? const [])
             .map((e) => WallPaintView.fromJson(e as Map<String, Object?>))
             .toList(),
+        wallSides: {
+          for (final MapEntry(:key, :value)
+              in (j['wallSides'] as Map<String, Object?>? ?? const {}).entries)
+            key: WallSidesView.fromJson(value as Map<String, Object?>),
+        },
         floorSurfaces: j['floorSurfaces'] == null
             ? null
             : rings('floorSurfaces'),
@@ -5813,6 +5882,16 @@ class _PlanPageState extends State<PlanPage>
                     : 'Rename this room',
                 icon: const Icon(Icons.label_outline, size: 18),
                 onPressed: () => _nameRoom(_derived.rooms[i]),
+              ),
+              IconButton(
+                key: ValueKey('paint-room-$i'),
+                tooltip: _derived.rooms[i].recordId == null
+                    ? 'Name this room to paint its walls'
+                    : 'Paint walls',
+                icon: const Icon(Icons.format_paint_outlined, size: 18),
+                onPressed: _derived.rooms[i].recordId == null
+                    ? null
+                    : () => _paintRoom(_derived.rooms[i]),
               ),
             ],
           ),

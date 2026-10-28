@@ -1,5 +1,5 @@
 //! Optional, presentation-only solid colours. No geometry or asset bytes change.
-use crate::{AssetInstance, Opening, OpeningKind, Wall};
+use crate::{AssetInstance, Opening, OpeningKind, Side, Wall};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
 
@@ -47,12 +47,44 @@ impl<'de> Deserialize<'de> for RgbColor {
 /// `default`. Unknown keys are retained but never applied to another material.
 pub type MaterialColors = BTreeMap<String, RgbColor>;
 
-/// Reads the optional wall field, carried in the forward-compatible field map.
-pub fn wall_color(wall: &Wall) -> Result<Option<RgbColor>, String> {
+fn wall_field(wall: &Wall, field: &str) -> Result<Option<RgbColor>, String> {
     wall.unknown
-        .get("color")
+        .get(field)
         .map(|v| serde_json::from_value(v.clone()).map_err(|e| e.to_string()))
         .transpose()
+}
+
+/// Reads the optional both-sides wall field, carried in the flat field map.
+pub fn wall_color(wall: &Wall) -> Result<Option<RgbColor>, String> {
+    wall_field(wall, "color")
+}
+
+/// The stored field naming one face's override: `colorLeft` or `colorRight`.
+pub fn wall_side_field(side: Side) -> &'static str {
+    match side {
+        Side::Left => "colorLeft",
+        Side::Right => "colorRight",
+    }
+}
+
+/// Effective face colour: the side override, else the both-sides `color`.
+/// `None` is the view's default finish.
+pub fn wall_face_color(wall: &Wall, side: Side) -> Result<Option<RgbColor>, String> {
+    Ok(wall_field(wall, wall_side_field(side))?.or(wall_color(wall)?))
+}
+
+/// Effective `[Left, Right]` face colours; malformed fields read as `None`
+/// (validation reports them).
+pub fn wall_faces(wall: &Wall) -> [Option<RgbColor>; 2] {
+    [Side::Left, Side::Right].map(|s| wall_face_color(wall, s).ok().flatten())
+}
+
+/// Validates every recognized wall appearance field.
+pub fn validate_wall(wall: &Wall) -> Result<(), String> {
+    wall_color(wall)?;
+    wall_field(wall, "colorLeft")?;
+    wall_field(wall, "colorRight")?;
+    Ok(())
 }
 
 /// Leaf finish, independent of a door's operating mechanism. Glass uses ordinary
@@ -148,6 +180,35 @@ mod tests {
         assert!(
             validate_material_colors(&BTreeMap::from([("".into(), RgbColor([0; 3]))])).is_err()
         );
+    }
+
+    #[test]
+    fn side_fields_override_color_and_are_validated() {
+        let mut doc = crate::Document::with_ground_floor();
+        let mut wall = crate::Wall::new(
+            doc.levels[0].id,
+            crate::Point::new(0., 0.),
+            crate::Point::new(4000., 0.),
+            120.,
+            2500.,
+        );
+        wall.unknown
+            .insert("color".into(), serde_json::json!("#111111"));
+        wall.unknown
+            .insert("colorRight".into(), serde_json::json!("#222222"));
+        assert_eq!(
+            wall_faces(&wall),
+            [Some(RgbColor([0x11; 3])), Some(RgbColor([0x22; 3]))]
+        );
+        doc.walls.push(wall);
+        assert!(doc.validate().is_empty());
+        doc.walls[0]
+            .unknown
+            .insert("colorLeft".into(), serde_json::json!("#12"));
+        assert!(doc
+            .validate()
+            .iter()
+            .any(|e| matches!(e, crate::ValidationError::InvalidAppearance { .. })));
     }
 
     #[test]
