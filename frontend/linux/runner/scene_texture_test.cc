@@ -98,5 +98,27 @@ int main(int argc,char** argv) {
     g_assert_cmpfloat(snapshot.meshes.at("geometry:test")->vertices[0],==,1.f);
     g_assert_cmpuint(renderer.mesh_revision,!=,snapshot.revision);
   });
+  g_test_add_func("/scene/commit-retires-unreferenced-meshes",[]{
+    Renderer renderer;
+    for(const char* key:{"model:red","model:blue","geometry:test"})renderer.meshes.emplace(key,std::make_shared<Mesh>(std::vector<float>(30,1)));
+    auto blue=renderer.meshes.at("model:blue");
+    g_autoptr(FlValue) args=packet();
+    const double identity[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1},normal[9]={1,0,0,0,1,0,0,0,1},color[4]={1,1,1,1};
+    for(const char* key:{"model:blue","geometry:test"}){
+      auto* node=fl_value_new_map();fl_value_set_string_take(node,"mesh",fl_value_new_string(key));
+      fl_value_set_string_take(node,"matrix",fl_value_new_float_list(identity,16));
+      fl_value_set_string_take(node,"normalMatrix",fl_value_new_float_list(normal,9));
+      fl_value_set_string_take(node,"color",fl_value_new_float_list(color,4));
+      fl_value_append_take(field(args,"nodes"),node);
+    }
+    const auto snapshot=snapshot_meshes(&renderer);PreparedScene prepared;std::string error;
+    g_assert_true(prepare_scene(args,snapshot,prepared,error));
+    Renderer old;commit_scene(&renderer,&old,prepared);
+    // The superseded palette goes to the GL thread; the rest stays resident.
+    g_assert_cmpuint(renderer.meshes.size(),==,2);
+    g_assert_true(renderer.meshes.at("model:blue")==blue);
+    g_assert_cmpuint(old.meshes.count("model:red"),==,1);
+    g_assert_cmpuint(renderer.mesh_revision,!=,snapshot.revision);
+  });
   return g_test_run();
 }

@@ -88,6 +88,55 @@ fn nested_xform_ops_compose() {
     assert_eq!(d.dimensions_mm.map(f64::round), [2000., 2000., 1000.]);
 }
 
+/// A 1 x 2 x 3 unit box: X, Y, Z extents.
+fn box_123() -> String {
+    CUBE.replace(
+        "point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0), (0, 0, 1), (1, 0, 1), (0, 1, 1), (1, 1, 1)]",
+        "point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 2, 0), (1, 2, 0), (0, 0, 3), (1, 0, 3), (0, 2, 3), (1, 2, 3)]",
+    )
+}
+
+#[test]
+fn euler_angles_are_x_y_z_whatever_the_rotation_order() {
+    let body = |op: &str| {
+        format!(
+            r#"def Xform "Turned" {{
+    float3 xformOp:{op} = (90, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:{op}"]
+    {}
+}}"#,
+            box_123()
+        )
+    };
+    // Y up: 90 degrees about X swaps height (Y) and depth (Z).
+    for op in ["rotateXYZ", "rotateYZX", "rotateZXY"] {
+        let d = dimensions(&layer("metersPerUnit = 1", &body(op))).unwrap();
+        assert_eq!(
+            d.dimensions_mm.map(f64::round),
+            [1000., 2000., 3000.],
+            "{op}"
+        );
+    }
+}
+
+#[test]
+fn reset_xform_stack_drops_ancestors_but_keeps_stage_units_and_up_axis() {
+    let body = format!(
+        r#"def Xform "Scaled" {{
+    double3 xformOp:scale = (5, 5, 5)
+    uniform token[] xformOpOrder = ["xformOp:scale"]
+    def Xform "Reset" {{
+        uniform token[] xformOpOrder = ["!resetXformStack!"]
+        {}
+    }}
+}}"#,
+        box_123()
+    );
+    // Centimetres, Z up: 10 mm wide, 20 mm deep, 30 mm tall, ignoring the 5x.
+    let d = dimensions(&layer("upAxis = \"Z\"", &body)).unwrap();
+    assert_eq!(d.dimensions_mm.map(f64::round), [10., 20., 30.]);
+}
+
 #[test]
 fn instances_expand_their_prototype() {
     let body = format!(

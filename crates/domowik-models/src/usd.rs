@@ -109,6 +109,8 @@ fn preflight(bytes: &[u8], kind: Kind) -> Result<(), String> {
         return text_layer(bytes, &mut prims);
     }
     if kind != Kind::Package {
+        // Binary layers are bounded only by openusd itself; see "Known
+        // limitation: binary layers" in docs/third-party/openusd.md.
         return Ok(());
     }
     let mut archive = zip::ZipArchive::new(io::Cursor::new(bytes)).map_err(err)?;
@@ -461,13 +463,15 @@ fn op(name: &str, v: &sdf::Value) -> Result<Matrix, String> {
             m = std::array::from_fn(|r| std::array::from_fn(|c| t.0[c * 4 + r]));
         }
         _ if kind.len() == 9 && kind.starts_with("rotate") => {
-            // rotateABC rotates about A first, then B, then C.
+            // rotateABC rotates about A first, then B, then C. The value is
+            // always (X, Y, Z) angles whatever the order.
             let angles = vec3(v).ok_or_else(bad)?;
-            for (i, axis) in kind[6..].bytes().enumerate() {
+            for axis in kind[6..].bytes() {
                 if !(b'X'..=b'Z').contains(&axis) {
                     return Err(bad());
                 }
-                m = multiply(&rotation(usize::from(axis - b'X'), angles[i]), &m);
+                let axis = usize::from(axis - b'X');
+                m = multiply(&rotation(axis, angles[axis]), &m);
             }
         }
         _ => return Err(err(format!("unsupported transform operation {name}"))),
@@ -583,6 +587,9 @@ struct Decoder {
     triangles: Vec<Triangle>,
     vertices: usize,
     prims: usize,
+    /// Stage units and up axis to Domowik space. Not part of any prim's
+    /// transform stack, so `!resetXformStack!` keeps it.
+    world: Matrix,
 }
 
 /// Follows an input's connection (to a shader output or a material interface
@@ -785,7 +792,7 @@ impl Decoder {
             .unwrap_or_default();
         let (local, reset) = local(&prim)?;
         let matrix = if reset {
-            local
+            multiply(&self.world, &local)
         } else {
             multiply(&parent, &local)
         };
@@ -1000,6 +1007,7 @@ pub(crate) fn decode(bytes: &[u8], kind: Kind) -> Result<Vec<Triangle>, String> 
         triangles: Vec::new(),
         vertices: 0,
         prims: 0,
+        world,
     };
     for child in root.children().map_err(err)? {
         decoder.walk(child, world, 0)?;

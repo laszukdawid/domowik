@@ -1340,10 +1340,46 @@ pub(crate) fn derive_scene(
             return Ok((scene, SceneModels::new()));
         }
     }
+    let variant = |asset: &AssetInstance| {
+        let colors = domowik_format::appearance::material_colors(asset)?;
+        if colors.is_empty() {
+            return Ok(None);
+        }
+        let key = domowik_container::digest_of(
+            &serde_json::to_vec(&("solid-colors-v1", &asset.digest, &colors))
+                .map_err(|e| e.to_string())?,
+        );
+        Ok::<_, String>(Some((key, colors)))
+    };
     // One lock acquisition captures the document, its retained per-level
     // floors and the model cache together, so all describe one revision.
     let (mut doc, floors, mut models, missing, revision, (preview_ids, pose_version)) = {
-        let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = plan.lock().unwrap_or_else(|e| e.into_inner());
+        let locked = &mut *guard;
+        // Every Apply of a new palette makes a variant (a full mesh and texture
+        // copy). Keep only those the live document uses, on any level, so
+        // trying colours cannot fill the cache. Evicting here, under the
+        // snapshot's lock and before new models are admitted, means a stale
+        // derivation never drops a newer scene's variant. Undoing to an
+        // evicted palette recolours again without decoding.
+        let used: std::collections::BTreeSet<String> = locked
+            .session()
+            .document()
+            .asset_instances
+            .iter()
+            // Invalid colours on another level must not fail this scene.
+            .filter_map(|a| variant(a).ok().flatten().map(|(key, _)| key))
+            .collect();
+        let stale: Vec<String> = locked
+            .scene_color_variants
+            .difference(&used)
+            .cloned()
+            .collect();
+        for key in stale {
+            locked.scene_color_variants.remove(&key);
+            locked.scene_models.remove(&key);
+            locked.scene_model_bounds.remove(&key);
+        }
         let mut doc = locked.session().document().clone();
         let mut preview_ids = Vec::new();
         let pose_version = locked.pose_version;
@@ -1429,28 +1465,42 @@ pub(crate) fn derive_scene(
         if !level_ids.contains(&asset.level_id) {
             continue;
         }
-        let colors = domowik_format::appearance::material_colors(asset)?;
-        if colors.is_empty() {
+        let Some((key, colors)) = variant(asset)? else {
             continue;
-        }
+        };
         let Some(base) = models.get(&asset.digest).cloned() else {
             continue;
         };
-        let key = domowik_container::digest_of(
-            &serde_json::to_vec(&("solid-colors-v1", &asset.digest, &colors))
-                .map_err(|e| e.to_string())?,
-        );
         if let std::collections::btree_map::Entry::Vacant(entry) = models.entry(key.clone()) {
             let mesh = Arc::new(base.recolored(&colors));
             let mut locked = plan.lock().unwrap_or_else(|e| e.into_inner());
+            // A stale derivation keeps its variant to itself: caching it would
+            // spend the budget on a palette the document may no longer use.
+            if locked.content_revision() != revision {
+                entry.insert(mesh);
+                asset.digest = key;
+                continue;
+            }
+            // A concurrent derivation of this revision may have cached it.
+            if let Some(cached) = locked.scene_models.get(&key) {
+                entry.insert(cached.clone());
+                asset.digest = key;
+                continue;
+            }
             let total: usize = locked.scene_models.values().map(|m| m.cache_bytes()).sum();
             let size = mesh.cache_bytes();
+            // Known limit, kept for simplicity: each variant copies its model's
+            // texture, so many distinct palettes in use at once on large
+            // textured models can still exceed the budget. Sharing texture
+            // pixels between variants would lift it; plans are not that heavy.
+            // The Linux presenter has the same limit for its GPU textures.
             if total + size > 128 * 1024 * 1024 {
                 return Err("Decoded 3D colour cache exceeds 128 MiB".into());
             }
             if let Some(bounds) = locked.scene_model_bounds.get(&asset.digest).copied() {
                 locked.scene_model_bounds.insert(key.clone(), bounds);
             }
+            locked.scene_color_variants.insert(key.clone());
             locked.scene_models.insert(key.clone(), mesh.clone());
             entry.insert(mesh);
         }
@@ -1994,6 +2044,41 @@ mod tests {
         );
         assert_eq!(domowik_plan_close(reopened), status::OK);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn trying_colours_keeps_only_variants_the_document_uses() {
+        let model = b"v 0 0 0\nv 1 0 0\nv 1 1 1\nv 0 1 1\nusemtl body\nf 1 2 3\nf 1 3 4\n";
+        let (h, level) = create();
+        let digest = import(h, "chair.obj", model).unwrap()["digest"].clone();
+        let id = request(
+            h,
+            json!({"kind":"place","digest":digest,"levelId":level,"positionMm":[0,0]}),
+        )
+        .unwrap()["instanceId"]
+            .clone();
+        let cached = || {
+            let (plan, _lease) = resolve(h).unwrap();
+            let plan = plan.lock().unwrap();
+            (plan.scene_models.len(), plan.scene_color_variants.len())
+        };
+        let base = request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+        for i in 0..20u32 {
+            let color = format!("#{:06X}", 0x102030 + i);
+            request(
+                h,
+                json!({"kind":"colors","instanceId":id,"materialColors":{"obj:body":color}}),
+            )
+            .unwrap();
+            request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+            assert_eq!(cached(), (2, 1), "model plus the one palette in use");
+        }
+        // Undo to an evicted palette recolours again without decoding.
+        undo(h).unwrap();
+        let scene = request(h, json!({"kind":"scene","levelIds":[level]})).unwrap();
+        assert_eq!(scene["modelDecodes"], base["modelDecodes"]);
+        assert_eq!(cached(), (2, 1));
+        assert_eq!(domowik_plan_close(h), status::OK);
     }
 
     #[test]

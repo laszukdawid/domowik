@@ -729,6 +729,10 @@ pub fn build_with_floors(
                 pose.position_m,
                 pose.scale_m,
                 pose.angles_deg,
+                // Only the level fade marks a model transparent. Source material
+                // opacity (USD glass, say) is kept in vertex alpha but drawn in
+                // the opaque pass, so it shows solid. Splitting models into
+                // opaque and blended parts is not worth it for current plans.
                 [1., 1., 1., alpha],
                 height_ratio,
             );
