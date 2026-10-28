@@ -44,8 +44,10 @@ use uuid::Uuid;
 /// Paint-only source contours, using the same millimetre wall pieces and join
 /// patches as the drawn region. No topology changes or new predicates. Empty
 /// unless at least one wall has a colour. Walls paint in descending UUID order
-/// (lowest wins overlap), then joins use their lowest member UUID's colour.
-/// Callers clip these contours to the canonical drawn region. Output is owned,
+/// (lowest wins overlap); a wall whose faces differ paints each half of its
+/// thickness with that face's colour. Join patches split into wedges between
+/// member axes; each takes the lower-UUID bounding face's colour. Callers clip
+/// these contours to the canonical drawn region. Output is owned,
 /// deterministic and bounded by the existing wall/opening input limits.
 pub struct WallPaint {
     pub color: Option<domowik_format::appearance::RgbColor>,
@@ -53,45 +55,58 @@ pub struct WallPaint {
 }
 
 pub fn wall_paints(doc: &Document, level: Uuid) -> Vec<WallPaint> {
-    if !doc.walls_on_level(level).any(|w| {
-        domowik_format::appearance::wall_color(w)
-            .ok()
-            .flatten()
-            .is_some()
-    }) {
+    use domowik_format::appearance::wall_faces;
+    if !doc
+        .walls_on_level(level)
+        .any(|w| wall_faces(w).iter().any(Option::is_some))
+    {
         return vec![];
     }
     let solids = walls::level_solids(doc, level);
+    let faces: Vec<_> = solids
+        .ids
+        .iter()
+        .map(|id| doc.wall(*id).map(wall_faces).unwrap_or_default())
+        .collect();
     let mut ordered: Vec<_> = solids.ids.iter().enumerate().collect();
     ordered.sort_by_key(|(_, id)| std::cmp::Reverse(**id));
     let mut result = vec![];
+    let mut push = |color, ring: Vec<Point>| {
+        result.push(WallPaint {
+            color,
+            outer: ring.into_iter().map(Into::into).collect(),
+        })
+    };
     for (i, id) in ordered {
-        let color = doc
-            .wall(*id)
-            .and_then(|w| domowik_format::appearance::wall_color(w).ok().flatten());
         let cuts: Vec<_> = doc
             .openings_on_wall(*id)
             .into_iter()
             .filter_map(|o| Aperture::of(o, i, &solids.walls[i]))
             .collect();
-        for ring in wall_pieces(&solids.walls[i], &cuts) {
-            result.push(WallPaint {
-                color,
-                outer: ring.into_iter().map(Into::into).collect(),
-            });
+        let [left, right] = faces[i];
+        if left == right {
+            for ring in wall_pieces(&solids.walls[i], &cuts) {
+                push(left, ring);
+            }
+        } else {
+            for (side, color) in [(Side::Left, left), (Side::Right, right)] {
+                for ring in wall_side_pieces(&solids.walls[i], &cuts, side) {
+                    push(color, ring);
+                }
+            }
         }
     }
     for join in &solids.joins {
-        let owner = join.members.iter().map(|m| solids.ids[m.wall]).min();
-        let color = owner
-            .and_then(|id| doc.wall(id))
-            .and_then(|w| domowik_format::appearance::wall_color(w).ok().flatten());
-        let ring = walls::join_patch(&solids.walls, join);
-        if ring.len() >= 3 {
-            result.push(WallPaint {
-                color,
-                outer: ring.into_iter().map(Into::into).collect(),
-            });
+        for wedge in walls::join_wedges(&solids.walls, join) {
+            let (wall, side) = *wedge
+                .faces
+                .iter()
+                .min_by_key(|(w, _)| solids.ids[*w])
+                .expect("two faces");
+            let color = faces[wall][usize::from(side == Side::Right)];
+            for ring in wedge.pieces {
+                push(color, ring);
+            }
         }
     }
     result
@@ -215,17 +230,32 @@ type Slab = (f64, f64, f64, f64);
 /// seam-free simple contour per connected piece of surviving material, or
 /// exactly `w.rectangle()` when nothing cuts it.
 pub fn wall_pieces(w: &WallSolid, apertures: &[Aperture]) -> Vec<Vec<Point>> {
+    banded_pieces(w, apertures, None)
+}
+
+/// [`wall_pieces`] restricted to one side's half of the thickness: `η ≥ 0`
+/// for `Left`, `η ≤ 0` for `Right`. Paint only; the halves tile the pieces.
+pub fn wall_side_pieces(w: &WallSolid, apertures: &[Aperture], side: Side) -> Vec<Vec<Point>> {
+    banded_pieces(w, apertures, Some(side))
+}
+
+fn banded_pieces(w: &WallSolid, apertures: &[Aperture], band: Option<Side>) -> Vec<Vec<Point>> {
     let effective: Vec<&Aperture> = apertures
         .iter()
         .filter(|a| a.depth > 0.0 && a.s.1 > a.s.0 && a.s.1 > 0.0 && a.s.0 < 1.0)
         .collect();
-    if effective.is_empty() {
+    if effective.is_empty() && band.is_none() {
         return w.rectangle().map(|r| vec![r.to_vec()]).unwrap_or_default();
     }
     let Some(frame) = Frame::of(w) else {
         return Vec::new();
     };
     let half = w.thickness_mm / 2.0;
+    let (floor, ceiling) = match band {
+        None => (-half, half),
+        Some(Side::Left) => (0.0, half),
+        Some(Side::Right) => (-half, 0.0),
+    };
 
     // Sweep: events at clamped span ends; between consecutive positions the
     // active cuts are those started and not yet ended.
@@ -242,7 +272,10 @@ pub fn wall_pieces(w: &WallSolid, apertures: &[Aperture]) -> Vec<Vec<Point>> {
     loop {
         let next = events.get(i).map_or(1.0, |e| e.0);
         if next > at {
-            let (lo, hi) = (-half + right.max(), half - left.max());
+            let (lo, hi) = (
+                (-half + right.max()).max(floor),
+                (half - left.max()).min(ceiling),
+            );
             match slabs.last_mut() {
                 Some(last) if last.2 == lo && last.3 == hi => last.1 = next,
                 _ => slabs.push((at, next, lo, hi)),

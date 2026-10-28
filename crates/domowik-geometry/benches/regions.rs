@@ -211,7 +211,85 @@ fn wall_colors(c: &mut Criterion) {
     c.bench_function("wall-colors/100-walls", |b| {
         b.iter(|| domowik_geometry::cuts::wall_paints(black_box(&doc), level.id))
     });
+    for w in &mut doc.walls {
+        w.unknown.insert("colorLeft".into(), "#B77964".into());
+    }
+    c.bench_function("wall-colors/100-two-sided-walls", |b| {
+        b.iter(|| domowik_geometry::cuts::wall_paints(black_box(&doc), level.id))
+    });
 }
 
-criterion_group!(benches, occupied, full_plan, sourced_union, wall_colors);
+/// Joined apartment corners split into wedges, and one grid room's bounding
+/// faces resolved against all 22 grid walls, as the paint paths do.
+fn wall_faces(c: &mut Criterion) {
+    let (walls, joins) = apartment();
+    let grid_walls = grid_large();
+    let solids = domowik_geometry::walls::LevelSolids {
+        ids: (0..grid_walls.len())
+            .map(|_| uuid::Uuid::now_v7())
+            .collect(),
+        walls: grid_walls.clone(),
+        joins: vec![],
+    };
+    let (_, rooms) = domowik_geometry::walls::plan(&grid_walls, &[]);
+    assert_eq!(
+        domowik_geometry::rooms::bounding_wall_faces(&solids, &rooms[0]).len(),
+        4
+    );
+    let mut group = c.benchmark_group("wall-faces");
+    group.bench_function("join-wedges-apartment", |b| {
+        b.iter(|| {
+            joins
+                .iter()
+                .map(|j| domowik_geometry::walls::join_wedges(black_box(&walls), j).len())
+                .sum::<usize>()
+        })
+    });
+    group.bench_function("room-bounding-faces-grid-10x10", |b| {
+        b.iter(|| domowik_geometry::rooms::bounding_wall_faces(black_box(&solids), &rooms[0]))
+    });
+    // Every grid room named: the derived refresh's side-label pass.
+    let level = domowik_format::Level::new("Grid");
+    let mut doc = domowik_format::Document::default();
+    for w in &grid_walls {
+        doc.walls.push(domowik_format::Wall::new(
+            level.id,
+            w.start,
+            w.end,
+            w.thickness_mm,
+            2500.,
+        ));
+    }
+    for i in 0..10 {
+        for j in 0..10 {
+            let seed = Point::new(1500. + 3000. * f64::from(i), 1500. + 3000. * f64::from(j));
+            doc.room_records.push(domowik_format::RoomRecord::new(
+                uuid::Uuid::now_v7(),
+                level.id,
+                seed,
+            ));
+        }
+    }
+    doc.levels.push(level.clone());
+    let projected = domowik_geometry::rooms::project_level(&doc, level.id);
+    let named = domowik_geometry::walls::level_solids(&doc, level.id);
+    assert!(
+        domowik_geometry::rooms::wall_face_records(&projected, &named)
+            .iter()
+            .all(|r| r.iter().any(Option::is_some))
+    );
+    group.bench_function("wall-face-records-grid-10x10-named", |b| {
+        b.iter(|| domowik_geometry::rooms::wall_face_records(black_box(&projected), &named))
+    });
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    occupied,
+    full_plan,
+    sourced_union,
+    wall_colors,
+    wall_faces
+);
 criterion_main!(benches);

@@ -1833,7 +1833,7 @@ impl Document {
         // a wall and an opening cannot end up with different ideas of what a
         // token set is.
         for wall in &self.walls {
-            if let Err(message) = appearance::wall_color(wall) {
+            if let Err(message) = appearance::validate_wall(wall) {
                 errors.push(ValidationError::InvalidAppearance {
                     id: wall.id,
                     message,

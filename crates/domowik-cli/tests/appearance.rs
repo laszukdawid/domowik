@@ -127,7 +127,7 @@ fn cli_palette_and_wall_colors_roundtrip_without_mutating_source_and_noops_do_no
         false,
     )
     .unwrap();
-    appearance::wall(&path, &wall_id, Some("#D8CDB7")).unwrap();
+    appearance::wall(&path, &wall_id, None, Some("#D8CDB7")).unwrap();
     let saved = std::fs::read(&path).unwrap();
     appearance::asset(
         &path,
@@ -136,7 +136,7 @@ fn cli_palette_and_wall_colors_roundtrip_without_mutating_source_and_noops_do_no
         false,
     )
     .unwrap();
-    appearance::wall(&path, &wall_id, Some("#D8CDB7")).unwrap();
+    appearance::wall(&path, &wall_id, None, Some("#D8CDB7")).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), saved);
     assert!(appearance::asset(&path, &id.to_string(), &["unknown=#FFFFFF".into()], false).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), saved);
@@ -167,10 +167,44 @@ fn cli_palette_and_wall_colors_roundtrip_without_mutating_source_and_noops_do_no
         json!({"obj:cabinet":"#F2F0E8"})
     );
     appearance::asset(&path, &id.to_string(), &[], true).unwrap();
-    appearance::wall(&path, &wall_id, None).unwrap();
+    appearance::wall(&path, &wall_id, None, None).unwrap();
     let plan = Plan::open(&path).unwrap();
     assert!(!plan.document().asset_instances[0]
         .unknown
         .contains_key("materialColors"));
     assert!(!plan.document().walls[0].unknown.contains_key("color"));
+}
+
+#[test]
+fn cli_paints_one_face_and_lists_effective_faces() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("faces.domo");
+    let mut doc = Document::with_ground_floor();
+    let wall = Wall::new(
+        doc.levels[0].id,
+        Point::new(0., 0.),
+        Point::new(4000., 0.),
+        120.,
+        2500.,
+    );
+    let wall_id = wall.id.to_string();
+    doc.walls.push(wall);
+    write_package(&path, &Package::new(doc)).unwrap();
+    appearance::wall(&path, &wall_id, None, Some("#D8CDB7")).unwrap();
+    appearance::wall(
+        &path,
+        &wall_id,
+        Some(domowik_format::Side::Left),
+        Some("#B77964"),
+    )
+    .unwrap();
+    let listed: serde_json::Value =
+        serde_json::from_str(&appearance::list(&path).unwrap()).unwrap();
+    let w = &listed["walls"][0];
+    assert_eq!(
+        (&w["colorLeft"], &w["colorRight"]),
+        (&json!("#B77964"), &json!("#D8CDB7"))
+    );
+    assert_eq!(w["color"], serde_json::Value::Null);
+    assert!(appearance::room(&path, "nowhere", Some("#B77964")).is_err());
 }

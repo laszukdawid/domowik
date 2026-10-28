@@ -108,24 +108,24 @@ fn bulk_colors_are_atomic_undoable_noop_aware_and_preserve_unknown_fields() {
     )
     .unwrap();
     let color = Some(RgbColor::parse("#D8CDB7").unwrap());
-    s.commit(appearance::walls(s.document(), &ids, color).unwrap())
+    s.commit(appearance::walls(s.document(), &ids, None, color).unwrap())
         .unwrap();
     assert_eq!(s.undo_depth(), 1);
-    assert!(appearance::walls(s.document(), &ids, color)
+    assert!(appearance::walls(s.document(), &ids, None, color)
         .unwrap()
         .is_empty());
     for w in &s.document().walls {
         assert_eq!(wall_color(w).unwrap(), color);
         assert_eq!(w.unknown["futureFinish"], json!({"keep":true}));
     }
-    assert!(appearance::walls(s.document(), &[ids[0], Uuid::nil()], color).is_err());
-    assert!(appearance::walls(s.document(), &[ids[0], ids[0]], color).is_err());
+    assert!(appearance::walls(s.document(), &[ids[0], Uuid::nil()], None, color).is_err());
+    assert!(appearance::walls(s.document(), &[ids[0], ids[0]], None, color).is_err());
     s.undo().unwrap();
     assert_eq!(s.document(), &doc);
     s.redo().unwrap();
     let serialized = serde_json::to_value(s.document()).unwrap();
     assert_eq!(serialized["walls"][0]["color"], "#D8CDB7");
-    s.commit(appearance::walls(s.document(), &ids, None).unwrap())
+    s.commit(appearance::walls(s.document(), &ids, None, None).unwrap())
         .unwrap();
     assert!(s
         .document()
@@ -177,4 +177,169 @@ fn colored_wall_splits_inherit_the_optional_field_without_reinterpreting_styles(
     assert!(children
         .iter()
         .all(|w| wall_color(w).unwrap() == Some(RgbColor::parse("#D8CDB7").unwrap())));
+}
+
+/// Two rooms, 0..2000 and 2000..4000 by 0..3000, sharing the partition at
+/// x = 2000 drawn bottom-to-top (its Left face looks at the west room).
+fn two_rooms() -> (Session, [Uuid; 2], Uuid) {
+    let doc = Document::with_ground_floor();
+    let level = doc.levels[0].id;
+    let mut s =
+        Session::open_snapshot(Uuid::now_v7(), doc, &Default::default(), &[], vec![]).unwrap();
+    let corners = [(0., 0.), (4000., 0.), (4000., 3000.), (0., 3000.), (0., 0.)];
+    for pair in corners.windows(2) {
+        let w = Wall::new(
+            level,
+            Point::new(pair[0].0, pair[0].1),
+            Point::new(pair[1].0, pair[1].1),
+            120.,
+            2500.,
+        );
+        let ops = domowik_edit::add_wall_operations(s.document(), level, w)
+            .unwrap()
+            .operations;
+        s.commit(ops).unwrap();
+    }
+    let partition = Wall::new(
+        level,
+        Point::new(2000., 0.),
+        Point::new(2000., 3000.),
+        120.,
+        2500.,
+    );
+    let partition_id = partition.id;
+    let ops = domowik_edit::add_wall_operations(s.document(), level, partition)
+        .unwrap()
+        .operations;
+    s.commit(ops).unwrap();
+    let rooms = [Uuid::now_v7(), Uuid::now_v7()];
+    let mut doc = s.document().clone();
+    for (id, x) in rooms.iter().zip([1000., 3000.]) {
+        doc.room_records.push(domowik_format::RoomRecord::new(
+            *id,
+            level,
+            Point::new(x, 1500.),
+        ));
+    }
+    let s = Session::open_snapshot(Uuid::now_v7(), doc, &Default::default(), &[], vec![]).unwrap();
+    (s, rooms, partition_id)
+}
+
+#[test]
+fn one_face_keeps_the_other_and_equal_faces_collapse_to_color() {
+    use domowik_format::{appearance::wall_face_color, Side};
+    let (mut s, _, id) = two_rooms();
+    let green = RgbColor::parse("#779383").ok();
+    let red = RgbColor::parse("#B77964").ok();
+    s.commit(appearance::walls(s.document(), &[id], None, green).unwrap())
+        .unwrap();
+    s.commit(appearance::walls(s.document(), &[id], Some(Side::Left), red).unwrap())
+        .unwrap();
+    let w = s.document().wall(id).unwrap();
+    assert_eq!(wall_face_color(w, Side::Left).unwrap(), red);
+    assert_eq!(wall_face_color(w, Side::Right).unwrap(), green);
+    assert!(
+        !w.unknown.contains_key("color"),
+        "differing faces store sides only"
+    );
+    assert!(
+        appearance::walls(s.document(), &[id], Some(Side::Left), red)
+            .unwrap()
+            .is_empty()
+    );
+    s.commit(appearance::wall_faces(s.document(), id, [green, green]).unwrap())
+        .unwrap();
+    let w = s.document().wall(id).unwrap();
+    assert_eq!(w.unknown["color"], json!("#779383"));
+    assert!(!w.unknown.contains_key("colorLeft") && !w.unknown.contains_key("colorRight"));
+    s.commit(appearance::wall_faces(s.document(), id, [None, red]).unwrap())
+        .unwrap();
+    let w = s.document().wall(id).unwrap();
+    assert_eq!(wall_face_color(w, Side::Left).unwrap(), None);
+    assert_eq!(wall_face_color(w, Side::Right).unwrap(), red);
+    s.undo().unwrap();
+    s.undo().unwrap();
+    s.undo().unwrap();
+    assert_eq!(
+        wall_face_color(s.document().wall(id).unwrap(), Side::Left).unwrap(),
+        green
+    );
+}
+
+#[test]
+fn painting_a_room_colors_only_faces_looking_into_it() {
+    use domowik_format::appearance::wall_faces;
+    let (mut s, [west, east], partition) = two_rooms();
+    let blue = RgbColor::parse("#90A4AE").ok();
+    let ops = appearance::room(s.document(), west, blue).unwrap();
+    s.commit(ops).unwrap();
+    assert_eq!(s.undo_depth(), 1);
+    assert_eq!(
+        wall_faces(s.document().wall(partition).unwrap()),
+        [blue, None]
+    );
+    // Every outer wall runs counter-clockwise, so its Left face is inside.
+    // The bottom and top walls were split by the partition; only their west
+    // halves face the west room.
+    let painted: Vec<_> = s
+        .document()
+        .walls
+        .iter()
+        .filter(|w| wall_faces(w) != [None, None])
+        .collect();
+    assert_eq!(painted.len(), 4, "three west walls and the partition");
+    for w in &painted {
+        let mid = (w.start().x + w.end().x) / 2.;
+        assert!(mid <= 2000., "{:?}", w.start());
+        if w.id != partition {
+            assert_eq!(wall_faces(w), [blue, None]);
+        }
+    }
+    assert!(appearance::room(s.document(), west, blue)
+        .unwrap()
+        .is_empty());
+    let ops = appearance::room(s.document(), east, blue).unwrap();
+    s.commit(ops).unwrap();
+    let p = s.document().wall(partition).unwrap();
+    assert_eq!(p.unknown["color"], json!("#90A4AE"), "both faces now agree");
+    assert!(appearance::room(s.document(), Uuid::nil(), blue).is_err());
+}
+
+#[test]
+fn reversal_keeps_each_finish_on_its_physical_face_and_splits_copy_both() {
+    use domowik_format::appearance::wall_faces;
+    let (mut s, [west, _], partition) = two_rooms();
+    let blue = RgbColor::parse("#90A4AE").ok();
+    let ops = appearance::room(s.document(), west, blue).unwrap();
+    s.commit(ops).unwrap();
+    let ops = domowik_edit::reverse_wall_operations(s.document(), partition).operations;
+    s.commit(ops).unwrap();
+    assert_eq!(
+        wall_faces(s.document().wall(partition).unwrap()),
+        [None, blue]
+    );
+    // Re-painting the west room after reversal is a no-op.
+    assert!(appearance::room(s.document(), west, blue)
+        .unwrap()
+        .is_empty());
+    let level = s.document().levels[0].id;
+    let branch = Wall::new(
+        level,
+        Point::new(2000., 1500.),
+        Point::new(3000., 1500.),
+        120.,
+        2500.,
+    );
+    let ops = domowik_edit::add_wall_operations(s.document(), level, branch)
+        .unwrap()
+        .operations;
+    s.commit(ops).unwrap();
+    let halves: Vec<_> = s
+        .document()
+        .walls
+        .iter()
+        .filter(|w| w.start().x == 2000. && w.end().x == 2000.)
+        .collect();
+    assert_eq!(halves.len(), 2);
+    assert!(halves.iter().all(|w| wall_faces(w) == [None, blue]));
 }

@@ -140,6 +140,117 @@ pub fn join_patch(walls: &[WallSolid], join: &JoinSpec) -> Vec<Point> {
     convex_hull(&points)
 }
 
+/// One wedge of a join patch: the part between two consecutive member axes
+/// counter-clockwise around the node. `faces` are the member faces bounding
+/// it, as `(wall index, side)`: the earlier axis's CCW face, then the later
+/// axis's CW face. `pieces` are convex, counter-clockwise and tile the patch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PatchWedge {
+    pub faces: [(usize, Side); 2],
+    pub pieces: Vec<Vec<Point>>,
+}
+
+/// Splits [`join_patch`] by the member axes for per-face paint. Paint only:
+/// no topology reads it. Members are ordered by axis angle, ties by wall
+/// index, so output is deterministic. Empty when the patch is degenerate.
+pub fn join_wedges(walls: &[WallSolid], join: &JoinSpec) -> Vec<PatchWedge> {
+    let hull = join_patch(walls, join);
+    if hull.len() < 3 {
+        return vec![];
+    }
+    let mut axes: Vec<(f64, usize, Endpoint, Point)> = join
+        .members
+        .iter()
+        .filter_map(|m| {
+            let w = walls.get(m.wall)?;
+            let (at, away) = match m.endpoint {
+                Endpoint::Start => (w.start, w.end),
+                Endpoint::End => (w.end, w.start),
+            };
+            let d = Point::new(away.x - at.x, away.y - at.y);
+            (d.x != 0.0 || d.y != 0.0).then(|| (d.y.atan2(d.x), m.wall, m.endpoint, at))
+        })
+        .collect();
+    if axes.is_empty() {
+        return vec![];
+    }
+    axes.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    let node = axes[0].3;
+    let dir = |angle: f64| Point::new(angle.cos(), angle.sin());
+    let n = axes.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let (a, wa, ea, _) = axes[i];
+        let (b, wb, eb, _) = axes[(i + 1) % n];
+        let theta = if i + 1 < n {
+            b - a
+        } else {
+            b + std::f64::consts::TAU - a
+        };
+        if theta <= 0.0 {
+            continue;
+        }
+        let (da, db) = (dir(a), dir(b));
+        let pieces = if theta <= std::f64::consts::PI {
+            vec![clip(&clip(&hull, node, da, true), node, db, false)]
+        } else {
+            vec![
+                clip(&hull, node, da, true),
+                clip(&clip(&hull, node, db, false), node, da, false),
+            ]
+        };
+        let ccw = |e| {
+            if e == Endpoint::Start {
+                Side::Left
+            } else {
+                Side::Right
+            }
+        };
+        let cw = |e| {
+            if e == Endpoint::Start {
+                Side::Right
+            } else {
+                Side::Left
+            }
+        };
+        out.push(PatchWedge {
+            faces: [(wa, ccw(ea)), (wb, cw(eb))],
+            pieces: pieces.into_iter().filter(|p| p.len() >= 3).collect(),
+        });
+    }
+    out
+}
+
+/// Sutherland–Hodgman clip of a convex ring to the closed half-plane left
+/// (`keep_left`) or right of the line through `at` along `d`.
+fn clip(ring: &[Point], at: Point, d: Point, keep_left: bool) -> Vec<Point> {
+    let side = |p: Point| {
+        let c = d.x * (p.y - at.y) - d.y * (p.x - at.x);
+        if keep_left {
+            c
+        } else {
+            -c
+        }
+    };
+    let mut out = Vec::with_capacity(ring.len() + 1);
+    for k in 0..ring.len() {
+        let (p, q) = (ring[k], ring[(k + 1) % ring.len()]);
+        let (sp, sq) = (side(p), side(q));
+        if sp >= 0.0 {
+            out.push(p);
+        }
+        if (sp >= 0.0) != (sq >= 0.0) {
+            let t = sp / (sp - sq);
+            out.push(Point::new(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t));
+        }
+    }
+    out.dedup();
+    if out.len() > 1 && out.first() == out.last() {
+        out.pop();
+    }
+    out
+}
+
 /// The occupied region of a set of walls and their joins (R3.2.1).
 ///
 /// The result is a canonical, deterministically ordered multipolygon; it may
@@ -389,6 +500,77 @@ mod tests {
                 WallSolid::new(P(x0, y0), P(x1, y1), 200.0)
             })
             .collect()
+    }
+
+    #[test]
+    fn join_wedges_tile_the_patch_and_name_the_faces_into_each_wedge() {
+        let area = |ring: &Vec<Point>| Polygon::new(ring.clone()).area_mm2();
+        // L corner (inner wedge between both Left faces), T and X nodes.
+        let corner = vec![
+            wall(0.0, 0.0, 4000.0, 0.0),
+            wall(4000.0, 0.0, 4000.0, 3000.0),
+        ];
+        let tee = vec![
+            wall(-2000.0, 0.0, 0.0, 0.0),
+            wall(0.0, 0.0, 2000.0, 0.0),
+            WallSolid::new(P(0.0, 0.0), P(0.0, 2000.0), 120.0),
+        ];
+        let cross = vec![
+            wall(-2000.0, 0.0, 0.0, 0.0),
+            wall(0.0, 0.0, 2000.0, 0.0),
+            wall(0.0, -2000.0, 0.0, 0.0),
+            wall(0.0, 0.0, 0.0, 2000.0),
+        ];
+        let cases = [
+            (corner, vec![(0, Endpoint::End), (1, Endpoint::Start)]),
+            (
+                tee,
+                vec![
+                    (0, Endpoint::End),
+                    (1, Endpoint::Start),
+                    (2, Endpoint::Start),
+                ],
+            ),
+            (
+                cross,
+                vec![
+                    (0, Endpoint::End),
+                    (1, Endpoint::Start),
+                    (2, Endpoint::End),
+                    (3, Endpoint::Start),
+                ],
+            ),
+        ];
+        for (walls, members) in cases {
+            let spec = JoinSpec {
+                members: members
+                    .iter()
+                    .map(|&(wall, endpoint)| JoinMember { wall, endpoint })
+                    .collect(),
+            };
+            let wedges = join_wedges(&walls, &spec);
+            assert_eq!(wedges.len(), members.len());
+            let total: f64 = wedges.iter().flat_map(|w| &w.pieces).map(area).sum();
+            let hull = area(&join_patch(&walls, &spec));
+            assert!((total - hull).abs() < 1e-6 * hull, "{total} vs {hull}");
+        }
+        let corner = [
+            wall(0.0, 0.0, 4000.0, 0.0),
+            wall(4000.0, 0.0, 4000.0, 3000.0),
+        ];
+        let spec = join((0, Endpoint::End), (1, Endpoint::Start));
+        let faces: Vec<_> = join_wedges(&corner, &spec)
+            .iter()
+            .map(|w| w.faces)
+            .collect();
+        assert!(
+            faces.contains(&[(1, Side::Left), (0, Side::Left)]),
+            "{faces:?}"
+        );
+        assert!(
+            faces.contains(&[(0, Side::Right), (1, Side::Right)]),
+            "{faces:?}"
+        );
     }
 
     fn join(a: (usize, Endpoint), b: (usize, Endpoint)) -> JoinSpec {

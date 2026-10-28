@@ -2,7 +2,7 @@
 use crate::{CliError, Plan, Result};
 use domowik_format::{
     appearance::{self, DoorStyle, RgbColor},
-    AssetInstance, Document,
+    AssetInstance, Document, Side,
 };
 use serde_json::json;
 use std::path::Path;
@@ -42,7 +42,7 @@ pub fn list(path: &Path) -> Result<String> {
     let doors: Vec<_> = plan.document().openings.iter()
         .filter(|o| o.kind == domowik_format::OpeningKind::Door)
         .map(|o| json!({"id":o.id,"shortId":crate::refs::short_id(o.id),"hostWallId":o.host_wall_id,"color":appearance::door_color(o).ok().flatten(),"doorStyle":appearance::door_style(o).ok()})).collect();
-    Ok(serde_json::to_string_pretty(&json!({"walls":plan.document().walls.iter().map(|w| json!({"id":w.id,"shortId":crate::refs::short_id(w.id),"levelId":w.level_id,"color":appearance::wall_color(w).ok().flatten()})).collect::<Vec<_>>(),"doors":doors,"assets":assets})).expect("finite colours"))
+    Ok(serde_json::to_string_pretty(&json!({"walls":plan.document().walls.iter().map(|w| json!({"id":w.id,"shortId":crate::refs::short_id(w.id),"levelId":w.level_id,"color":appearance::wall_color(w).ok().flatten(),"colorLeft":appearance::wall_faces(w)[0],"colorRight":appearance::wall_faces(w)[1]})).collect::<Vec<_>>(),"doors":doors,"assets":assets})).expect("finite colours"))
 }
 
 /// Patches door color and/or style, retaining unspecified values. `reset` clears
@@ -79,15 +79,21 @@ pub fn door(
     Ok("Updated door appearance.".into())
 }
 
-pub fn wall(path: &Path, reference: &str, color: Option<&str>) -> Result<String> {
+/// Sets or resets both faces, or one face when `side` is given. No-ops do not save.
+pub fn wall(
+    path: &Path,
+    reference: &str,
+    side: Option<Side>,
+    color: Option<&str>,
+) -> Result<String> {
     let mut plan = Plan::open(path)?;
     let id = crate::refs::resolve_wall(plan.document(), reference, path)?.id;
     let color = color
         .map(RgbColor::parse)
         .transpose()
         .map_err(CliError::Usage)?;
-    let ops =
-        domowik_edit::appearance::walls(plan.document(), &[id], color).map_err(CliError::Usage)?;
+    let ops = domowik_edit::appearance::walls(plan.document(), &[id], side, color)
+        .map_err(CliError::Usage)?;
     if ops.is_empty() {
         return Ok("Wall color is unchanged.".into());
     }
@@ -96,6 +102,39 @@ pub fn wall(path: &Path, reference: &str, color: Option<&str>) -> Result<String>
         "Updated wall #{} color.",
         crate::refs::short_id(id)
     ))
+}
+
+/// Paints every wall face bounding a room (name, UUID or short ID) as one save.
+pub fn room(path: &Path, reference: &str, color: Option<&str>) -> Result<String> {
+    let mut plan = Plan::open(path)?;
+    let records: Vec<_> = plan
+        .document()
+        .room_records
+        .iter()
+        .filter(|r| {
+            r.name.as_deref() == Some(reference)
+                || r.id.to_string() == reference
+                || crate::refs::short_id(r.id) == reference
+        })
+        .collect();
+    let [record] = records.as_slice() else {
+        return Err(CliError::Usage(format!(
+            "room {reference:?} is missing or ambiguous; use its UUID"
+        )));
+    };
+    let id = record.id;
+    let color = color
+        .map(RgbColor::parse)
+        .transpose()
+        .map_err(CliError::Usage)?;
+    let ops =
+        domowik_edit::appearance::room(plan.document(), id, color).map_err(CliError::Usage)?;
+    if ops.is_empty() {
+        return Ok("Room wall colors are unchanged.".into());
+    }
+    let walls = ops.len();
+    plan.commit_and_save(ops)?;
+    Ok(format!("Updated {walls} wall(s) around the room."))
 }
 
 /// `KEY=#RRGGBB` entries patch the palette; `KEY=original` resets one material.

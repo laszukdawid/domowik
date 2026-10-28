@@ -788,11 +788,23 @@ enum ColorCommand {
         #[arg(long)]
         reset: bool,
     },
-    /// Set the color of a whole wall, or reset it to the default.
+    /// Set the color of a wall's faces, or reset them to the default.
     Wall {
         path: PathBuf,
         #[arg(allow_hyphen_values = true)]
         wall: String,
+        #[arg(long, required_unless_present = "reset", conflicts_with = "reset")]
+        color: Option<String>,
+        /// Only this face (left/right of the start-to-end direction); default both.
+        #[arg(long, value_parser = ["left", "right"])]
+        side: Option<String>,
+        #[arg(long)]
+        reset: bool,
+    },
+    /// Color every wall face bounding a room (name, UUID or short ID).
+    Room {
+        path: PathBuf,
+        room: String,
         #[arg(long, required_unless_present = "reset", conflicts_with = "reset")]
         color: Option<String>,
         #[arg(long)]
@@ -831,8 +843,21 @@ fn main() -> ExitCode {
                 domowik_cli::appearance::door(path, door, color.as_deref(), style, *reset)
             }
             ColorCommand::Wall {
-                path, wall, color, ..
-            } => domowik_cli::appearance::wall(path, wall, color.as_deref()),
+                path,
+                wall,
+                color,
+                side,
+                ..
+            } => {
+                let side = side.as_deref().map(|v| match v {
+                    "left" => domowik_format::Side::Left,
+                    _ => domowik_format::Side::Right,
+                });
+                domowik_cli::appearance::wall(path, wall, side, color.as_deref())
+            }
+            ColorCommand::Room {
+                path, room, color, ..
+            } => domowik_cli::appearance::room(path, room, color.as_deref()),
             ColorCommand::Asset {
                 path,
                 instance,

@@ -29,11 +29,14 @@ later phase does not imply that earlier exit criteria are complete.
   Device-local view preferences offer a global 2D/3D/split default and opt-in
   last-used mode memory per layout, without changing plan files.
   The asset library offers list/grid browsing with on-demand model thumbnails.
-  Solid wall colors (including bulk selection) and per-material placed-model
-  colors are editable, undoable and saved in the plan; plan previews and 3D agree.
+  Solid wall colors (including bulk selection), separate colors for each wall
+  face, one-step painting of every wall face around a named room, and
+  per-material placed-model colors are editable, undoable and saved in the
+  plan; plan previews and 3D agree.
   Hinged and sliding doors support leaf colors and solid/glass styles; glass
   leaves are translucent in 3D while technical plan symbols remain legible.
-  User-authored textures and separate wall-side finishes remain future work.
+  User-authored textures and finishes for part of a wall face remain future
+  work.
   The browser can discover 100 original generic models from a separate
   configurable public HTTPS catalog when Furniture opens; only chosen models
   are downloaded and embedded. Catalog content adds nothing to the initial app bundle.

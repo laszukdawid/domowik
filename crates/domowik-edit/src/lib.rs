@@ -1779,6 +1779,22 @@ pub fn reverse_wall_operations(doc: &Document, wall_id: Uuid) -> WallEdit {
         ],
         ..Default::default()
     };
+    // Face colours name a side, so reversal swaps them to keep each finish
+    // on the same physical face. Absent fields stay absent.
+    let (left, right) = (
+        wall.unknown.get("colorLeft"),
+        wall.unknown.get("colorRight"),
+    );
+    if left != right {
+        let null = serde_json::Value::Null;
+        edit.operations.push(Operation::set_fields(
+            wall_id,
+            serde_json::Map::from_iter([
+                ("colorLeft".to_owned(), right.unwrap_or(&null).clone()),
+                ("colorRight".to_owned(), left.unwrap_or(&null).clone()),
+            ]),
+        ));
+    }
 
     // R3.3.6: a membership names an axis END, so reversing the wall swaps
     // which role each membership refers to. Forgetting this leaves every join

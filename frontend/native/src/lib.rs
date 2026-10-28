@@ -1732,6 +1732,8 @@ pub unsafe extern "C" fn domowik_plan_edit(
                 EditRequest::SetLevel { .. }
                     | EditRequest::SetDoorAppearance { .. }
                     | EditRequest::SetWallColors { .. }
+                    | EditRequest::SetWallFaces { .. }
+                    | EditRequest::PaintRoom { .. }
                     | EditRequest::SetWalls { .. }
                     | EditRequest::TranslateSelection { .. }
                     | EditRequest::ResizeStaircase { .. }
@@ -1914,6 +1916,17 @@ enum EditRequest {
     SetWallColors {
         wall_ids: Vec<Uuid>,
         // Required even when resetting: omission must not silently clear paint.
+        color: serde_json::Value,
+    },
+    /// One wall's `[Left, Right]` face colours; null resets a face.
+    #[serde(rename_all = "camelCase")]
+    SetWallFaces {
+        wall_id: Uuid,
+        faces: [serde_json::Value; 2],
+    },
+    #[serde(rename_all = "camelCase")]
+    PaintRoom {
+        room_id: Uuid,
         color: serde_json::Value,
     },
     AddDescendingStaircase {
@@ -2139,7 +2152,17 @@ fn build_edit(doc: &Document, request: &EditRequest) -> Result<Vec<Operation>, S
         }
         EditRequest::SetWallColors { wall_ids, color } => {
             let color = serde_json::from_value(color.clone()).map_err(|e| e.to_string())?;
-            domowik_edit::appearance::walls(doc, wall_ids, color)
+            domowik_edit::appearance::walls(doc, wall_ids, None, color)
+        }
+        EditRequest::SetWallFaces { wall_id, faces } => {
+            let [left, right] = faces
+                .clone()
+                .map(|v| serde_json::from_value(v).map_err(|e| e.to_string()));
+            domowik_edit::appearance::wall_faces(doc, *wall_id, [left?, right?])
+        }
+        EditRequest::PaintRoom { room_id, color } => {
+            let color = serde_json::from_value(color.clone()).map_err(|e| e.to_string())?;
+            domowik_edit::appearance::room(doc, *room_id, color)
         }
         EditRequest::AddDescendingStaircase { request } => {
             domowik_edit::architecture::add_descending_stair_operations(doc, request)
@@ -2899,6 +2922,25 @@ pub unsafe extern "C" fn domowik_plan_derived(
         let (construction, construction_diagnostics) =
             domowik_geometry::architecture::plan_reporting(document, level);
         let wall_paints = domowik_geometry::cuts::wall_paints(document, level);
+        // Room names beside each wall face, so the colour dialog can say
+        // "Kitchen side" without a containment test in the front end.
+        let solids = domowik_geometry::walls::level_solids(document, level);
+        let side_records = rooms::wall_face_records(&projection, &solids);
+        let wall_sides: serde_json::Map<String, serde_json::Value> = solids
+            .ids
+            .iter()
+            .zip(side_records)
+            .filter_map(|(id, records)| {
+                let w = document.wall(*id)?;
+                let names =
+                    records.map(|r| Some(document.room_record(r?)?.display_name().to_owned()));
+                let colors = domowik_format::appearance::wall_faces(w);
+                Some((
+                    id.to_string(),
+                    serde_json::json!({"rooms": names, "colors": colors}),
+                ))
+            })
+            .collect();
         let (occupied, rooms) = (projection.occupied, projection.faces);
         plan.levels.get_mut(&level).expect("synced above").apertures = cache;
         plan.aperture_builds = plan.aperture_builds.saturating_add(built);
@@ -2927,6 +2969,7 @@ pub unsafe extern "C" fn domowik_plan_derived(
             "floorSurfaces":floor_surfaces.iter().map(to_json).collect::<Vec<_>>(),
             "construction":construction,
             "constructionDiagnostics":construction_diagnostics,
+            "wallSides": wall_sides,
             "wallPaints": wall_paints.iter().map(|p| serde_json::json!({"color":p.color,"outer":p.outer})).collect::<Vec<_>>(),
             "openings": apertures,
             "occupied": occupied.iter().map(to_json).collect::<Vec<_>>(),
@@ -4845,6 +4888,48 @@ mod tests {
             status::OK
         );
         assert_eq!(snapshot_json(h), after);
+        assert_eq!(domowik_plan_close(h), status::OK);
+    }
+
+    #[test]
+    fn room_paint_and_wall_faces_cross_the_boundary_with_side_labels() {
+        let (h, level) = plan_with_a_room();
+        let added = edit_json(
+            h,
+            serde_json::json!({"kind":"addRoom","levelId":level,"seed":[2000.,1500.],"name":"Kitchen"}),
+        );
+        assert_eq!(added.0, status::OK);
+        let room = snapshot_json(h)["roomRecords"][0]["id"].clone();
+        let walls = snapshot_json(h)["walls"].clone();
+        let first = walls[0]["id"].as_str().unwrap().to_owned();
+        let depth = state_of(h)["undo_depth"].as_u64().unwrap();
+        let paint = serde_json::json!({"kind":"paintRoom","roomId":room,"color":"#90a4ae"});
+        assert_eq!(edit_json(h, paint.clone()).0, status::OK);
+        assert_eq!(state_of(h)["undo_depth"], depth + 1);
+        assert!(edit_json(h, paint).1.is_empty(), "repeat is a no-op");
+        let level_c = std::ffi::CString::new(level.to_string()).unwrap();
+        let derived = || -> serde_json::Value {
+            let (_, body) =
+                call_returning(|out| unsafe { domowik_plan_derived(h, level_c.as_ptr(), out) });
+            serde_json::from_slice(&body).unwrap()
+        };
+        // Counter-clockwise outer walls: Left faces the room, Right the outside.
+        let sides = &derived()["wallSides"][&first];
+        assert_eq!(sides["rooms"], serde_json::json!(["Kitchen", null]));
+        assert_eq!(sides["colors"], serde_json::json!(["#90A4AE", null]));
+        let faces =
+            serde_json::json!({"kind":"setWallFaces","wallId":first,"faces":[null,"#b77964"]});
+        assert_eq!(edit_json(h, faces).0, status::OK);
+        let sides = &derived()["wallSides"][&first];
+        assert_eq!(sides["colors"], serde_json::json!([null, "#B77964"]));
+        assert_eq!(
+            edit_json(
+                h,
+                serde_json::json!({"kind":"setWallFaces","wallId":first,"faces":["bad",null]})
+            )
+            .0,
+            status::REJECTED
+        );
         assert_eq!(domowik_plan_close(h), status::OK);
     }
 
