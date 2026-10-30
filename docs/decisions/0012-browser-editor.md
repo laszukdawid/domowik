@@ -90,8 +90,13 @@ a confirmed write: a download leaves the plan unsaved, so choosing Save while
 leaving does not authorize replacing the plan. A tab cannot wait for the editor's close dialog,
 so unsaved changes raise the browser's own leave-page prompt.
 
-There is no autosave or in-browser plan library; a plan lives in the user's
-files. Preferences live in the origin's `localStorage` under one key with the
+There is no autosave or offline hosted-plan merge. When a same-origin hosted
+service is configured, the browser also offers an explicit hosted-plan library
+with single-writer leases and revision-conditional whole-package saves. Hosted
+plans are labelled separately from local files. Uploading a local plan requires
+an explicit copy action; local open/save remains account-free and works without
+the service. A confirmed local recovery download does not mark a hosted edit
+saved. Preferences live in the origin's `localStorage` under one key with the
 same schema and limits as the native file. Model directories do not exist in
 a browser: an uploaded model is embedded in the plan's library
 (`domowik_plan_import_model`) under the same media-type and size rules as a

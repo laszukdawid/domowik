@@ -176,7 +176,7 @@ void main() {
       dialogs.opening = () async => path;
       await tester.tap(find.byTooltip('Open plan'));
       await tester.pumpAndSettle();
-      expect(find.text('service plan.domo'), findsOneWidget);
+      expect(find.text('Local · service plan.domo'), findsOneWidget);
       expect(bridge.openPlans(), 1);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(dialogs.close, isNull);
@@ -213,7 +213,7 @@ void main() {
     dialogs.opening = () async => second;
     await tester.tap(find.byTooltip('Open plan'));
     await tester.pumpAndSettle();
-    expect(find.text('moved.domo'), findsOneWidget);
+    expect(find.text('Local · moved.domo'), findsOneWidget);
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(dialogs.saveCalls, 2);

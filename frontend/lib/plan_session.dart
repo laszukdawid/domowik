@@ -65,6 +65,22 @@ class PlanByteTarget extends PlanTarget {
   final Future<bool> Function(Uint8List bytes) write;
 }
 
+/// One exact core encoding. Its revision and session identity stay private so
+/// callers can only ask the owning [PlanSession] to mark this capture saved.
+class PlanSessionSnapshot {
+  const PlanSessionSnapshot._(
+    this.bytes,
+    this._handle,
+    this._generation,
+    this._revision,
+  );
+
+  final Uint8List bytes;
+  final int _handle;
+  final int _generation;
+  final int _revision;
+}
+
 /// Owns one plan handle on the calling isolate. The core is borrowed.
 ///
 /// Core operations are synchronous, matching the C ABI; only a byte target's
@@ -83,7 +99,23 @@ class PlanSession {
   /// cannot be rewritten, and no writer exists at all before the first save.
   PlanByteTarget? _confirmedWriter;
   bool _disposed = false;
+  int _generation = 0;
   int get handle => _handle;
+
+  /// Rust's current saved-state decision. Fail closed when the state cannot
+  /// be read so callers never mistake an unreadable document for a clean one.
+  bool get isDirty {
+    _checkLive();
+    if (_handle == 0) return false;
+    final reply = core.state(_handle);
+    if (!reply.succeeded || reply.text == null) return true;
+    try {
+      final state = jsonDecode(reply.text!) as Map<String, Object?>;
+      return state['dirty'] != false;
+    } on Object {
+      return true;
+    }
+  }
 
   /// The plan's file: a path on desktop, a file name in the browser, or null
   /// while it has never been opened from or saved to one.
@@ -135,6 +167,7 @@ class PlanSession {
   PlanFileResult _replace(CoreHandle opened, String? name) {
     _checkLive();
     if (opened.code != ok) return PlanFileResult(opened.code);
+    _generation++;
     if (_handle != 0) core.close(_handle);
     _handle = opened.handle;
     _name = name;
@@ -142,6 +175,39 @@ class PlanSession {
     // previous plan, and a plan opened from received bytes has no file.
     _confirmedWriter = null;
     return PlanFileResult(opened.code);
+  }
+
+  /// Encodes through Rust's authoritative package writer without changing
+  /// the saved revision. A later [markSaved] applies only to this exact
+  /// handle and generation, and Rust leaves edits made since encoding dirty.
+  PlanSessionSnapshot captureForSave() {
+    _checkLive();
+    if (_handle == 0) throw StateError('No plan is open');
+    final encoded = core.encode(_handle);
+    if (encoded.code != ok || encoded.bytes == null) {
+      throw CoreException(encoded.code, core.lastError(_handle));
+    }
+    return PlanSessionSnapshot._(
+      encoded.bytes!,
+      _handle,
+      _generation,
+      encoded.revision,
+    );
+  }
+
+  /// Marks the captured core revision saved only if its original document is
+  /// still open. Rust compares the captured revision with the current one, so
+  /// edits made while a hosted upload was in flight remain dirty.
+  PlanFileResult markSaved(PlanSessionSnapshot snapshot) {
+    _checkLive();
+    if (_handle != snapshot._handle || _generation != snapshot._generation) {
+      return const PlanFileResult(
+        rejected,
+        detail: 'the plan was replaced while it was being saved',
+      );
+    }
+    final code = core.markSaved(_handle, snapshot._revision);
+    return code == ok ? const PlanFileResult(ok) : _failure(code);
   }
 
   /// Saves to [target]. A byte target stays dirty if the plan changed while
@@ -200,6 +266,7 @@ class PlanSession {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _generation++;
     if (_handle != 0) core.close(_handle);
     _handle = 0;
     _name = null;
