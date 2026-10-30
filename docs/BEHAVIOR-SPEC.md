@@ -4846,3 +4846,39 @@ floats and 128 MiB of texture pixels; an export exceeding either is refused.
 Missing or undecodable models export as placeholder boxes and are reported by
 name, in the CLI's output and in the editor's status. Export is read-only: it changes neither the plan, its revision nor
 its saved state, and the same plan and assets produce identical bytes.
+
+### 11.4 Optional hosted browser plans (owner request 2026-10-30)
+
+**Normative experimental behavior.** With a same-origin hosted service configured,
+the browser may restore an account session and explicitly list, create, open,
+or upload the current plan as a new hosted copy. Signing in or importing never
+uploads a local plan automatically. Local files continue to open and save
+without an account or network connection; a hosted plan is identified and
+presented separately from a local file.
+
+Opening a hosted plan first acquires its single browser writer lease and then
+downloads its package. The lease revision and download revision must match
+before the editor attempts to open the bytes. The current plan and view remain
+in place until the core successfully opens the candidate package. The browser
+does not take over a held lease automatically.
+
+Save and Ctrl/Command+S update the hosted plan only while that plan is bound to
+the editor. A save encodes through the shared Rust core, sends the lease ID and
+quoted expected revision, and advances the expected revision only after an
+acknowledged response. The browser waits at most 30 seconds for the upload
+response. A timeout is unacknowledged: the current encoding remains available
+for local recovery, the plan stays dirty, and another hosted overwrite is
+blocked even if the request later completes on the server. The core decides
+whether an acknowledged encoding still matches the current edit revision; a
+newer edit stays dirty. Lease loss, revision conflict, or an unacknowledged
+save blocks another hosted overwrite until the user reopens or recovers the
+work.
+
+An explicit local-copy action writes the current core encoding to a `.domo`
+download. It does not mark the core saved, bind a local writer, or change the
+hosted plan's revision or dirty presentation. A browser download that cannot
+confirm storage does not authorize replacement. Dirty create/open/switch,
+sign-in navigation, sign-out and close require an explicit save, confirmed
+local copy, leave-unsaved choice or cancellation. Release is attempted after
+that choice; service lease expiry remains the fallback when a release cannot
+be confirmed. Hosted offline editing and merge are not provided.

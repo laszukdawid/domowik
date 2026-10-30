@@ -7,9 +7,21 @@ import 'account.dart';
 /// with its plans on the server and sign-out. The session lasts until
 /// sign-out or the app closes.
 class AccountButton extends StatefulWidget {
-  const AccountButton({super.key, required this.client});
+  const AccountButton({
+    super.key,
+    required this.client,
+    this.onSessionChanged,
+    this.beforeSignIn,
+    this.onSignOut,
+  });
 
   final AccountClient client;
+  final ValueChanged<AccountSession?>? onSessionChanged;
+  final Future<bool> Function()? beforeSignIn;
+
+  /// When supplied, owns confirmation, lease release and sign-out as one
+  /// editor workflow. Returning false leaves this control signed in.
+  final Future<bool> Function(AccountSession session)? onSignOut;
 
   @override
   State<AccountButton> createState() => _AccountButtonState();
@@ -33,6 +45,7 @@ class _AccountButtonState extends State<AccountButton> {
               _session = session;
               _busy = false;
             });
+            widget.onSessionChanged?.call(session);
             _loadProfile();
           }
         });
@@ -60,8 +73,14 @@ class _AccountButtonState extends State<AccountButton> {
   Future<void> _signIn() async {
     setState(() => _busy = true);
     try {
+      if (widget.beforeSignIn != null && !await widget.beforeSignIn!()) {
+        return;
+      }
       final signedIn = await widget.client.signIn();
-      if (mounted) setState(() => _session = signedIn);
+      if (mounted) {
+        setState(() => _session = signedIn);
+        widget.onSessionChanged?.call(signedIn);
+      }
     } on AccountException catch (error) {
       _report(error);
     } finally {
@@ -78,19 +97,28 @@ class _AccountButtonState extends State<AccountButton> {
     try {
       // Forgotten only once the server has ended it, so a failed sign-out
       // can be retried.
-      await widget.client.signOut(session);
+      final signedOut = widget.onSignOut == null
+          ? await _defaultSignOut(session)
+          : await widget.onSignOut!(session);
+      if (!signedOut) return;
       if (mounted) {
         setState(() {
           _session = null;
           _profile = null;
           _profileError = null;
         });
+        widget.onSessionChanged?.call(null);
       }
     } on AccountException catch (error) {
       _report(error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<bool> _defaultSignOut(AccountSession session) async {
+    await widget.client.signOut(session);
+    return true;
   }
 
   void _report(AccountException error) {

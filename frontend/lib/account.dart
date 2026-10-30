@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'sha256.dart';
 
@@ -62,10 +63,81 @@ class AccountSession {
 
 /// A plan kept on the server.
 class HostedPlan {
-  const HostedPlan({required this.title, required this.updatedAt});
+  const HostedPlan({
+    required this.title,
+    required this.updatedAt,
+    this.id = '',
+    this.revision = '',
+  });
 
+  final String id;
   final String title;
+
+  /// The server's opaque decimal revision. Keep it as a string so it remains
+  /// exact even if the service later moves beyond JavaScript's safe integers.
+  final String revision;
   final DateTime updatedAt;
+}
+
+/// A hosted browser writer lease. [revision] is the checkout revision and is
+/// deliberately kept as a string for exact `If-Match` round trips.
+class HostedPlanLease {
+  const HostedPlanLease({
+    required this.leaseId,
+    required this.revision,
+    this.mode = 'browser',
+    this.expiresInSeconds,
+  });
+
+  final String leaseId;
+  final String revision;
+  final String mode;
+  final int? expiresInSeconds;
+}
+
+class HostedPlanDownload {
+  const HostedPlanDownload({required this.bytes, required this.revision});
+
+  final Uint8List bytes;
+  final String revision;
+}
+
+/// Optional browser-only plan operations. Kept separate from [AccountClient]
+/// so existing native clients and account-only integrations remain compatible.
+abstract interface class HostedPlanClient {
+  Future<List<HostedPlan>> listPlans(AccountSession session);
+  Future<HostedPlan> createPlan(AccountSession session, String title);
+  Future<HostedPlan> importPlan(
+    AccountSession session,
+    String title,
+    Uint8List bytes,
+  );
+  Future<HostedPlanLease> acquireLease(
+    AccountSession session,
+    String planId, {
+    bool force = false,
+  });
+  Future<HostedPlanLease> renewLease(
+    AccountSession session,
+    String planId,
+    String leaseId,
+  );
+  Future<void> releaseLease(
+    AccountSession session,
+    String planId,
+    String leaseId,
+  );
+  Future<HostedPlanDownload> downloadPlan(
+    AccountSession session,
+    String planId,
+  );
+  Future<HostedPlan> savePlanContent(
+    AccountSession session,
+    String planId,
+    String leaseId,
+    String expectedRevision,
+    Uint8List bytes,
+  );
 }
 
 /// Who is signed in and what their account holds on the server.
@@ -92,7 +164,11 @@ class AccountProfile {
               plan['title'] is String &&
               plan['updatedAtEpoch'] is int)
             HostedPlan(
+              id: plan['id'] is String ? plan['id'] as String : '',
               title: plan['title'] as String,
+              revision: plan['revision'] is String
+                  ? plan['revision'] as String
+                  : '',
               updatedAt: DateTime.fromMillisecondsSinceEpoch(
                 (plan['updatedAtEpoch'] as int) * 1000,
               ),
@@ -107,8 +183,10 @@ class AccountProfile {
 }
 
 class AccountException implements Exception {
-  const AccountException(this.message);
+  const AccountException(this.message, {this.statusCode, this.code});
   final String message;
+  final int? statusCode;
+  final String? code;
   @override
   String toString() => message;
 }

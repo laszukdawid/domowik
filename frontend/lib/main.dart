@@ -34,6 +34,8 @@ import 'platform/catalog_host.dart';
 import 'platform/account_host.dart';
 import 'account.dart';
 import 'account_button.dart';
+import 'hosted_library.dart';
+import 'hosted_workflow.dart';
 import 'catalog.dart';
 import 'editor_fonts.dart';
 import 'editor_shell.dart';
@@ -175,6 +177,7 @@ class PlanPage extends StatefulWidget {
     this.modelDirectoryPicker,
     this.modelUploads,
     this.catalogClient,
+    this.accountClient,
   });
 
   /// Tests load the real native library directly; bundles use
@@ -205,6 +208,10 @@ class PlanPage extends StatefulWidget {
   /// supplied client; it must not be shared with another page.
   final CatalogClient? catalogClient;
 
+  /// Optional account transport, primarily for lifecycle tests. The hosted
+  /// UI appears only when this client also supports browser plan operations.
+  final AccountClient? accountClient;
+
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
@@ -221,7 +228,14 @@ class _PlanPageState extends State<PlanPage>
 
   /// Signing in to a server, when `DOMOWIK_SERVER_URL` configures one;
   /// otherwise the editor is anonymous and local.
-  late final AccountClient? _accountClient = createAccountClient();
+  late final AccountClient? _accountClient =
+      widget.accountClient ?? createAccountClient();
+  AccountSession? _accountSession;
+  HostedPlan? _hostedPlan;
+  HostedWorkflowCoordinator? _hostedWorkflow;
+  String? _hostedLibraryActionError;
+  bool _hostedSaveBlocked = false;
+  bool _hostedSaveInFlight = false;
   String? _loadError;
   int _abi = 0;
   PlanSession? _session;
@@ -240,6 +254,7 @@ class _PlanPageState extends State<PlanPage>
     isDirty: () => _dirty,
     askToLeave: _askToLeave,
     save: _saveFile,
+    saveCopy: _saveLocalRecoveryCopy,
     beforeAction: () {
       _livePropertyEdits.flush();
       if (!_acceptAssetPose()) {
@@ -251,8 +266,16 @@ class _PlanPageState extends State<PlanPage>
       if (mounted) setState(() {});
     },
     onError: (error) {
-      if (mounted)
-        setState(() => _setStatus('File action failed: $error', isError: true));
+      if (mounted) {
+        final message = _friendlyWorkflowError(error);
+        setState(() {
+          _hostedLibraryActionError = message;
+          _setStatus('File action failed: $message', isError: true);
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('File action failed: $message')));
+      }
     },
   );
 
@@ -994,6 +1017,7 @@ class _PlanPageState extends State<PlanPage>
   @override
   void dispose() {
     _catalogClient?.close();
+    _hostedWorkflow?.dispose().ignore();
     _livePropertyEdits.cancel();
     _inspectorTabs.dispose();
     _selectionScroll.dispose();
@@ -1138,7 +1162,7 @@ class _PlanPageState extends State<PlanPage>
       // `_configReady` completes normally and behaves like an empty store.
       await _configReady;
       if (!mounted) return;
-      _newPlan();
+      await _newPlan();
     } on Object catch (e) {
       setState(() => _loadError = '$e');
     }
@@ -2855,12 +2879,15 @@ class _PlanPageState extends State<PlanPage>
       _fileWorkflow.run(action);
 
   Future<LeaveDecision> _askToLeave() async {
+    final hosted = _hostedPlan != null;
     final choice = await showDialog<LeaveDecision>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Save your changes?'),
-        content: const Text(
-          'Save this plan before leaving, or discard the changes.',
+        content: Text(
+          hosted
+              ? 'Save the hosted plan, download a local copy, or leave these edits unsaved.'
+              : 'Save this plan before leaving, or discard the changes.',
         ),
         actions: [
           TextButton(
@@ -2870,8 +2897,14 @@ class _PlanPageState extends State<PlanPage>
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, LeaveDecision.discard),
-            child: const Text('Discard'),
+            child: Text(hosted ? 'Leave unsaved' : 'Discard'),
           ),
+          if (hosted)
+            OutlinedButton(
+              key: const ValueKey('leave-save-local-copy'),
+              onPressed: () => Navigator.pop(context, LeaveDecision.saveCopy),
+              child: const Text('Download local copy'),
+            ),
           FilledButton(
             onPressed: () => Navigator.pop(context, LeaveDecision.save),
             child: const Text('Save changes'),
@@ -2898,8 +2931,352 @@ class _PlanPageState extends State<PlanPage>
     await _fileAction(_saveAsFile);
   }
 
+  Future<void> _requestSaveLocalCopy() async {
+    await _fileAction(_saveLocalRecoveryCopy);
+  }
+
   Future<void> _requestExportUsdz() async {
     await _fileAction(_exportUsdz);
+  }
+
+  HostedPlanClient? get _hostedPlanClient {
+    final client = _accountClient;
+    if (client is HostedPlanClient) return client as HostedPlanClient;
+    return null;
+  }
+
+  String _friendlyWorkflowError(Object error) {
+    if (error is AccountException && error.code == 'lease-held') {
+      return 'This plan is being edited in another browser or API session. '
+          'Close it there to release its writer lease, then refresh and try again. '
+          'Your current plan remains open.';
+    }
+    if (error is AccountException && error.code == 'revision-conflict') {
+      return 'This hosted plan has a newer revision. Reopen it to continue; '
+          'your current plan remains open.';
+    }
+    final detail = error is AccountException ? error.message : '$error';
+    return 'The hosted action failed: $detail. Your current plan remains open.';
+  }
+
+  void _accountSessionChanged(AccountSession? session) {
+    if (!mounted) return;
+    setState(() => _accountSession = session);
+  }
+
+  Future<bool> _beforeAccountSignIn() => _fileWorkflow.run(() async {
+    if (!await _fileWorkflow.confirmLeaving()) return false;
+    return mounted;
+  });
+
+  Future<bool> _signOutFromAccount(AccountSession accountSession) =>
+      _fileWorkflow.run(() async {
+        if (!await _fileWorkflow.confirmLeaving()) return false;
+        final client = _accountClient;
+        if (client == null) return false;
+        await _detachHosted();
+        try {
+          await client.signOut(accountSession);
+        } on Object catch (error) {
+          if (mounted) {
+            setState(
+              () => _setStatus('could not sign out: $error', isError: true),
+            );
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not sign out: $error')),
+            );
+          }
+          return false;
+        }
+        if (mounted) {
+          setState(() {
+            _accountSession = null;
+            _setStatus(
+              _dirty
+                  ? 'signed out; current edits are local and unsaved'
+                  : 'signed out',
+              isError: false,
+            );
+          });
+        }
+        return true;
+      });
+
+  Widget? _hostedLibrary() {
+    final client = _hostedPlanClient;
+    if (client == null) return null;
+    final title =
+        _hostedPlan?.title ??
+        _filePath?.split('/').last.replaceAll(RegExp(r'\.domo$'), '') ??
+        'Untitled plan';
+    return HostedPlanLibraryButton(
+      client: client,
+      session: _accountSession,
+      currentPlanTitle: title,
+      onOpen: _requestOpenHostedPlan,
+      onCreate: _requestCreateHostedPlan,
+      onImportCurrent: _requestImportCurrentPlan,
+      lastActionError: () => _hostedLibraryActionError,
+    );
+  }
+
+  Future<bool> _requestOpenHostedPlan(HostedPlan plan) {
+    _hostedLibraryActionError = null;
+    return _fileWorkflow.replace(() => _checkoutHostedPlan(plan));
+  }
+
+  Future<bool> _requestCreateHostedPlan(String title) {
+    _hostedLibraryActionError = null;
+    return _fileWorkflow.replace(() async {
+      final client = _hostedPlanClient;
+      final accountSession = _accountSession;
+      if (client == null || accountSession == null) return false;
+      final plan = await client.createPlan(accountSession, title);
+      return _checkoutHostedPlan(plan);
+    });
+  }
+
+  Future<bool> _requestImportCurrentPlan(
+    String title,
+  ) => _fileWorkflow.run(() async {
+    _hostedLibraryActionError = null;
+    final client = _hostedPlanClient;
+    final accountSession = _accountSession;
+    final session = _session;
+    if (client == null || accountSession == null || session == null) {
+      return false;
+    }
+    final capture = session.captureForSave();
+    await client.importPlan(accountSession, title, capture.bytes);
+    if (!mounted) return false;
+    setState(
+      () => _setStatus(
+        'uploaded "$title" as a hosted copy; current plan stays ${_hostedPlan == null ? 'local' : 'hosted'}',
+        isError: false,
+      ),
+    );
+    return true;
+  });
+
+  Future<bool> _checkoutHostedPlan(HostedPlan plan) async {
+    final client = _hostedPlanClient;
+    final accountSession = _accountSession;
+    final session = _session;
+    if (client == null || accountSession == null || session == null) {
+      return false;
+    }
+    final previous = _hostedWorkflow;
+    final previousPlan = _hostedPlan;
+    final reopeningSamePlan = previous != null && previousPlan?.id == plan.id;
+    if (reopeningSamePlan) {
+      final released = await previous.release(bestEffort: false);
+      if (!released) {
+        throw const AccountException(
+          'Could not confirm release of the current hosted lease. The open plan is preserved; retry after the connection recovers.',
+        );
+      }
+    }
+    late final HostedWorkflowCoordinator candidate;
+    candidate = HostedWorkflowCoordinator(
+      client: client,
+      session: accountSession,
+      onStateChanged: (state) {
+        if (!mounted || !identical(_hostedWorkflow, candidate)) return;
+        if (state == HostedWorkflowState.leaseLost ||
+            state == HostedWorkflowState.conflict) {
+          setState(() {
+            _hostedSaveBlocked = true;
+            _setStatus(
+              state == HostedWorkflowState.leaseLost
+                  ? 'hosted lease lost; saving is blocked. Download a local copy or reopen the hosted plan'
+                  : 'hosted revision conflict; saving is blocked. Download a local copy or reopen the hosted plan',
+              isError: true,
+            );
+          });
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(_status)));
+        }
+      },
+    );
+    try {
+      final checkout = await candidate.checkout(plan);
+      if (!mounted) {
+        await candidate.dispose();
+        return false;
+      }
+      final result = session.open(
+        PlanBytes(plan.title, checkout.download.bytes),
+      );
+      if (!result.succeeded) {
+        await candidate.dispose();
+        final message = 'Could not open hosted plan: ${_describe(result.code)}';
+        setState(() {
+          _hostedLibraryActionError = message;
+          _setStatus(message, isError: true);
+        });
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+        if (reopeningSamePlan && previousPlan != null) {
+          await _restoreHostedLeaseAfterFailedReopen(previous, previousPlan);
+        }
+        return false;
+      }
+      setState(() {
+        _resetForPlanReplacement();
+        _hostedPlan = plan;
+        _hostedWorkflow = candidate;
+        _hostedSaveBlocked = false;
+        _setStatus(
+          'opened hosted plan "${plan.title}" at revision ${checkout.lease.revision}',
+          isError: false,
+        );
+      });
+      _refresh();
+      if (previous != null && !identical(previous, candidate)) {
+        await previous.release();
+        await previous.dispose();
+      }
+      return true;
+    } on Object {
+      await candidate.dispose();
+      if (reopeningSamePlan && previousPlan != null) {
+        await _restoreHostedLeaseAfterFailedReopen(previous, previousPlan);
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _restoreHostedLeaseAfterFailedReopen(
+    HostedWorkflowCoordinator previous,
+    HostedPlan previousPlan,
+  ) async {
+    try {
+      await previous.checkout(previousPlan);
+      if (!mounted) return;
+      setState(() {
+        _hostedWorkflow = previous;
+        _hostedPlan = previousPlan;
+        _hostedSaveBlocked = true;
+        _setStatus(
+          'reopen failed; the previous editor bytes are preserved, but hosted saving stays blocked until a fresh reopen',
+          isError: true,
+        );
+      });
+    } on Object {
+      await previous.dispose();
+      if (!mounted) return;
+      setState(() {
+        _hostedWorkflow = null;
+        _hostedPlan = previousPlan;
+        _hostedSaveBlocked = true;
+        _setStatus(
+          'reopen failed; previous editor bytes are preserved as local recovery. Download a copy before replacing them',
+          isError: true,
+        );
+      });
+    }
+  }
+
+  Future<void> _detachHosted() async {
+    final previous = _hostedWorkflow;
+    _hostedWorkflow = null;
+    _hostedPlan = null;
+    _hostedSaveBlocked = false;
+    if (previous != null) {
+      await previous.release();
+      await previous.dispose();
+    }
+  }
+
+  Future<bool> _saveHostedPlan() async {
+    final workflow = _hostedWorkflow;
+    final session = _session;
+    if (workflow == null || session == null) return false;
+    if (_hostedSaveBlocked ||
+        workflow.state == HostedWorkflowState.leaseLost ||
+        workflow.state == HostedWorkflowState.conflict) {
+      setState(
+        () => _setStatus(
+          'hosted save is blocked; download a local copy or reopen the hosted plan before saving again',
+          isError: true,
+        ),
+      );
+      return false;
+    }
+    _hostedSaveInFlight = true;
+    try {
+      final result = await workflow.save(PlanSessionHostedDocument(session));
+      if (!mounted) return false;
+      _hostedSaveBlocked = false;
+      setState(
+        () => _setStatus(
+          result.localDocumentClean
+              ? 'saved hosted revision ${result.revision}'
+              : 'hosted revision ${result.revision} saved; newer local edits remain unsaved. Save again or download a local copy',
+          isError: !result.localDocumentClean,
+        ),
+      );
+      _refresh();
+      return result.localDocumentClean;
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _hostedSaveBlocked = true;
+          _setStatus(
+            'hosted save was not acknowledged; saving is blocked to protect this copy. Download a local copy or reopen after checking the hosted revision ($error)',
+            isError: true,
+          );
+        });
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_status)));
+        _refresh();
+      }
+      return false;
+    } finally {
+      _hostedSaveInFlight = false;
+    }
+  }
+
+  /// Writes the current authoritative encoding to a browser download without
+  /// marking its Rust revision saved or binding it as the hosted plan's target.
+  Future<bool> _saveLocalRecoveryCopy() async {
+    final session = _session;
+    if (_hostedPlan == null || session == null || _handle == 0) return false;
+    final target = await _fileDialogs.savePlan('${_hostedPlan!.title}.domo');
+    if (target == null || !mounted) return false;
+    if (target is! PlanByteTarget) {
+      setState(
+        () => _setStatus(
+          'local recovery download is unavailable on this host',
+          isError: true,
+        ),
+      );
+      return false;
+    }
+    try {
+      final snapshot = session.captureForSave();
+      final stored = await target.write(snapshot.bytes);
+      if (!mounted) return stored;
+      setState(
+        () => _setStatus(
+          stored
+              ? 'downloaded local copy ${target.name}; hosted plan remains ${_dirty ? 'unsaved' : 'saved'}'
+              : 'downloaded ${target.name}, but browser storage was not confirmed; hosted state is unchanged',
+          isError: false,
+        ),
+      );
+      return stored;
+    } on Object catch (error) {
+      if (mounted) {
+        setState(
+          () => _setStatus(
+            'could not download local copy: $error',
+            isError: true,
+          ),
+        );
+      }
+      return false;
+    }
   }
 
   void _deleteLevel(String id) {
@@ -2954,9 +3331,12 @@ class _PlanPageState extends State<PlanPage>
       );
       return false;
     }
-    _resetForPlanReplacement();
+    await _detachHosted();
+    setState(() {
+      _resetForPlanReplacement();
+      _setStatus('opened ${source.name}', isError: false);
+    });
     _refresh();
-    setState(() => _setStatus('opened ${source.name}', isError: false));
     return true;
   }
 
@@ -2965,6 +3345,7 @@ class _PlanPageState extends State<PlanPage>
   /// asking where. With no such file (a new plan, or one this browser could
   /// only download) it must ask, exactly as Save As does.
   Future<bool> _saveFile() async {
+    if (_hostedPlan != null) return _saveHostedPlan();
     final session = _session;
     if (session == null || _handle == 0) return false;
     final target = session.boundTarget;
@@ -2975,6 +3356,7 @@ class _PlanPageState extends State<PlanPage>
   /// Save As asks where to write, every time, and the plan adopts the
   /// chosen file on success.
   Future<bool> _saveAsFile() async {
+    if (_hostedPlan != null) return _saveLocalRecoveryCopy();
     final session = _session;
     if (session == null || _handle == 0) return false;
     final suggested = _filePath?.split('/').last ?? 'plan.domo';
@@ -3075,7 +3457,7 @@ class _PlanPageState extends State<PlanPage>
     }
   }
 
-  bool _newPlan() {
+  Future<bool> _newPlan() async {
     final session = _session;
     if (session == null) return false;
     final result = session.create();
@@ -3088,6 +3470,7 @@ class _PlanPageState extends State<PlanPage>
       );
       return false;
     }
+    await _detachHosted();
     setState(() {
       _resetForPlanReplacement();
       _setStatus('new plan created', isError: false);
@@ -3278,10 +3661,11 @@ class _PlanPageState extends State<PlanPage>
     }
 
     return AbsorbPointer(
-      absorbing: _fileActionPending,
+      absorbing: _fileActionPending && !_hostedSaveInFlight,
       child: EditorShell(
-        fileName:
-            '${_filePath?.split('/').last ?? 'Untitled plan'}${_dirty ? ' • Unsaved' : ''}',
+        fileName: _hostedPlan == null
+            ? 'Local · ${_filePath?.split('/').last ?? 'Untitled plan'}${_dirty ? ' • Unsaved' : ''}'
+            : 'Hosted · ${_hostedPlan!.title} · revision ${_hostedWorkflow?.expectedRevision ?? _hostedPlan!.revision}${_hostedSaveBlocked ? ' · Save blocked' : ''}${_dirty ? ' • Unsaved' : ''}',
         onNew: _requestNewPlan,
         onOpen: _requestOpenFile,
         onSave: _requestSaveFile,
@@ -3291,7 +3675,14 @@ class _PlanPageState extends State<PlanPage>
         onPreferences: _openPreferences,
         account: _accountClient == null
             ? null
-            : AccountButton(client: _accountClient),
+            : AccountButton(
+                client: _accountClient,
+                onSessionChanged: _accountSessionChanged,
+                beforeSignIn: _beforeAccountSignIn,
+                onSignOut: _signOutFromAccount,
+              ),
+        hostedPlans: _hostedLibrary(),
+        onSaveLocalCopy: _hostedPlan == null ? null : _requestSaveLocalCopy,
         viewMode: _viewMode,
         onViewModeChanged: _changeViewMode,
         onUndo: _undoDepth > 0 || _poseHasChanges ? _changeHistory : null,

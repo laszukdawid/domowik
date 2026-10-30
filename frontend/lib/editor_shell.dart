@@ -19,6 +19,8 @@ class EditorShell extends StatelessWidget {
     this.onAssets,
     this.onPreferences,
     this.account,
+    this.hostedPlans,
+    this.onSaveLocalCopy,
     this.onViewModeChanged,
     this.viewMode = '2d',
     required this.onUndo,
@@ -34,6 +36,8 @@ class EditorShell extends StatelessWidget {
 
   /// The sign-in control, when a server is configured.
   final Widget? account;
+  final Widget? hostedPlans;
+  final VoidCallback? onSaveLocalCopy;
   final VoidCallback onNew;
   final VoidCallback onOpen;
   final VoidCallback onSave;
@@ -289,6 +293,16 @@ class EditorShell extends StatelessWidget {
                                 ],
                               ),
                             if (account != null) account!,
+                            if (hostedPlans != null) hostedPlans!,
+                            if (onSaveLocalCopy != null)
+                              _headerButton(
+                                key: const ValueKey('save-local-copy'),
+                                compact: compact,
+                                onPressed: onSaveLocalCopy,
+                                tooltip: 'Download a local .domo copy without changing hosted save state',
+                                icon: Icons.download_outlined,
+                                label: 'Local copy',
+                              ),
                             if (onPreferences != null)
                               IconButton(
                                 key: const ValueKey('preferences'),

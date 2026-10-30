@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 
 import 'plan_session.dart';
 
-enum LeaveDecision { cancel, discard, save }
+enum LeaveDecision { cancel, discard, save, saveCopy }
 
 /// Platform dialogs return null on cancellation; platform errors propagate.
 /// Implementations own their native close callback until it is cleared.
@@ -70,6 +70,7 @@ class FileWorkflowController {
     required this.isDirty,
     required this.askToLeave,
     required this.save,
+    this.saveCopy,
     required this.beforeAction,
     required this.onBusyChanged,
     required this.onError,
@@ -78,6 +79,7 @@ class FileWorkflowController {
   final bool Function() isDirty;
   final Future<LeaveDecision> Function() askToLeave;
   final Future<bool> Function() save;
+  final Future<bool> Function()? saveCopy;
   final void Function() beforeAction;
   final void Function(bool) onBusyChanged;
   final void Function(Object) onError;
@@ -109,6 +111,7 @@ class FileWorkflowController {
     return switch (decision) {
       LeaveDecision.discard => true,
       LeaveDecision.save => await save(),
+      LeaveDecision.saveCopy => await (saveCopy?.call() ?? Future.value(false)),
       LeaveDecision.cancel => false,
     };
   }

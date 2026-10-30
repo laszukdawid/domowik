@@ -25,6 +25,21 @@ and the RFC 7636 Appendix B verifier/challenge pair. Server tests use original
 synthetic responses. No application source, dependency, distributed content or
 notice obligation was added.
 
+## Optional hosted browser plans
+
+The hosted plan library and writer workflow are original product behavior,
+implemented from the Domowik service's existing plan, browser-lease, download
+revision and conditional-content-save contracts. The browser uses its same-origin
+cookie and in-memory CSRF session; it does not persist account tokens. Checkout
+acquires a lease before downloading, and editor saves reuse the Rust core's
+existing encode/mark-saved boundary. Local recovery downloads use those encoded
+bytes without marking the hosted document saved or adopting a local save target.
+Transport and lifecycle tests use original synthetic responses and documents;
+widget tests use the existing native Rust core with generated default plans.
+No external application source, internal schema, test vector or asset was
+consulted or adapted. No package, distributed content or notice obligation was
+added.
+
 ## Solid appearance overrides
 
 Per-material placed-model colors and whole-wall colors are original

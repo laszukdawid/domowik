@@ -279,7 +279,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(dialogs.suggested, 'plan.domo');
     expect(dialogs.saved, hasLength(1));
-    expect(find.text('browser plan.domo'), findsOneWidget);
+    expect(find.text('Local · browser plan.domo'), findsOneWidget);
     expect(find.textContaining('Unsaved'), findsNothing);
 
     // Replace the plan, then open the saved bytes back.
@@ -290,7 +290,7 @@ void main() {
     await tester.tap(find.byTooltip('Open plan'));
     await tester.pumpAndSettle();
     expect(scene(tester).walls, hasLength(1));
-    expect(find.text('reopened.domo'), findsOneWidget);
+    expect(find.text('Local · reopened.domo'), findsOneWidget);
     expect(find.textContaining('Unsaved'), findsNothing);
 
     // A file that is not a plan is refused and the open plan survives.
