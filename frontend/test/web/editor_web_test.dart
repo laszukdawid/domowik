@@ -279,7 +279,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(dialogs.suggested, 'plan.domo');
     expect(dialogs.saved, hasLength(1));
-    expect(find.text('Local · browser plan.domo'), findsOneWidget);
+    expect(find.text('browser plan.domo'), findsOneWidget);
     expect(find.textContaining('Unsaved'), findsNothing);
 
     // Replace the plan, then open the saved bytes back.
@@ -290,7 +290,7 @@ void main() {
     await tester.tap(find.byTooltip('Open plan'));
     await tester.pumpAndSettle();
     expect(scene(tester).walls, hasLength(1));
-    expect(find.text('Local · reopened.domo'), findsOneWidget);
+    expect(find.text('reopened.domo'), findsOneWidget);
     expect(find.textContaining('Unsaved'), findsNothing);
 
     // A file that is not a plan is refused and the open plan survives.
@@ -350,7 +350,7 @@ void main() {
     // Choosing Save while leaving must not let New replace the plan.
     await tester.tap(find.text('New'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save changes'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
     expect(dialogs.saved, hasLength(3));
     expect(scene(tester).walls, hasLength(1), reason: 'the plan survives');
@@ -358,7 +358,7 @@ void main() {
     // Discard, after the user has checked the download, does replace it.
     await tester.tap(find.text('New'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Discard'));
+    await tester.tap(find.text("Don't save"));
     await tester.pumpAndSettle();
     expect(scene(tester).walls, isEmpty);
   });

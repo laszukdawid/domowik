@@ -177,6 +177,17 @@ class PlanSession {
     return PlanFileResult(opened.code);
   }
 
+  /// Forgets the plan's file once it is saved somewhere else (an online
+  /// plan), so a later Save cannot rewrite the old file. In the browser
+  /// [name] is kept for display, as when an online plan's bytes are opened;
+  /// where names are paths, keeping it would bind Save to that path, so the
+  /// plan has no name.
+  void detachFile(String name) {
+    _checkLive();
+    _name = core.supportsPaths ? null : name;
+    _confirmedWriter = null;
+  }
+
   /// Encodes through Rust's authoritative package writer without changing
   /// the saved revision. A later [markSaved] applies only to this exact
   /// handle and generation, and Rust leaves edits made since encoding dirty.

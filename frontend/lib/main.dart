@@ -2920,8 +2920,8 @@ class _PlanPageState extends State<PlanPage>
         title: const Text('Save your changes?'),
         content: Text(
           hosted
-              ? 'Save the hosted plan, download a local copy, or leave these edits unsaved.'
-              : 'Save this plan before leaving, or discard the changes.',
+              ? 'Save this online plan before leaving, download a copy, or leave without saving.'
+              : 'Save this plan before leaving, or leave without saving.',
         ),
         actions: [
           TextButton(
@@ -2931,17 +2931,17 @@ class _PlanPageState extends State<PlanPage>
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, LeaveDecision.discard),
-            child: Text(hosted ? 'Leave unsaved' : 'Discard'),
+            child: const Text("Don't save"),
           ),
           if (hosted)
             OutlinedButton(
-              key: const ValueKey('leave-save-local-copy'),
+              key: const ValueKey('leave-download-copy'),
               onPressed: () => Navigator.pop(context, LeaveDecision.saveCopy),
-              child: const Text('Download local copy'),
+              child: const Text('Download a copy'),
             ),
           FilledButton(
             onPressed: () => Navigator.pop(context, LeaveDecision.save),
-            child: const Text('Save changes'),
+            child: const Text('Save'),
           ),
         ],
       ),
@@ -2965,8 +2965,40 @@ class _PlanPageState extends State<PlanPage>
     await _fileAction(_saveAsFile);
   }
 
-  Future<void> _requestSaveLocalCopy() async {
-    await _fileAction(_saveLocalRecoveryCopy);
+  Future<void> _requestNewOnlinePlan() async {
+    final title = await askOnlinePlanTitle(
+      context,
+      action: 'New online plan',
+      confirm: 'Create',
+      initialValue: 'Untitled plan',
+    );
+    if (title == null || !mounted) return;
+    await _requestCreateHostedPlan(title);
+  }
+
+  Future<void> _requestOpenOnlinePlan() async {
+    final client = _hostedPlanClient;
+    final accountSession = _accountSession;
+    if (client == null || accountSession == null) return;
+    _hostedLibraryActionError = null;
+    await showOnlinePlans(
+      context,
+      client: client,
+      session: accountSession,
+      onOpen: _requestOpenHostedPlan,
+      lastActionError: () => _hostedLibraryActionError,
+    );
+  }
+
+  Future<void> _requestSaveAsOnlinePlan() async {
+    final title = await askOnlinePlanTitle(
+      context,
+      action: 'Save as new online plan',
+      confirm: 'Save',
+      initialValue: _currentPlanTitle,
+    );
+    if (title == null || !mounted) return;
+    await _fileAction(() => _saveAsOnlinePlan(title));
   }
 
   Future<void> _requestExportUsdz() async {
@@ -2992,7 +3024,7 @@ class _PlanPageState extends State<PlanPage>
           'Your current plan remains open.';
     }
     if (error is AccountException && error.code == 'revision-conflict') {
-      return 'This hosted plan has a newer revision. Reopen it to continue; '
+      return 'This online plan has a newer version. Reopen it to continue; '
           'your current plan remains open.';
     }
     final detail = error is AccountException ? error.message : '$error';
@@ -3044,41 +3076,31 @@ class _PlanPageState extends State<PlanPage>
         return true;
       });
 
-  Widget? _hostedLibrary() {
+  /// Online plans need a hosted service and a signed-in account.
+  bool get _onlineAvailable =>
+      _hostedPlanClient != null && _accountSession != null;
+
+  String get _currentPlanTitle =>
+      _hostedPlan?.title ??
+      _filePath?.split('/').last.replaceAll(RegExp(r'\.domo$'), '') ??
+      'Untitled plan';
+
+  Widget? _propertyPlans() {
     final client = _hostedPlanClient;
-    if (client == null) return null;
-    final title =
-        _hostedPlan?.title ??
-        _filePath?.split('/').last.replaceAll(RegExp(r'\.domo$'), '') ??
-        'Untitled plan';
     final propertyClient = _propertyPlannerClient;
+    if (client == null || propertyClient == null) return null;
     final accountSessionRevision = _accountSessionChanges.value;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        HostedPlanLibraryButton(
-          client: client,
-          session: _accountSession,
-          currentPlanTitle: title,
-          onOpen: _requestOpenHostedPlan,
-          onCreate: _requestCreateHostedPlan,
-          onImportCurrent: _requestImportCurrentPlan,
-          lastActionError: () => _hostedLibraryActionError,
-        ),
-        if (propertyClient != null)
-          PropertyPlannerManagerButton(
-            client: propertyClient,
-            planClient: client,
-            session: _accountSession,
-            propertyHint: Uri.base.queryParameters['property'],
-            isSessionCurrent: (session) =>
-                mounted &&
-                identical(_accountSession, session) &&
-                _accountSessionChanges.value == accountSessionRevision,
-            sessionChanges: _accountSessionChanges,
-            onOpen: _requestOpenHostedPlan,
-          ),
-      ],
+    return PropertyPlannerManagerButton(
+      client: propertyClient,
+      planClient: client,
+      session: _accountSession,
+      propertyHint: Uri.base.queryParameters['property'],
+      isSessionCurrent: (session) =>
+          mounted &&
+          identical(_accountSession, session) &&
+          _accountSessionChanges.value == accountSessionRevision,
+      sessionChanges: _accountSessionChanges,
+      onOpen: _requestOpenHostedPlan,
     );
   }
 
@@ -3098,27 +3120,62 @@ class _PlanPageState extends State<PlanPage>
     });
   }
 
-  Future<bool> _requestImportCurrentPlan(
-    String title,
-  ) => _fileWorkflow.run(() async {
-    _hostedLibraryActionError = null;
+  /// Uploads the current encoding as a new online plan and makes it where
+  /// Save writes, keeping the open document and its history. Nothing changes
+  /// unless the new plan's lease matches the uploaded revision.
+  Future<bool> _saveAsOnlinePlan(String title) async {
     final client = _hostedPlanClient;
     final accountSession = _accountSession;
     final session = _session;
     if (client == null || accountSession == null || session == null) {
       return false;
     }
-    final capture = session.captureForSave();
-    await client.importPlan(accountSession, title, capture.bytes);
+    final snapshot = session.captureForSave();
+    final plan = await client.importPlan(accountSession, title, snapshot.bytes);
     if (!mounted) return false;
-    setState(
-      () => _setStatus(
-        'uploaded "$title" as a hosted copy; current plan stays ${_hostedPlan == null ? 'local' : 'hosted'}',
+    final candidate = _hostedWorkflowFor(client, accountSession);
+    Object? failure;
+    try {
+      if (!await candidate.attach(plan, baseline: plan.revision)) {
+        failure = 'it changed before it could be opened';
+      }
+    } on Object catch (error) {
+      failure = error is AccountException ? error.message : error;
+    }
+    if (failure != null || !mounted) {
+      await candidate.dispose();
+      if (mounted) {
+        setState(
+          () => _setStatus(
+            'saved "$title" online, but could not switch to it ($failure). '
+            'It is listed under Open online plan; your current plan is unchanged',
+            isError: true,
+          ),
+        );
+      }
+      return false;
+    }
+    final previous = _hostedWorkflow;
+    session.detachFile(plan.title);
+    final marked = session.markSaved(snapshot);
+    setState(() {
+      _hostedPlan = plan;
+      _hostedWorkflow = candidate;
+      _hostedSaveBlocked = false;
+      _setStatus(
+        marked.succeeded && !session.isDirty
+            ? 'saved as new online plan "${plan.title}"'
+            : 'saved as new online plan "${plan.title}"; newer edits are not saved yet',
         isError: false,
-      ),
-    );
-    return true;
-  });
+      );
+    });
+    _refresh();
+    if (previous != null) {
+      await previous.release();
+      await previous.dispose();
+    }
+    return marked.succeeded;
+  }
 
   Future<bool> _checkoutHostedPlan(HostedPlan plan) async {
     final client = _hostedPlanClient;
@@ -3129,6 +3186,7 @@ class _PlanPageState extends State<PlanPage>
     }
     final previous = _hostedWorkflow;
     final previousPlan = _hostedPlan;
+    final previousBaseline = previous?.expectedRevision;
     final reopeningSamePlan = previous != null && previousPlan?.id == plan.id;
     if (reopeningSamePlan) {
       final released = await previous.release(bestEffort: false);
@@ -3138,28 +3196,7 @@ class _PlanPageState extends State<PlanPage>
         );
       }
     }
-    late final HostedWorkflowCoordinator candidate;
-    candidate = HostedWorkflowCoordinator(
-      client: client,
-      session: accountSession,
-      onStateChanged: (state) {
-        if (!mounted || !identical(_hostedWorkflow, candidate)) return;
-        if (state == HostedWorkflowState.leaseLost ||
-            state == HostedWorkflowState.conflict) {
-          setState(() {
-            _hostedSaveBlocked = true;
-            _setStatus(
-              state == HostedWorkflowState.leaseLost
-                  ? 'hosted lease lost; saving is blocked. Download a local copy or reopen the hosted plan'
-                  : 'hosted revision conflict; saving is blocked. Download a local copy or reopen the hosted plan',
-              isError: true,
-            );
-          });
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text(_status)));
-        }
-      },
-    );
+    final candidate = _hostedWorkflowFor(client, accountSession);
     try {
       final checkout = await candidate.checkout(plan);
       if (!mounted) {
@@ -3171,7 +3208,7 @@ class _PlanPageState extends State<PlanPage>
       );
       if (!result.succeeded) {
         await candidate.dispose();
-        final message = 'Could not open hosted plan: ${_describe(result.code)}';
+        final message = 'Could not open online plan: ${_describe(result.code)}';
         setState(() {
           _hostedLibraryActionError = message;
           _setStatus(message, isError: true);
@@ -3179,7 +3216,11 @@ class _PlanPageState extends State<PlanPage>
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(message)));
         if (reopeningSamePlan && previousPlan != null) {
-          await _restoreHostedLeaseAfterFailedReopen(previous, previousPlan);
+          await _restoreHostedLeaseAfterFailedReopen(
+            previous,
+            previousPlan,
+            previousBaseline,
+          );
         }
         return false;
       }
@@ -3188,10 +3229,7 @@ class _PlanPageState extends State<PlanPage>
         _hostedPlan = plan;
         _hostedWorkflow = candidate;
         _hostedSaveBlocked = false;
-        _setStatus(
-          'opened hosted plan "${plan.title}" at revision ${checkout.lease.revision}',
-          isError: false,
-        );
+        _setStatus('opened online plan "${plan.title}"', isError: false);
       });
       _refresh();
       if (previous != null && !identical(previous, candidate)) {
@@ -3202,25 +3240,36 @@ class _PlanPageState extends State<PlanPage>
     } on Object {
       await candidate.dispose();
       if (reopeningSamePlan && previousPlan != null) {
-        await _restoreHostedLeaseAfterFailedReopen(previous, previousPlan);
+        await _restoreHostedLeaseAfterFailedReopen(
+          previous,
+          previousPlan,
+          previousBaseline,
+        );
       }
       rethrow;
     }
   }
 
+  /// Re-takes the lease of the plan whose bytes are still open after a
+  /// failed reopen. The editor keeps [baseline], the revision those bytes
+  /// were last confirmed at; a different server revision is a conflict.
   Future<void> _restoreHostedLeaseAfterFailedReopen(
     HostedWorkflowCoordinator previous,
     HostedPlan previousPlan,
+    String? baseline,
   ) async {
     try {
-      await previous.checkout(previousPlan);
+      if (baseline == null) throw StateError('no confirmed revision');
+      final attached = await previous.attach(previousPlan, baseline: baseline);
       if (!mounted) return;
       setState(() {
         _hostedWorkflow = previous;
         _hostedPlan = previousPlan;
-        _hostedSaveBlocked = true;
+        _hostedSaveBlocked = !attached;
         _setStatus(
-          'reopen failed; the previous editor bytes are preserved, but hosted saving stays blocked until a fresh reopen',
+          attached
+              ? 'reopen failed; your edits are still open and Save still saves online'
+              : 'reopen failed. $_onlineConflictMessage',
           isError: true,
         );
       });
@@ -3232,11 +3281,54 @@ class _PlanPageState extends State<PlanPage>
         _hostedPlan = previousPlan;
         _hostedSaveBlocked = true;
         _setStatus(
-          'reopen failed; previous editor bytes are preserved as local recovery. Download a copy before replacing them',
+          'reopen failed and the online plan could not be reconnected. '
+          'Your edits are still open; use Save as to keep them',
           isError: true,
         );
       });
     }
+  }
+
+  static const _onlineConflictMessage =
+      'The online version changed since your last confirmed save. Your edits '
+      'are still open. Use Save as to keep them separately.';
+
+  /// One writer checkout. Only a conflict is reported as it happens: a lost
+  /// lease is recovered by the next Save.
+  HostedWorkflowCoordinator _hostedWorkflowFor(
+    HostedPlanClient client,
+    AccountSession accountSession,
+  ) {
+    late final HostedWorkflowCoordinator workflow;
+    workflow = HostedWorkflowCoordinator(
+      client: client,
+      session: accountSession,
+      onStateChanged: (state) {
+        if (!mounted || !identical(_hostedWorkflow, workflow)) return;
+        if (state != HostedWorkflowState.conflict) return;
+        setState(() {
+          _hostedSaveBlocked = true;
+          _setStatus(_onlineConflictMessage, isError: true);
+        });
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(_status)));
+      },
+    );
+    return workflow;
+  }
+
+  String _onlineRecoveryMessage(Object error) {
+    if (error is AccountException && error.code == 'revision-conflict') {
+      return _onlineConflictMessage;
+    }
+    if (error is AccountException && error.code == 'lease-held') {
+      return 'This online plan is open in another tab or session. Close it '
+          'there, or wait about a minute for it to expire, then Save again. '
+          'Your edits are still open.';
+    }
+    final detail = error is AccountException ? error.message : '$error';
+    return 'Could not reach the online plan ($detail). Your edits are still '
+        'open; Save again to retry.';
   }
 
   Future<void> _detachHosted() async {
@@ -3250,16 +3342,17 @@ class _PlanPageState extends State<PlanPage>
     }
   }
 
+  /// Saves the online plan. After a lost lease or an unconfirmed save it
+  /// first reconnects, which succeeds only while nobody else has saved.
   Future<bool> _saveHostedPlan() async {
     final workflow = _hostedWorkflow;
     final session = _session;
-    if (workflow == null || session == null) return false;
-    if (_hostedSaveBlocked ||
-        workflow.state == HostedWorkflowState.leaseLost ||
-        workflow.state == HostedWorkflowState.conflict) {
+    if (session == null) return false;
+    if (workflow == null) {
       setState(
         () => _setStatus(
-          'hosted save is blocked; download a local copy or reopen the hosted plan before saving again',
+          'this plan is no longer connected online. Your edits are still '
+          'open; use Save as to keep them',
           isError: true,
         ),
       );
@@ -3267,14 +3360,33 @@ class _PlanPageState extends State<PlanPage>
     }
     _hostedSaveInFlight = true;
     try {
+      if (_hostedSaveBlocked ||
+          workflow.state == HostedWorkflowState.leaseLost ||
+          workflow.state == HostedWorkflowState.conflict) {
+        try {
+          await workflow.recover();
+        } on Object catch (error) {
+          if (mounted) {
+            setState(() {
+              _hostedSaveBlocked = true;
+              _setStatus(_onlineRecoveryMessage(error), isError: true);
+            });
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(_status)));
+          }
+          return false;
+        }
+        if (!mounted) return false;
+        _hostedSaveBlocked = false;
+      }
       final result = await workflow.save(PlanSessionHostedDocument(session));
       if (!mounted) return false;
       _hostedSaveBlocked = false;
       setState(
         () => _setStatus(
           result.localDocumentClean
-              ? 'saved hosted revision ${result.revision}'
-              : 'hosted revision ${result.revision} saved; newer local edits remain unsaved. Save again or download a local copy',
+              ? 'saved online'
+              : 'saved online; edits made while saving are not saved yet',
           isError: !result.localDocumentClean,
         ),
       );
@@ -3285,7 +3397,11 @@ class _PlanPageState extends State<PlanPage>
         setState(() {
           _hostedSaveBlocked = true;
           _setStatus(
-            'hosted save was not acknowledged; saving is blocked to protect this copy. Download a local copy or reopen after checking the hosted revision ($error)',
+            workflow.state == HostedWorkflowState.conflict
+                ? _onlineConflictMessage
+                : 'could not confirm the online save '
+                      '(${error is AccountException ? error.message : error}). '
+                      'Your edits are still open; Save again to retry',
             isError: true,
           );
         });
@@ -3309,7 +3425,7 @@ class _PlanPageState extends State<PlanPage>
     if (target is! PlanByteTarget) {
       setState(
         () => _setStatus(
-          'local recovery download is unavailable on this host',
+          'downloading a copy is unavailable on this host',
           isError: true,
         ),
       );
@@ -3322,8 +3438,8 @@ class _PlanPageState extends State<PlanPage>
       setState(
         () => _setStatus(
           stored
-              ? 'downloaded local copy ${target.name}; hosted plan remains ${_dirty ? 'unsaved' : 'saved'}'
-              : 'downloaded ${target.name}, but browser storage was not confirmed; hosted state is unchanged',
+              ? 'downloaded a copy to ${target.name}; the online plan is ${_dirty ? 'not saved yet' : 'saved'}'
+              : 'downloaded ${target.name}, but this browser cannot confirm it was kept',
           isError: false,
         ),
       );
@@ -3331,10 +3447,7 @@ class _PlanPageState extends State<PlanPage>
     } on Object catch (error) {
       if (mounted) {
         setState(
-          () => _setStatus(
-            'could not download local copy: $error',
-            isError: true,
-          ),
+          () => _setStatus('could not download a copy: $error', isError: true),
         );
       }
       return false;
@@ -3501,7 +3614,7 @@ class _PlanPageState extends State<PlanPage>
             hadChanges
                 ? 'downloaded ${target.name}; this browser cannot confirm it '
                       'was kept, so the plan stays unsaved. Check the '
-                      'download, then choose Discard to leave'
+                      "download, then choose Don't save to leave"
                 : 'downloaded ${target.name}; this browser cannot confirm it '
                       'was kept',
             isError: false,
@@ -3726,12 +3839,22 @@ class _PlanPageState extends State<PlanPage>
       absorbing: _fileActionPending && !_hostedSaveInFlight,
       child: EditorShell(
         fileName: _hostedPlan == null
-            ? 'Local · ${_filePath?.split('/').last ?? 'Untitled plan'}${_dirty ? ' • Unsaved' : ''}'
-            : 'Hosted · ${_hostedPlan!.title} · revision ${_hostedWorkflow?.expectedRevision ?? _hostedPlan!.revision}${_hostedSaveBlocked ? ' · Save blocked' : ''}${_dirty ? ' • Unsaved' : ''}',
+            ? '${_filePath?.split('/').last ?? 'Untitled plan'}${_dirty ? ' • Unsaved' : ''}'
+            : 'Online · ${_hostedPlan!.title}${_hostedSaveBlocked
+                  ? ' • Not saved online'
+                  : _dirty
+                  ? ' • Unsaved'
+                  : ''}',
         onNew: _requestNewPlan,
         onOpen: _requestOpenFile,
+        onNewOnline: _onlineAvailable ? _requestNewOnlinePlan : null,
+        onOpenOnline: _onlineAvailable ? _requestOpenOnlinePlan : null,
         onSave: _requestSaveFile,
         onSaveAs: _requestSaveAsFile,
+        saveAsLabel: _hostedPlan == null
+            ? 'Save as…'
+            : 'Download a copy (.domo)',
+        onSaveAsOnline: _onlineAvailable ? _requestSaveAsOnlinePlan : null,
         onExportUsdz: _fileDialogs is ExportDialogs ? _requestExportUsdz : null,
         onAssets: _openAssetLibrary,
         onPreferences: _openPreferences,
@@ -3743,8 +3866,7 @@ class _PlanPageState extends State<PlanPage>
                 beforeSignIn: _beforeAccountSignIn,
                 onSignOut: _signOutFromAccount,
               ),
-        hostedPlans: _hostedLibrary(),
-        onSaveLocalCopy: _hostedPlan == null ? null : _requestSaveLocalCopy,
+        propertyPlans: _propertyPlans(),
         viewMode: _viewMode,
         onViewModeChanged: _changeViewMode,
         onUndo: _undoDepth > 0 || _poseHasChanges ? _changeHistory : null,
@@ -6401,7 +6523,7 @@ class _PlanPageState extends State<PlanPage>
                 IconButton(
                   key: ValueKey('room-homehero-${_derived.rooms[i].recordId}'),
                   tooltip: _dirty
-                      ? 'Save the hosted plan before linking inventory'
+                      ? 'Save the online plan before linking inventory'
                       : 'HomeHero inventory and location link',
                   icon: const Icon(Icons.inventory_2_outlined, size: 18),
                   onPressed: _dirty || _accountSession == null

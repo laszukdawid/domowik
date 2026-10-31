@@ -26,6 +26,7 @@ class _HostedClient implements AccountClient, HostedPlanClient {
   Completer<HostedPlan>? pendingSave;
   String? failSaveCode;
   String? failAcquireCode;
+  String? failRenewCode;
   int _nextId = 1;
   int signOutCalls = 0;
 
@@ -111,6 +112,9 @@ class _HostedClient implements AccountClient, HostedPlanClient {
     String leaseId,
   ) async {
     calls.add('renew:$planId');
+    // Sticky, like a lease that has really expired on the server.
+    final code = failRenewCode;
+    if (code != null) throw AccountException('lease expired', code: code);
     return HostedPlanLease(
       leaseId: leaseId,
       revision: plans[planId]!.revision,
@@ -262,15 +266,36 @@ void main() {
   }
 
   Future<HostedPlan> createHosted(WidgetTester tester, String title) async {
-    await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-    await tap(tester, find.byKey(const ValueKey('hosted-create')));
+    await tap(tester, find.byKey(const ValueKey('new-menu')));
+    await tap(tester, find.text('New online plan…'));
     await tester.enterText(
-      find.byKey(const ValueKey('hosted-plan-title')),
+      find.byKey(const ValueKey('online-plan-title')),
       title,
     );
-    await tap(tester, find.byKey(const ValueKey('hosted-title-confirm')));
+    await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
     await tester.pumpAndSettle();
     return client.plans.values.single;
+  }
+
+  Future<void> showOnlinePlans(WidgetTester tester) async {
+    await tap(tester, find.byKey(const ValueKey('open-menu')));
+    await tap(tester, find.text('Open online plan…'));
+  }
+
+  Future<void> openHosted(WidgetTester tester, HostedPlan plan) async {
+    await showOnlinePlans(tester);
+    await tap(tester, find.byKey(ValueKey('online-open-${plan.id}')));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> saveMenu(WidgetTester tester, String key) async {
+    await tap(tester, find.byKey(const ValueKey('save-menu')));
+    await tap(tester, find.byKey(ValueKey(key)));
+  }
+
+  Future<void> newLocalPlan(WidgetTester tester) async {
+    await tap(tester, find.byKey(const ValueKey('new-menu')));
+    await tap(tester, find.text('New plan'));
   }
 
   testWidgets('create, open, edit during save, local copy and hosted resave', (
@@ -278,15 +303,11 @@ void main() {
   ) async {
     await start(tester);
     final plan = await createHosted(tester, 'Project');
-    expect(client.calls.take(3), [
-      'list',
+    expect(client.calls.take(2), [
       'create:Project',
       'acquire:${plan.id}:false',
     ]);
-    expect(
-      find.textContaining('Hosted · Project · revision 1'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Online · Project'), findsOneWidget);
 
     await drawWall(tester);
     final pending = Completer<HostedPlan>();
@@ -304,35 +325,26 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(client.savedRevisions, ['1']);
-    expect(
-      find.textContaining('Hosted · Project · revision 2 • Unsaved'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Online · Project • Unsaved'), findsOneWidget);
 
     Uint8List? localCopy;
     dialogs.nextSave = PlanByteTarget('Project.domo', (bytes) async {
       localCopy = Uint8List.fromList(bytes);
       return true;
     });
-    await tap(tester, find.byKey(const ValueKey('save-local-copy')));
+    await saveMenu(tester, 'save-as');
     expect(dialogs.suggestedName, 'Project.domo');
     expect(localCopy, isNotNull);
     expect(localCopy, isNot(client.savedBytes.single));
-    expect(
-      find.textContaining('Hosted · Project · revision 2 • Unsaved'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Online · Project • Unsaved'), findsOneWidget);
 
     await tap(tester, find.byKey(const ValueKey('save-action')));
     expect(client.savedRevisions, ['1', '2']);
-    expect(
-      find.textContaining('Hosted · Project · revision 3'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Online · Project'), findsOneWidget);
     expect(find.textContaining('Unsaved'), findsNothing);
-    await tap(tester, find.byTooltip('New plan'));
+    await newLocalPlan(tester);
     expect(find.text('Save your changes?'), findsNothing);
-    expect(find.textContaining('Local · Untitled plan'), findsOneWidget);
+    expect(find.text('Untitled plan'), findsOneWidget);
   });
 
   testWidgets(
@@ -340,26 +352,25 @@ void main() {
     (tester) async {
       await start(tester);
       final plan = client._newPlan('Existing', seedBytes);
-      await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-      await tap(tester, find.byKey(ValueKey('hosted-open-${plan.id}')));
-      await tester.pumpAndSettle();
+      await openHosted(tester, plan);
       await drawWall(tester);
 
-      await tap(tester, find.byTooltip('New plan'));
+      await newLocalPlan(tester);
       expect(find.text('Save your changes?'), findsOneWidget);
       await tap(tester, find.text('Cancel'));
-      expect(find.textContaining('Hosted · Existing'), findsOneWidget);
+      expect(find.textContaining('Online · Existing'), findsOneWidget);
       expect(
         client.calls.where((call) => call == 'release:${plan.id}'),
         isEmpty,
       );
 
       dialogs.nextOpen = PlanBytes('bad.domo', Uint8List.fromList([1, 2, 3]));
-      await tap(tester, find.byTooltip('Open plan'));
+      await tap(tester, find.byKey(const ValueKey('open-menu')));
+      await tap(tester, find.text('Open file…'));
       expect(find.text('Save your changes?'), findsOneWidget);
-      await tap(tester, find.text('Leave unsaved'));
+      await tap(tester, find.text("Don't save"));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Hosted · Existing'), findsOneWidget);
+      expect(find.textContaining('Online · Existing'), findsOneWidget);
       expect(
         client.calls.where((call) => call == 'release:${plan.id}'),
         isEmpty,
@@ -372,18 +383,14 @@ void main() {
   ) async {
     await start(tester);
     final current = client._newPlan('Current', seedBytes);
-    await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-    await tap(tester, find.byKey(ValueKey('hosted-open-${current.id}')));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Hosted · Current'), findsOneWidget);
+    await openHosted(tester, current);
+    expect(find.textContaining('Online · Current'), findsOneWidget);
 
     final held = client._newPlan('Held elsewhere', seedBytes);
     client.failAcquireCode = 'lease-held';
-    await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-    await tap(tester, find.byKey(ValueKey('hosted-open-${held.id}')));
-    await tester.pumpAndSettle();
+    await openHosted(tester, held);
 
-    final error = find.byKey(const ValueKey('hosted-library-action-error'));
+    final error = find.byKey(const ValueKey('online-plans-action-error'));
     expect(error, findsOneWidget);
     expect(
       find.descendant(
@@ -399,61 +406,71 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.textContaining('Hosted · Current'), findsOneWidget);
-    expect(find.byKey(const ValueKey('hosted-library-dialog')), findsOneWidget);
+    expect(find.textContaining('Online · Current'), findsOneWidget);
+    expect(find.byKey(const ValueKey('online-plans-dialog')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'local plan upload is deliberate and does not clear local dirty state',
-    (tester) async {
-      await start(tester);
-      await drawWall(tester);
-      expect(client.calls.where((call) => call.startsWith('import:')), isEmpty);
-      expect(
-        find.textContaining('Local · Untitled plan • Unsaved'),
-        findsOneWidget,
-      );
+  testWidgets('save as new online plan switches Save to the new plan', (
+    tester,
+  ) async {
+    await start(tester);
+    await drawWall(tester);
+    expect(client.calls.where((call) => call.startsWith('import:')), isEmpty);
+    expect(find.text('Untitled plan • Unsaved'), findsOneWidget);
 
-      await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-      await tap(tester, find.byKey(const ValueKey('hosted-import-current')));
-      await tester.enterText(
-        find.byKey(const ValueKey('hosted-plan-title')),
-        'Explicit copy',
-      );
-      await tap(tester, find.byKey(const ValueKey('hosted-title-confirm')));
-      await tester.pumpAndSettle();
+    await saveMenu(tester, 'save-as-online');
+    await tester.enterText(
+      find.byKey(const ValueKey('online-plan-title')),
+      'Explicit copy',
+    );
+    await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+    await tester.pumpAndSettle();
 
-      expect(client.calls, contains('import:Explicit copy'));
-      expect(client.plans.values.single.title, 'Explicit copy');
-      expect(
-        find.textContaining('Local · Untitled plan • Unsaved'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Hosted ·'), findsNothing);
-      await tap(tester, find.text('Close'));
-    },
-  );
+    final plan = client.plans.values.single;
+    expect(plan.title, 'Explicit copy');
+    expect(client.calls, [
+      'import:Explicit copy',
+      'acquire:${plan.id}:false',
+    ], reason: 'adopts the upload without downloading it again');
+    expect(find.text('Online · Explicit copy'), findsOneWidget);
+
+    await drawWall(tester, y: 260);
+    await tap(tester, find.byKey(const ValueKey('save-action')));
+    expect(client.savedRevisions, ['1']);
+    expect(dialogs.saveCalls, 0);
+    expect(find.text('Online · Explicit copy'), findsOneWidget);
+  });
+
+  testWidgets('a failed switch after upload keeps the current plan', (
+    tester,
+  ) async {
+    await start(tester);
+    await drawWall(tester);
+    client.failAcquireCode = 'lease-held';
+    await saveMenu(tester, 'save-as-online');
+    await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(client.plans, hasLength(1), reason: 'the upload itself succeeded');
+    expect(find.text('Untitled plan • Unsaved'), findsOneWidget);
+    expect(find.textContaining('Open online plan'), findsOneWidget);
+  });
 
   testWidgets(
     'unconfirmed local recovery download cannot authorize replacement',
     (tester) async {
       await start(tester);
       final plan = client._newPlan('Keep me', seedBytes);
-      await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-      await tap(tester, find.byKey(ValueKey('hosted-open-${plan.id}')));
-      await tester.pumpAndSettle();
+      await openHosted(tester, plan);
       await drawWall(tester);
       dialogs.nextSave = PlanByteTarget('recovery.domo', (_) async => false);
 
-      await tap(tester, find.byTooltip('New plan'));
-      await tap(tester, find.text('Download local copy'));
+      await newLocalPlan(tester);
+      await tap(tester, find.text('Download a copy'));
       await tester.pumpAndSettle();
-      expect(
-        find.textContaining('Hosted · Keep me · revision 1 • Unsaved'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Local · Untitled plan'), findsNothing);
+      expect(find.textContaining('Online · Keep me • Unsaved'), findsOneWidget);
+      expect(find.text('Untitled plan'), findsNothing);
       expect(
         client.calls.where((call) => call == 'release:${plan.id}'),
         isEmpty,
@@ -461,77 +478,185 @@ void main() {
     },
   );
 
-  testWidgets('large hosted library remains scrollable inside its bound', (
+  testWidgets('large online plan list remains scrollable inside its bound', (
     tester,
   ) async {
     await start(tester);
     for (var i = 0; i < 35; i++) {
       client._newPlan('Plan $i', seedBytes);
     }
-    await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-    expect(find.byKey(const ValueKey('hosted-library-dialog')), findsOneWidget);
+    await showOnlinePlans(tester);
+    expect(find.byKey(const ValueKey('online-plans-dialog')), findsOneWidget);
     expect(tester.takeException(), isNull);
     final list = find.descendant(
-      of: find.byKey(const ValueKey('hosted-library-dialog')),
+      of: find.byKey(const ValueKey('online-plans-dialog')),
       matching: find.byType(ListView),
     );
     await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('hosted-open-hosted-35')),
+      find.byKey(const ValueKey('online-open-hosted-35')),
       250,
       scrollable: find.descendant(of: list, matching: find.byType(Scrollable)),
     );
-    expect(find.byKey(const ValueKey('hosted-open-hosted-35')), findsOneWidget);
+    expect(find.byKey(const ValueKey('online-open-hosted-35')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'ambiguous save blocks overwrite and same-plan reopen is explicit',
-    (tester) async {
-      await start(tester);
-      final plan = client._newPlan('Recover', seedBytes);
-      await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-      await tap(tester, find.byKey(ValueKey('hosted-open-${plan.id}')));
-      await tester.pumpAndSettle();
-      await drawWall(tester);
-      client.failSaveCode = 'service-busy';
-      await tap(tester, find.byKey(const ValueKey('save-action')));
-      expect(client.savedRevisions, ['1']);
-      expect(find.textContaining('Save blocked'), findsOneWidget);
+  testWidgets('Save again retries an unconfirmed save when nobody else saved', (
+    tester,
+  ) async {
+    await start(tester);
+    final plan = client._newPlan('Recover', seedBytes);
+    await openHosted(tester, plan);
+    await drawWall(tester);
+    client.failSaveCode = 'service-busy';
+    await tap(tester, find.byKey(const ValueKey('save-action')));
+    expect(client.savedRevisions, ['1']);
+    expect(find.text('Online · Recover • Not saved online'), findsOneWidget);
 
-      await tap(tester, find.byKey(const ValueKey('save-action')));
-      expect(client.savedRevisions, [
-        '1',
-      ], reason: 'ambiguous retry is blocked');
+    await tap(tester, find.byKey(const ValueKey('save-action')));
+    expect(client.savedRevisions, ['1', '1']);
+    expect(client.calls, contains('renew:${plan.id}'));
+    expect(find.text('Online · Recover'), findsOneWidget);
+    expect(find.textContaining('Unsaved'), findsNothing);
+  });
 
-      await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-      await tap(tester, find.byKey(ValueKey('hosted-open-${plan.id}')));
-      expect(find.text('Save your changes?'), findsOneWidget);
-      await tap(tester, find.text('Leave unsaved'));
-      await tester.pumpAndSettle();
-      expect(
-        client.calls.where((call) => call == 'release:${plan.id}'),
-        hasLength(1),
-      );
-      expect(
-        client.calls.where((call) => call == 'acquire:${plan.id}:false'),
-        hasLength(2),
-      );
-      expect(
-        find.textContaining('Hosted · Recover · revision 1'),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Unsaved'), findsNothing);
-    },
-  );
+  testWidgets('Save refuses to overwrite a newer online version', (
+    tester,
+  ) async {
+    await start(tester);
+    final plan = client._newPlan('Shared', seedBytes);
+    await openHosted(tester, plan);
+    await drawWall(tester);
+    client.failSaveCode = 'service-busy';
+    await tap(tester, find.byKey(const ValueKey('save-action')));
+    // Another session saved meanwhile.
+    client.plans[plan.id] = HostedPlan(
+      id: plan.id,
+      title: plan.title,
+      revision: '2',
+      updatedAt: DateTime.utc(2026),
+    );
+
+    await tap(tester, find.byKey(const ValueKey('save-action')));
+    expect(client.savedRevisions, ['1'], reason: 'no blind overwrite');
+    expect(
+      find.textContaining('online version changed since your last confirmed'),
+      findsWidgets,
+    );
+    expect(find.text('Online · Shared • Not saved online'), findsOneWidget);
+
+    await saveMenu(tester, 'save-as-online');
+    await tester.enterText(
+      find.byKey(const ValueKey('online-plan-title')),
+      'Shared (mine)',
+    );
+    await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Online · Shared (mine)'), findsOneWidget);
+    expect(client.calls, contains('release:${plan.id}'));
+  });
+
+  testWidgets('a lost lease is re-acquired by the next Save', (tester) async {
+    await start(tester);
+    final plan = client._newPlan('Idle tab', seedBytes);
+    await openHosted(tester, plan);
+    await drawWall(tester);
+    client.failRenewCode = 'lease-not-held';
+    await tester.pump(const Duration(seconds: 50));
+    await tester.pumpAndSettle();
+    expect(find.text('Online · Idle tab • Unsaved'), findsOneWidget);
+
+    await tap(tester, find.byKey(const ValueKey('save-action')));
+    expect(
+      client.calls.where((call) => call == 'acquire:${plan.id}:false'),
+      hasLength(2),
+    );
+    expect(client.savedRevisions, ['1']);
+    expect(find.text('Online · Idle tab'), findsOneWidget);
+  });
+
+  testWidgets('a lease held by another session is explained on Save', (
+    tester,
+  ) async {
+    await start(tester);
+    final plan = client._newPlan('Two tabs', seedBytes);
+    await openHosted(tester, plan);
+    await drawWall(tester);
+    client.failRenewCode = 'lease-not-held';
+    await tester.pump(const Duration(seconds: 50));
+    await tester.pumpAndSettle();
+    client.failAcquireCode = 'lease-held';
+
+    await tap(tester, find.byKey(const ValueKey('save-action')));
+    expect(client.savedRevisions, isEmpty);
+    expect(find.textContaining('open in another tab'), findsWidgets);
+    expect(find.text('Online · Two tabs • Not saved online'), findsOneWidget);
+  });
+
+  testWidgets('reopening the same plan stays explicit', (tester) async {
+    await start(tester);
+    final plan = client._newPlan('Reopen', seedBytes);
+    await openHosted(tester, plan);
+    await drawWall(tester);
+
+    await openHosted(tester, plan);
+    expect(find.text('Save your changes?'), findsOneWidget);
+    await tap(tester, find.text("Don't save"));
+    await tester.pumpAndSettle();
+    expect(
+      client.calls.where((call) => call == 'release:${plan.id}'),
+      hasLength(1),
+    );
+    expect(
+      client.calls.where((call) => call == 'acquire:${plan.id}:false'),
+      hasLength(2),
+    );
+    expect(find.text('Online · Reopen'), findsOneWidget);
+  });
+
+  for (final moved in [false, true]) {
+    testWidgets(
+      'a failed reopen keeps the edits and ${moved ? 'refuses' : 'allows'} Save',
+      (tester) async {
+        await start(tester);
+        final plan = client._newPlan('Broken', seedBytes);
+        await openHosted(tester, plan);
+        await drawWall(tester);
+        client.packages[plan.id] = Uint8List.fromList([1, 2, 3]);
+        if (moved) {
+          client.plans[plan.id] = HostedPlan(
+            id: plan.id,
+            title: plan.title,
+            revision: '2',
+            updatedAt: DateTime.utc(2026),
+          );
+        }
+
+        await openHosted(tester, plan);
+        await tap(tester, find.text("Don't save"));
+        await tester.pumpAndSettle();
+        await tap(tester, find.text('Close'));
+        expect(
+          find.text(
+            moved
+                ? 'Online · Broken • Not saved online'
+                : 'Online · Broken • Unsaved',
+          ),
+          findsOneWidget,
+        );
+
+        await tap(tester, find.byKey(const ValueKey('save-action')));
+        expect(client.savedRevisions, moved ? isEmpty : ['1']);
+      },
+    );
+  }
 
   testWidgets(
     'sign-out is guarded by dirty confirmation and releases the lease',
     (tester) async {
       await start(tester);
       final plan = client._newPlan('Logout', seedBytes);
-      await tap(tester, find.byKey(const ValueKey('hosted-plan-library')));
-      await tap(tester, find.byKey(ValueKey('hosted-open-${plan.id}')));
-      await tester.pumpAndSettle();
+      await openHosted(tester, plan);
       await drawWall(tester);
 
       await tap(tester, find.byKey(const ValueKey('account')));
@@ -539,18 +664,18 @@ void main() {
       expect(find.text('Save your changes?'), findsOneWidget);
       await tap(tester, find.text('Cancel'));
       expect(client.signOutCalls, 0);
-      expect(find.textContaining('Hosted · Logout'), findsOneWidget);
+      expect(find.textContaining('Online · Logout'), findsOneWidget);
 
       await tap(tester, find.byKey(const ValueKey('account')));
       await tap(tester, find.byKey(const ValueKey('sign-out')));
-      await tap(tester, find.text('Leave unsaved'));
+      await tap(tester, find.text("Don't save"));
       await tester.pumpAndSettle();
       expect(client.signOutCalls, 1);
       expect(
         client.calls.where((call) => call == 'release:${plan.id}'),
         hasLength(1),
       );
-      expect(find.textContaining('Local · Logout • Unsaved'), findsOneWidget);
+      expect(find.text('Logout • Unsaved'), findsOneWidget);
     },
   );
 }
