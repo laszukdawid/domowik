@@ -3238,6 +3238,10 @@ application source or behavior. No document-format change.
   level may be highlighted while its details dialog is open. Highlighting is
   transient, does not change selection or the operation log, and clears when
   the dialog closes. An opening's end-resize boundary exposes a resize cursor.
+  The plan cursor names the active tool: Select uses the normal pointer,
+  the Walls chain and Stairs a crosshair, furniture placement an add cursor,
+  and door or window placement an add cursor over a host wall and a
+  not-allowed cursor elsewhere.
 - **R7.1.6 Wall measurement editing (original GUI decision, issue 0071).** The
   editor MAY present a wall's thickness, height, and centreline length as one
   numeric form submitted as ONE atomic batch. A length edit is expressed
