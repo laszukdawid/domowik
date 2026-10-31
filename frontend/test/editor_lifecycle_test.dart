@@ -1882,6 +1882,52 @@ void main() {
     await mouse.removePointer();
   });
 
+  testWidgets('the plan cursor shows the active tool', (tester) async {
+    await start(tester);
+    await draw(tester);
+    final top = tester.getTopLeft(getCanvas());
+    MouseCursor cursor() => tester
+        .widget<MouseRegion>(find.byKey(const ValueKey('plan-cursor-region')))
+        .cursor;
+    final mouse = await tester.createGesture(
+      kind: PointerDeviceKind.mouse,
+      pointer: 778,
+    );
+    await mouse.moveTo(top + const Offset(225, 150));
+    await tester.pumpAndSettle();
+    expect(cursor(), SystemMouseCursors.basic);
+
+    await tap(tester, find.byKey(const ValueKey('wall-chain-tool')));
+    expect(cursor(), SystemMouseCursors.precise);
+
+    // Arming Doors with the pointer already over the wall needs no move.
+    await tap(tester, find.text('Doors'));
+    expect(cursor(), SystemMouseCursors.copy);
+    await mouse.moveTo(top + const Offset(225, 300));
+    await tester.pumpAndSettle();
+    expect(cursor(), SystemMouseCursors.forbidden);
+    await mouse.moveTo(top + const Offset(225, 150));
+    await tester.pumpAndSettle();
+    expect(cursor(), SystemMouseCursors.copy);
+
+    // Zooming moves the wall away from, then back under, the still pointer.
+    await tap(tester, find.byTooltip('Zoom in'));
+    expect(cursor(), SystemMouseCursors.forbidden);
+    await tap(tester, find.byTooltip('Zoom out'));
+    expect(cursor(), SystemMouseCursors.copy);
+
+    await tap(tester, find.widgetWithText(ChoiceChip, 'Select'));
+    expect(cursor(), SystemMouseCursors.basic);
+
+    // Undo removes the hovered host wall while Windows stays armed.
+    await tap(tester, find.text('Windows'));
+    expect(cursor(), SystemMouseCursors.copy);
+    await tap(tester, find.byTooltip('Undo'));
+    expect(walls(tester), 0);
+    expect(cursor(), SystemMouseCursors.forbidden);
+    await mouse.removePointer();
+  });
+
   testWidgets(
     'dragging a selected door leaf across the wall reverses its swing',
     (tester) async {

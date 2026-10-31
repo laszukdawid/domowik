@@ -409,6 +409,11 @@ class _PlanPageState extends State<PlanPage>
   /// Whether the creation-only Walls chain tool (`wall-chain-tool`) is armed.
   bool _wallChainTool = false;
   MouseCursor _hoverCursor = SystemMouseCursors.basic;
+
+  /// Whether the pointer is over a wall that can host the opening being placed.
+  bool _hoverOnOpeningHost = false;
+  Offset? _openingHoverScreen;
+  bool _openingHoverReevalScheduled = false;
   final WallChainState _chain = WallChainState();
   Offset? _chainHoverAt;
   Offset? _chainHoverScreen;
@@ -1470,7 +1475,7 @@ class _PlanPageState extends State<PlanPage>
       _assetChoice = selected;
       _placing = 'asset';
       _wallChainTool = false;
-      _hoverCursor = SystemMouseCursors.precise;
+      _hoverCursor = SystemMouseCursors.basic;
     });
     _canvasFocus.requestFocus();
   }
@@ -2697,6 +2702,7 @@ class _PlanPageState extends State<PlanPage>
       _stairHoverScreen = null;
       _hoverCursor = SystemMouseCursors.basic;
     }
+    _hoverOnOpeningHost = _openingHostUnder(_hoverPlanMm);
     _loadModelPreviews();
     _outstandingBuffers = bridge.outstandingBuffers();
   }
@@ -3708,6 +3714,7 @@ class _PlanPageState extends State<PlanPage>
                   _doorMechanism = type;
                   _placing = 'door';
                   _hoverCursor = SystemMouseCursors.basic;
+                  _hoverOnOpeningHost = _openingHostUnder(_hoverPlanMm);
                 });
               },
               itemBuilder: (_) => const [
@@ -3732,6 +3739,7 @@ class _PlanPageState extends State<PlanPage>
                   _windowMechanism = type;
                   _placing = 'window';
                   _hoverCursor = SystemMouseCursors.basic;
+                  _hoverOnOpeningHost = _openingHostUnder(_hoverPlanMm);
                 });
               },
               itemBuilder: (_) => const [
@@ -4005,6 +4013,7 @@ class _PlanPageState extends State<PlanPage>
           _chain.clear();
           _placing = placing;
           _hoverCursor = SystemMouseCursors.basic;
+          _hoverOnOpeningHost = _openingHostUnder(_hoverPlanMm);
         });
       },
     );
@@ -4061,7 +4070,7 @@ class _PlanPageState extends State<PlanPage>
               _wallChainTool = false;
               _chain.clear();
               _placing = 'staircase';
-              _hoverCursor = SystemMouseCursors.precise;
+              _hoverCursor = SystemMouseCursors.basic;
               _inspectorTabs.index = 1;
             });
             _canvasFocus.requestFocus();
@@ -4122,6 +4131,23 @@ class _PlanPageState extends State<PlanPage>
             ),
           );
     return handles.firstOrNull;
+  }
+
+  /// Plan cursor for the active tool: drawing tools use a crosshair, point
+  /// placements an add cursor (forbidden off a wall for openings), and Select
+  /// the hover-derived cursor.
+  MouseCursor get _planCursor {
+    if (_wallChainTool || _placing == 'staircase') {
+      return SystemMouseCursors.precise;
+    }
+    return switch (_placing) {
+      'door' || 'window' =>
+        _hoverOnOpeningHost
+            ? SystemMouseCursors.copy
+            : SystemMouseCursors.forbidden,
+      'asset' => SystemMouseCursors.copy,
+      _ => _hoverCursor,
+    };
   }
 
   MouseCursor _stairResizeCursor(StairResizeHandle h) {
@@ -4243,6 +4269,22 @@ class _PlanPageState extends State<PlanPage>
             _stairStart != null &&
             _stairHoverScreen != null) {
           _updateStairPreview(_view.toPlan(_stairHoverScreen!));
+        }
+      });
+    }
+    // A view change moves walls under a still pointer; recheck the host.
+    if ((_placing == 'door' || _placing == 'window') &&
+        _openingHoverScreen != null &&
+        !_openingHoverReevalScheduled) {
+      _openingHoverReevalScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _openingHoverReevalScheduled = false;
+        final screen = _openingHoverScreen;
+        if (!mounted || screen == null) return;
+        _hoverPlanMm = _view.toPlan(screen);
+        final onHost = _openingHostUnder(_hoverPlanMm);
+        if (onHost != _hoverOnOpeningHost) {
+          setState(() => _hoverOnOpeningHost = onHost);
         }
       });
     }
@@ -4693,11 +4735,18 @@ class _PlanPageState extends State<PlanPage>
             },
             child: MouseRegion(
               key: const ValueKey('plan-cursor-region'),
-              cursor: _hoverCursor,
+              cursor: _planCursor,
               onHover: (event) {
                 final at = _view.toPlan(event.localPosition);
                 if (!_finite(at)) return;
                 _hoverPlanMm = at;
+                if (_placing == 'door' || _placing == 'window') {
+                  _openingHoverScreen = event.localPosition;
+                  final onHost = _openingHostUnder(at);
+                  if (onHost != _hoverOnOpeningHost)
+                    setState(() => _hoverOnOpeningHost = onHost);
+                  return;
+                }
                 if (_placing == 'staircase' &&
                     _stairStart != null &&
                     _activePointer == null) {
@@ -4758,6 +4807,7 @@ class _PlanPageState extends State<PlanPage>
               onExit: (_) {
                 _hoverPlanMm = null;
                 _stairHoverScreen = null;
+                _openingHoverScreen = null;
               },
               child: ColoredBox(
                 color: const Color(0xFFFAFAF7),
@@ -5874,6 +5924,20 @@ class _PlanPageState extends State<PlanPage>
     return draggingStart ? w.end : w.start;
   }
 
+  /// Whether `at` is over a wall that can host the opening being placed.
+  bool _openingHostUnder(Offset? at) {
+    if (at == null || (_placing != 'door' && _placing != 'window')) {
+      return false;
+    }
+    final hits = _hitsAt(at);
+    return hits != null && _openingHostIn(hits) != null;
+  }
+
+  Wall? _openingHostIn(List<_PlanHit> hits) {
+    final host = hits.where((hit) => hit.kind == 'region').firstOrNull;
+    return _walls.where((wall) => wall.id == host?.entityId).firstOrNull;
+  }
+
   /// Places a door or window at the point on the wall nearest `at`.
   ///
   /// `u` is the parameter along the host's centre line, which is what R4.0.5
@@ -5884,8 +5948,7 @@ class _PlanPageState extends State<PlanPage>
     if (kind == null) return false;
     final hits = _hitsAt(at);
     if (hits == null) return true;
-    final host = hits.where((hit) => hit.kind == 'region').firstOrNull;
-    final best = _walls.where((wall) => wall.id == host?.entityId).firstOrNull;
+    final best = _openingHostIn(hits);
     if (best == null) {
       setState(
         () => _setStatus('click on a wall to place a $kind', isError: true),
