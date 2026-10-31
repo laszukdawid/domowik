@@ -89,6 +89,28 @@ forward. The tabs scroll independently; switching tabs preserves live placement
 drafts. Below 900 pixels of width it becomes a drawer: use the layers
 button (**Levels and plan details**). Status messages appear below the
 canvas; hover for the full message or use **Copy status message**.
+
+**Firefox on Linux:** the web editor uses **Safe 2D** by default to avoid a native
+browser/graphics-driver crash on affected configurations when WebGPU 3D starts.
+This is a broad precaution, not a claim that every Linux Firefox installation
+fails. You can still draw, browse
+Furniture, edit and save plans. Saved 3D/split preferences are retained but not
+applied while Safe 2D is active. Firefox on macOS is not restricted by this gate.
+You can force Safe 2D in any browser by adding `?DOMOWIK_WEBGPU=0` to the editor
+URL. For an explicit experimental 3D test, use `?DOMOWIK_WEBGPU=1` instead;
+**save your plan first**, because the override can crash the whole browser.
+When the URL already has query parameters, append `&DOMOWIK_WEBGPU=0` (or `1`).
+These switches affect only that page, not saved preferences or plans. Safe 2D
+avoids the 3D WebGPU path, not all GPU use: Flutter still draws the 2D interface.
+
+If another browser cannot offer WebGPU or a suitable graphics adapter, the editor
+also returns to Safe 2D. Expand **3D diagnostics** for the full error. Editing and
+saving remain available, and the page does not retry 3D on edits, view changes or
+file opens. Reload to retry after changing your browser setup. An unavailable
+adapter does not mean the plan is damaged; there is no software/WebGL 3D fallback.
+3D errors show a plain-language explanation by default; technical exception text
+is available only by expanding **3D diagnostics** or explicitly copying an error.
+
 Each layer's **Edit options** opens its properties; the active floor's menu also
 contains **Delete floor**. Only an empty, unreferenced floor can be deleted, and
 the last floor cannot be removed. Drag the handle beside a floor's name to

@@ -7,6 +7,24 @@ It is not a development diary or a claim of legal clearance. Follow the
 Dependency notices remain in [NOTICE](../NOTICE), the
 [Rust dependency inventory](RUST-DEPENDENCIES.md) and [third-party records](third-party/).
 
+## Browser graphics safety
+
+Safe 2D admission and its page-only overrides are original owner-approved product
+behavior. The policy and regression tests use synthetic browser-identification
+strings, URLs and plans. A local isolated-browser diagnostic used an original
+WebGPU clear pass and synthetic triangle scene; no external application source,
+artwork, test vectors or private plans were consulted or distributed. No new
+dependency, distributed content or notice obligation was introduced.
+
+Recoverable WebGPU startup refusals reuse that Safe 2D policy and the existing
+presenter error codes. Fallback, retry-suppression and diagnostic tests use
+original synthetic failures and plans; no additional external source, dependency,
+distributed content or notice obligation was introduced.
+
+Plain-language 3D failure messages and opt-in technical diagnostics are original
+owner-requested presentation changes. Tests use synthetic exceptions; no external
+source, dependency, content or notice obligation was added.
+
 ## Save keyboard shortcuts
 
 Ctrl+S and Command+S invoke the existing explicit-save workflow, using Flutter's

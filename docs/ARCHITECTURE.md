@@ -139,6 +139,17 @@ The 3D pipeline is separate from the document core:
    surfaces.
 3. Camera movement updates the view without changing plan geometry.
 
+The browser host resolves a GPU-free admission policy before mounting 3D.
+Safe 2D prevents 3D renderer/module initialization and overrides the visible view
+without rewriting its stored preference. Desktop Linux Firefox defaults to this
+fallback; other browsers can select it explicitly. The web presenter checks the
+same policy independently before loading its module. This avoids a known native
+browser crash path rather than claiming to catch driver crashes. See the
+[user guide](USER-GUIDE.md) for page-only safety/testing overrides.
+An ordinary WebGPU startup refusal also latches Safe 2D for the page, unmounting
+the 3D view while preserving requested preferences and selectable diagnostics.
+This prevents repeated initialization attempts; it is not native crash recovery.
+
 Linux installs mutable geometry, instances and their origin-matched camera as
 one validated scene packet under the render lock. Native scene workers prepare
 compact presentation arrays before returning them to the UI; other hosts convert

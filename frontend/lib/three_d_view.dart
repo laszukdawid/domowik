@@ -74,6 +74,7 @@ class ThreeDView extends StatefulWidget {
     this.onPick,
     this.onUndo,
     this.onRedo,
+    this.onUnavailable,
   });
   final DomowikCore core;
   final int handle, revision;
@@ -90,6 +91,10 @@ class ThreeDView extends StatefulWidget {
   final List<String> selectedIds;
   final ValueChanged<ScenePick>? onPick;
   final VoidCallback? onUndo, onRedo;
+
+  /// Reports a recoverable WebGPU startup refusal after the current frame.
+  /// Hosts can keep editing in 2D; native browser crashes cannot be reported here.
+  final ValueChanged<String>? onUnavailable;
   @override
   State<ThreeDView> createState() => ThreeDViewState();
 }
@@ -128,6 +133,7 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
       _cameraScheduled = false,
       _cameraInFlight = false;
   bool _resetSurface = true;
+  bool _surfaceUnavailable = false;
   bool _mouseDragging = false, _pan = false;
   // Click detection and the orbit pivot picked under the press.
   Offset? _pressAt;
@@ -243,7 +249,7 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
   }
 
   Future<void> _ensureSurface() async {
-    if (_creating || !mounted || !widget.active) return;
+    if (_creating || _surfaceUnavailable || !mounted || !widget.active) return;
     if (session == null) {
       _creating = true;
       try {
@@ -263,7 +269,19 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
           _error = null;
         });
       } catch (e) {
-        if (mounted) setState(() => _error = '3D GPU surface unavailable: $e');
+        if (mounted) {
+          final details = '3D GPU surface unavailable: $e';
+          setState(() => _error = details);
+          if (e is PlatformException &&
+              (e.code == 'no-webgpu' || e.code == 'webgpu-disabled')) {
+            // A rejected adapter is not made available by another edit, resize
+            // or file open. Do not repeatedly initialize it on widget updates.
+            _surfaceUnavailable = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) widget.onUnavailable?.call(details);
+            });
+          }
+        }
         return;
       } finally {
         _creating = false;
@@ -1086,7 +1104,27 @@ class ThreeDViewState extends State<ThreeDView> with TickerProviderStateMixin {
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                SelectableText(error),
+                                Text(
+                                  session == null
+                                      ? '3D could not start'
+                                      : '3D could not update',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  session == null
+                                      ? 'The 3D view is unavailable with your current graphics setup. '
+                                            'You can continue editing and saving your plan in 2D.'
+                                      : 'The 3D view could not display the latest changes. '
+                                            'You can continue editing and saving your plan in 2D.',
+                                ),
+                                ExpansionTile(
+                                  key: ValueKey(error),
+                                  title: const Text('3D diagnostics'),
+                                  children: [SelectableText(error)],
+                                ),
                                 const SizedBox(height: 8),
                                 TextButton.icon(
                                   onPressed: () async {

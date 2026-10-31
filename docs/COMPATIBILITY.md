@@ -16,6 +16,21 @@ establish a stable API or file-format promise.
 | iOS editor | No supported editor workflow established |
 | Web editor | Editor workflows and the release probe tested in Chrome for Testing 155 on macOS (WebGPU on the GPU). Linux headless browser tests and both release-bundle probes have also passed with software WebGPU (issues 0120/0121); this does not establish physical-GPU performance. The owner also tried it by hand in Firefox on 2026-10-13 and reported that it looked good (version and workflows not recorded, no automated Firefox run). Safari and Edge untested. 2D needs WebAssembly and CanvasKit; 3D needs WebGPU, with no WebGL fallback. Plans open and save through the user's files; no in-browser plan storage. CanvasKit, the core, the renderer and the text fonts (Roboto, and a Noto Sans Symbols 2 subset for ⌘) are served with the page, which contacts no other origin; characters Roboto lacks (CJK, Arabic, Hebrew, emoji, most symbols) draw as boxes. One page thread: large model imports pause the page, and a core panic ends the tab's session. See [ADR 0012](decisions/0012-browser-editor.md) |
 
+**Firefox graphics boundary:** desktop Linux Firefox defaults to **Safe 2D**,
+even when view preferences request 3D/split. WebGPU presentation can terminate
+the whole browser on affected Intel/Mesa/Wayland stacks; a standalone WebGPU
+canvas reproduces the failure without Flutter or the Domowik renderer. This
+gate is deliberately broader than the known failing driver, since a page cannot
+safely probe that driver by initializing WebGPU. The owner reports Firefox on
+macOS works; that platform is not gated. Safe 2D does not initialize the 3D
+module, adapter, device or canvas and does not rewrite saved view preferences.
+The 2D Flutter interface still uses graphics acceleration; this is not a software
+rendering mode or a guarantee against unrelated browser failures. The
+[user guide](USER-GUIDE.md) describes explicit page-only safety/testing overrides.
+Browsers that report missing WebGPU or adapter/device startup failures return to
+Safe 2D with expandable diagnostics, without retrying until reload. This handles
+ordinary reported failures, not native browser crashes, and adds no 3D backend.
+
 Platform evidence is bounded by the tested ABI, host and increment. Read
 [Architecture](ARCHITECTURE.md), the
 [bridge evidence](../frontend/native/README.md),

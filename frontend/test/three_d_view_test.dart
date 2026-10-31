@@ -351,6 +351,96 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
+  for (final code in ['no-webgpu', 'webgpu-disabled']) {
+    testWidgets('$code startup refusal notifies once and never retries', (
+      tester,
+    ) async {
+      var creates = 0;
+      final failures = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        (call) async {
+          expect(call.method, 'create');
+          creates++;
+          throw PlatformException(code: code, message: 'adapter unavailable');
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          ThreeDViewState.channel,
+          null,
+        ),
+      );
+      Future<void> show(int revision, {bool active = true}) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: ThreeDView(
+                core: const _UnusedCore(),
+                handle: revision,
+                revision: revision,
+                levelIds: const ['level'],
+                ghostedIds: const [],
+                floorElevationMm: 0,
+                active: active,
+                onUnavailable: failures.add,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await show(1);
+      expect(failures, hasLength(1));
+      expect(failures.single, contains('adapter unavailable'));
+      await show(2);
+      await show(3, active: false);
+      await show(4);
+      expect(creates, 1);
+      expect(failures, hasLength(1));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('a startup refusal after disposal never notifies the host', (
+    tester,
+  ) async {
+    final pending = Completer<Object?>();
+    final failures = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      ThreeDViewState.channel,
+      (call) async => pending.future,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        ThreeDViewState.channel,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ThreeDView(
+            core: const _UnusedCore(),
+            handle: 1,
+            revision: 1,
+            levelIds: const ['level'],
+            ghostedIds: const [],
+            floorElevationMm: 0,
+            active: true,
+            onUnavailable: failures.add,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    pending.completeError(PlatformException(code: 'no-webgpu'));
+    await tester.pumpAndSettle();
+    expect(failures, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final failingMethod in ['create', 'loadScene']) {
     testWidgets('$failingMethod errors are selectable and fully copyable', (
       tester,
@@ -414,6 +504,22 @@ void main() {
       await tester.pumpAndSettle();
       final error = key.currentState!.diagnosticError!;
       expect(error, contains(details));
+      expect(find.textContaining(details), findsNothing);
+      expect(find.textContaining('PlatformException'), findsNothing);
+      expect(
+        find.text(
+          failingMethod == 'create'
+              ? '3D could not start'
+              : '3D could not update',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('continue editing and saving your plan in 2D'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('3D diagnostics'));
+      await tester.pumpAndSettle();
       final selection = find.byWidgetPredicate(
         (widget) => widget is SelectableText && widget.data == error,
       );
@@ -832,12 +938,17 @@ void main() {
       await health(99, 'another session');
       expect(find.textContaining('3D rendering failed'), findsNothing);
       await health(5, 'GPU error: device lost');
+      expect(find.text('3D could not update'), findsOneWidget);
+      expect(find.textContaining('GPU error: device lost'), findsNothing);
+      await tester.tap(find.text('3D diagnostics'));
+      await tester.pumpAndSettle();
       expect(
         find.text('3D rendering failed: GPU error: device lost'),
         findsOneWidget,
       );
       await health(5, null);
       expect(find.textContaining('3D rendering failed'), findsNothing);
+      expect(find.text('3D could not update'), findsNothing);
     },
   );
 
