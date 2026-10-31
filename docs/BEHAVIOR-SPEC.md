@@ -4842,6 +4842,29 @@ from zero), an editor-only exception to §5.3.2's fixed display unit.
 Angles remain degrees. Switching units discards any active placement preview;
 subsequently opened fields use the new units.
 
+**Server preference (owner request 2026-10-31).** The desktop editor's
+Preferences has a **Server** field naming the optional hosted service of
+§11.4. A configuration without the field uses `https://planner.homehero.pro`;
+an empty value turns online plans and accounts off. A non-empty value must be
+an HTTPS origin (plain HTTP only on loopback) without credentials, path, query
+or fragment; an invalid value is shown in the window and nothing is saved.
+Values are stored as their origin, so equivalent spellings are not a change.
+A `DOMOWIK_SERVER_URL` environment variable or build define overrides the
+preference; the field then shows that value and cannot be edited, and an empty
+override turns accounts off. A configuration that cannot be read turns
+accounts off unless an override names a server. The browser editor has no
+Server field: its service is the page's own origin.
+
+Saving a changed server first settles unsaved work on an open online plan
+with the leave choices of §11.4 while the old server is still in use; Cancel
+or a failed save keeps every preference unchanged. Only after the preferences
+are stored does the editor release the open online plan's lease and sign the
+old account out, best-effort and bounded, so an unreachable old server never
+blocks the change. The open plan, its edits and its view stay in place and
+are never uploaded; it is no longer an online plan, and its next Save asks
+where to write. The new server starts signed out. Changing other preferences
+does not affect the account.
+
 ### 11.2 Platform-aware workflow guidance (issue 0084)
 
 **Normative experimental-editor behavior.** Navigation, selection and history
@@ -4875,28 +4898,40 @@ Missing or undecodable models export as placeholder boxes and are reported by
 name, in the CLI's output and in the editor's status. Export is read-only: it changes neither the plan, its revision nor
 its saved state, and the same plan and assets produce identical bytes.
 
-### 11.4 Optional hosted browser plans (owner request 2026-10-30)
+### 11.4 Optional hosted plans (owner requests 2026-10-30, 2026-10-31)
 
-**Normative experimental behavior.** With a same-origin hosted service configured,
-the browser may restore an account session and explicitly list, create, open,
-or save the current plan as a new hosted ("online") plan. With a signed-in
+**Normative experimental behavior.** With a hosted service configured (the
+page's own origin in the browser, the §11.1 Server preference on the
+desktop) and a signed-in account, the editor may explicitly list, create,
+open, or save the current plan as a new hosted ("online") plan. The browser
+restores the service's session cookie when the page loads. The desktop signs
+in through the system browser (RFC 8252 loopback redirect with PKCE), which
+uses the service's own sign-in, and keeps the issued API token in memory
+only: every run starts signed out, the editor makes no account or plan
+request before the user signs in, and sign-out revokes the token (a token the
+service no longer accepts counts as signed out). Desktop sign-in keeps the
+open plan and its edits in place; browser sign-in leaves the page and needs
+the leave choices below. With a signed-in
 session New and Open offer these online actions beside their local ones, and
 the save menu offers Save as new online plan. Signing in never uploads a local
 plan automatically. Local files continue to open and save
 without an account or network connection; a hosted plan is identified and
 presented separately from a local file.
 
-Opening a hosted plan first acquires its single browser writer lease and then
-downloads its package. The lease revision and download revision must match
-before the editor attempts to open the bytes. The current plan and view remain
-in place until the core successfully opens the candidate package. The browser
-does not take over a held lease automatically.
+Opening a hosted plan first acquires its single writer lease (labelled
+`browser` or `api`) and then downloads its package. The lease revision and
+download revision must match before the editor attempts to open the bytes.
+The current plan and view remain in place until the core successfully opens
+the candidate package. An opened hosted plan has no local file: its title is
+never used as a path. The editor does not take over a held lease
+automatically.
 
 Save and Ctrl/Command+S update the hosted plan only while that plan is bound to
 the editor. A save encodes through the shared Rust core, sends the lease ID and
 quoted expected revision, and advances the expected revision only after an
-acknowledged response. The browser waits at most 30 seconds for the upload
-response. A timeout is unacknowledged: the current encoding remains available
+acknowledged response. The editor waits at most 30 seconds for the upload
+response; the desktop also bounds each pause while an answer arrives and
+refuses redirects and answers above 64 MiB. A timeout is unacknowledged: the current encoding remains available
 for local recovery, the plan stays dirty, and another hosted overwrite is
 blocked even if the request later completes on the server. The core decides
 whether an acknowledged encoding still matches the current edit revision; a
@@ -4926,15 +4961,22 @@ target, mark the captured core revision saved, forget any local file binding
 and release the previous plan's lease best-effort; otherwise the current plan
 and binding are unchanged and the uploaded plan remains listed.
 
-For a hosted plan, the save menu's Download a copy action, and the same
-choice in the leave dialog, write the current core encoding to a `.domo`
-download. It does not mark the core saved, bind a local writer, or change the
-hosted plan's revision or dirty presentation. A browser download that cannot
-confirm storage does not authorize replacement. Dirty create/open/switch,
+For a hosted plan, the save menu's copy action, and the same choice in the
+leave dialog, write the current core encoding to a `.domo` download in the
+browser (Download a copy) or a file the user chooses on the desktop (Save a
+copy). The desktop writes a temporary file beside the destination and renames
+it, so a failed write leaves no partial file. A copy does not mark the core
+saved, bind a local writer, or change the hosted plan's revision or dirty
+presentation. A browser download that cannot confirm storage does not
+authorize replacement. Dirty create/open/switch,
 sign-in navigation, sign-out and close require an explicit save, confirmed
-local copy, leave-unsaved choice or cancellation. Release is attempted after
-that choice; service lease expiry remains the fallback when a release cannot
-be confirmed. Hosted offline editing and merge are not provided.
+local copy, leave-unsaved choice or cancellation. Close asks where the host
+lets the editor answer first (currently macOS); a browser tab shows the
+browser's own leave warning instead. Release is
+attempted after that choice, and an approved desktop close attempts it for
+at most three seconds before the window closes. Service lease expiry remains the fallback
+when a release cannot be confirmed. Hosted offline editing and merge are not
+provided.
 
 ### 11.5 HomeHero property plans and room inventory (owner request 2026-10-30)
 

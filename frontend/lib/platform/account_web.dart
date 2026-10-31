@@ -1,15 +1,21 @@
-import 'dart:convert';
 import 'dart:js_interop';
-import 'dart:typed_data';
 
 import '../account.dart';
+import '../hosted_api.dart';
 import '../property_planner.dart';
+
+/// The page's server is set by the deployment, never by a preference.
+const serverPreferenceAvailable = false;
+
+/// The browser has no process environment to override the server.
+String? serverUrlOverride() => null;
 
 /// The account client when the deployment names a server, through
 /// `<meta name="domowik-server-url">` or a `DOMOWIK_SERVER_URL` define; null
 /// otherwise, which leaves the editor anonymous and local. The session is a
 /// same-origin cookie, so the server must be the page's own origin.
-AccountClient? createAccountClient() {
+/// [savedServerUrl] is a desktop preference and is ignored here.
+AccountClient? createAccountClient({String? savedServerUrl}) {
   final configured =
       _document
           .querySelector('meta[name="domowik-server-url"]')
@@ -27,8 +33,8 @@ AccountClient? createAccountClient() {
 
 /// Sign-in in the hosted editor: the server runs the sign-in and sets an
 /// HttpOnly session cookie; the editor only learns the session's CSRF token.
-class BrowserAccountClient
-    implements AccountClient, HostedPlanClient, PropertyPlannerClient {
+class BrowserAccountClient extends HostedPlanProtocol
+    implements AccountClient, PropertyPlannerClient {
   BrowserAccountClient(this.server, {void Function(String url)? navigate})
     : _navigate = navigate ?? _assign;
 
@@ -37,98 +43,102 @@ class BrowserAccountClient
   final void Function(String url) _navigate;
 
   @override
+  String get leaseMode => 'browser';
+
+  @override
+  bool get signInLeavesEditor => true;
+
+  /// The cookie travels by itself; writes add the session's CSRF token.
+  @override
+  Map<String, String> credentials(
+    AccountSession session, {
+    required bool mutation,
+  }) => {if (mutation) 'X-Domowik-CSRF': session.token};
+
+  /// A request before there is a session.
+  Future<HostedResponse> _anonymous(
+    String method,
+    String path, {
+    String? csrf,
+  }) => transport(
+    HostedRequest(
+      method,
+      server.api(path),
+      headers: {if (csrf != null) 'X-Domowik-CSRF': csrf},
+    ),
+  );
+
+  @override
   Future<AccountSession?> restore() async {
-    final (status, body) = await _send('GET', 'auth/session');
-    if (status == 401) return null;
-    final csrf = _field(status, body, 'csrfToken');
-    return AccountSession(token: csrf);
+    final response = await _anonymous('GET', 'auth/session');
+    if (response.status == 401) return null;
+    return AccountSession(token: _field(response, 'csrfToken'));
   }
 
   @override
   Future<AccountSession?> signIn() async {
-    final (status, body) = await _send('POST', 'auth/sign-in', csrf: '1');
+    final response = await _anonymous('POST', 'auth/sign-in', csrf: '1');
     // The page leaves (unless an unsaved-changes prompt keeps it); the
     // session is restored when the editor loads again.
-    _navigate(_field(status, body, 'authorizationUrl'));
+    _navigate(_field(response, 'authorizationUrl'));
     return null;
   }
 
   @override
-  Future<void> signOut(AccountSession session) async {
-    final (status, body) = await _send(
-      'POST',
-      'auth/logout',
-      csrf: session.token,
-    );
-    if (status != 204) throw _refused(status, body);
-  }
+  Future<void> signOut(AccountSession session) =>
+      requestNoContent(session, 'POST', 'auth/logout');
 
   @override
   Future<AccountProfile> profile(AccountSession session) async {
-    final plans = _get('plans')..ignore();
-    final me = await _get('auth/me');
+    final plans = requestJson(session, 'GET', 'plans')..ignore();
+    final me = await requestJson(session, 'GET', 'auth/me');
     return AccountProfile.fromJson(me, await plans);
-  }
-
-  @override
-  Future<List<HostedPlan>> listPlans(AccountSession session) async {
-    final (status, body) = await _send('GET', 'plans');
-    if (status < 200 || status > 299) throw _refused(status, body);
-    final decoded = _json(body);
-    if (decoded is! List) {
-      throw const AccountException('The server sent an unexpected plan list');
-    }
-    return [for (final item in decoded) _plan(item)];
   }
 
   @override
   Future<PlannerPropertyOverview> propertyOverview(
     AccountSession session, {
     String? propertyHint,
-  }) async {
-    final (status, body) = await _send(
+  }) async => PlannerPropertyOverview.fromJson(
+    await requestJson(
+      session,
       'GET',
       'homehero/property',
       query: propertyHint == null ? null : {'propertyId': propertyHint},
-    );
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return PlannerPropertyOverview.fromJson(_json(body));
-  }
+    ),
+  );
 
   @override
   Future<PlannerPlanContext> planPropertyContext(
     AccountSession session,
     String planId,
-  ) async {
-    final (status, body) = await _send('GET', '${_planPath(planId)}/property');
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return PlannerPlanContext.fromJson(_json(body));
-  }
+  ) async => PlannerPlanContext.fromJson(
+    await requestJson(
+      session,
+      'GET',
+      '${HostedPlanProtocol.planPath(planId)}/property',
+    ),
+  );
 
   @override
   Future<void> linkPlanProperty(
     AccountSession session,
     String planId,
     String propertyId,
-  ) async {
-    final (status, body) = await _send(
-      'PUT',
-      '${_planPath(planId)}/property',
-      csrf: session.token,
-      jsonBody: {'propertyId': propertyId},
-    );
-    if (status != 204) throw _refused(status, body);
-  }
+  ) => requestNoContent(
+    session,
+    'PUT',
+    '${HostedPlanProtocol.planPath(planId)}/property',
+    json: {'propertyId': propertyId},
+  );
 
   @override
-  Future<void> unlinkPlanProperty(AccountSession session, String planId) async {
-    final (status, body) = await _send(
-      'DELETE',
-      '${_planPath(planId)}/property',
-      csrf: session.token,
-    );
-    if (status != 204) throw _refused(status, body);
-  }
+  Future<void> unlinkPlanProperty(AccountSession session, String planId) =>
+      requestNoContent(
+        session,
+        'DELETE',
+        '${HostedPlanProtocol.planPath(planId)}/property',
+      );
 
   @override
   Future<void> linkRoomLocation(
@@ -136,43 +146,32 @@ class BrowserAccountClient
     String planId,
     String roomId,
     String locationId,
-  ) async {
-    final (status, body) = await _send(
-      'PUT',
-      '${_planPath(planId)}/rooms/${Uri.encodeComponent(roomId)}/location',
-      csrf: session.token,
-      jsonBody: {'locationId': locationId},
-    );
-    if (status != 204) throw _refused(status, body);
-  }
+  ) => requestNoContent(
+    session,
+    'PUT',
+    '${_roomPath(planId, roomId)}/location',
+    json: {'locationId': locationId},
+  );
 
   @override
   Future<void> unlinkRoomLocation(
     AccountSession session,
     String planId,
     String roomId,
-  ) async {
-    final (status, body) = await _send(
-      'DELETE',
-      '${_planPath(planId)}/rooms/${Uri.encodeComponent(roomId)}/location',
-      csrf: session.token,
-    );
-    if (status != 204) throw _refused(status, body);
-  }
+  ) => requestNoContent(
+    session,
+    'DELETE',
+    '${_roomPath(planId, roomId)}/location',
+  );
 
   @override
   Future<PlannerRoomInventory> roomInventory(
     AccountSession session,
     String planId,
     String roomId,
-  ) async {
-    final (status, body) = await _send(
-      'GET',
-      '${_planPath(planId)}/rooms/${Uri.encodeComponent(roomId)}/inventory',
-    );
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return PlannerRoomInventory.fromJson(_json(body));
-  }
+  ) async => PlannerRoomInventory.fromJson(
+    await requestJson(session, 'GET', '${_roomPath(planId, roomId)}/inventory'),
+  );
 
   @override
   Future<bool> openItemUri(Uri uri) async {
@@ -182,257 +181,42 @@ class BrowserAccountClient
     return true;
   }
 
+  static String _roomPath(String planId, String roomId) =>
+      '${HostedPlanProtocol.planPath(planId)}/rooms/${Uri.encodeComponent(roomId)}';
+
+  /// Same-origin `fetch`: the cookie is sent and redirects are refused.
   @override
-  Future<HostedPlan> createPlan(AccountSession session, String title) async {
-    final (status, body) = await _send(
-      'POST',
-      'plans',
-      csrf: session.token,
-      jsonBody: {'title': title},
-    );
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return _plan(_json(body));
-  }
-
-  @override
-  Future<HostedPlan> importPlan(
-    AccountSession session,
-    String title,
-    Uint8List bytes,
-  ) async {
-    final (status, body) = await _send(
-      'POST',
-      'plans/import',
-      query: {'title': title},
-      csrf: session.token,
-      binaryBody: bytes,
-    );
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return _plan(_json(body));
-  }
-
-  @override
-  Future<HostedPlanLease> acquireLease(
-    AccountSession session,
-    String planId, {
-    bool force = false,
-  }) async {
-    final (status, body) = await _send(
-      'POST',
-      '${_planPath(planId)}/lease',
-      csrf: session.token,
-      jsonBody: {'mode': 'browser', if (force) 'force': true},
-    );
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return _lease(_json(body));
-  }
-
-  @override
-  Future<HostedPlanLease> renewLease(
-    AccountSession session,
-    String planId,
-    String leaseId,
-  ) async {
-    final (status, body) = await _send(
-      'POST',
-      '${_planPath(planId)}/lease/renew',
-      csrf: session.token,
-      jsonBody: {'leaseId': leaseId},
-    );
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return _lease(_json(body));
-  }
-
-  @override
-  Future<void> releaseLease(
-    AccountSession session,
-    String planId,
-    String leaseId,
-  ) async {
-    final (status, body) = await _send(
-      'POST',
-      '${_planPath(planId)}/lease/release',
-      csrf: session.token,
-      jsonBody: {'leaseId': leaseId},
-    );
-    if (status != 204) throw _refused(status, body);
-  }
-
-  @override
-  Future<HostedPlanDownload> downloadPlan(
-    AccountSession session,
-    String planId,
-  ) async {
-    final response = await _response('GET', '${_planPath(planId)}/download');
-    if (response.status < 200 || response.status > 299) {
-      throw _refused(response.status, (await response.text().toDart).toDart);
-    }
-    final revision = response.headers.get('x-domowik-revision');
-    if (revision == null || revision.isEmpty) {
-      throw const AccountException(
-        'The server did not identify the downloaded revision',
-      );
-    }
-    final bytes = (await response.arrayBuffer().toDart).toDart.asUint8List();
-    return HostedPlanDownload(bytes: bytes, revision: revision);
-  }
-
-  @override
-  Future<HostedPlan> savePlanContent(
-    AccountSession session,
-    String planId,
-    String leaseId,
-    String expectedRevision,
-    Uint8List bytes,
-  ) async {
-    final (status, body) = await _send(
-      'PUT',
-      '${_planPath(planId)}/content',
-      csrf: session.token,
-      binaryBody: bytes,
-      extraHeaders: {
-        'X-Domowik-Lease': leaseId,
-        'If-Match': '"$expectedRevision"',
-      },
-    );
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return _plan(_json(body));
-  }
-
-  /// The decoded JSON answer of a read, which needs no CSRF token.
-  Future<Object?> _get(String path) async {
-    final (status, body) = await _send('GET', path);
-    if (status < 200 || status > 299) throw _refused(status, body);
-    return _json(body);
-  }
-
-  Future<(int, String)> _send(
-    String method,
-    String path, {
-    String? csrf,
-    Map<String, String>? query,
-    Map<String, Object?>? jsonBody,
-    Uint8List? binaryBody,
-    Map<String, String> extraHeaders = const {},
-  }) async {
+  Future<HostedResponse> transport(HostedRequest request) async {
     try {
-      final response = await _response(
-        method,
-        path,
-        csrf: csrf,
-        query: query,
-        jsonBody: jsonBody,
-        binaryBody: binaryBody,
-        extraHeaders: extraHeaders,
-      );
-      return (response.status, (await response.text().toDart).toDart);
-    } catch (_) {
-      throw AccountException('Could not reach ${server.origin}');
-    }
-  }
-
-  Future<_Response> _response(
-    String method,
-    String path, {
-    String? csrf,
-    Map<String, String>? query,
-    Map<String, Object?>? jsonBody,
-    Uint8List? binaryBody,
-    Map<String, String> extraHeaders = const {},
-  }) async {
-    try {
-      final headers = <String, String>{
-        if (csrf != null) 'X-Domowik-CSRF': csrf,
-        ...extraHeaders,
-        if (jsonBody != null) 'Content-Type': 'application/json',
-        if (binaryBody != null) 'Content-Type': 'application/octet-stream',
-      };
-      final body = jsonBody != null
-          ? jsonEncode(jsonBody).toJS
-          : binaryBody?.toJS;
-      return await _fetch(
-        server.api(path, query).toString(),
+      final body = request.text?.toJS ?? request.bytes?.toJS;
+      final response = await _fetch(
+        request.url.toString(),
         _Init(
-          method: method,
+          method: request.method,
           credentials: 'same-origin',
           redirect: 'error',
-          headers: headers.jsify()! as JSObject,
+          headers: request.headers.jsify()! as JSObject,
           body: body,
         ),
       ).toDart;
+      final bytes = (await response.arrayBuffer().toDart).toDart.asUint8List();
+      final headers = response.headers;
+      return HostedResponse(
+        response.status,
+        bytes,
+        (name) => headers.get(name),
+      );
     } catch (_) {
       throw AccountException('Could not reach ${server.origin}');
     }
   }
 
-  static String _planPath(String id) => 'plans/${Uri.encodeComponent(id)}';
-
-  static HostedPlan _plan(Object? value) {
-    if (value is! Map ||
-        value['id'] is! String ||
-        value['title'] is! String ||
-        value['updatedAtEpoch'] is! int) {
-      throw const AccountException('The server sent an unexpected plan');
-    }
-    final revision = value['revision'];
-    return HostedPlan(
-      id: value['id'] as String,
-      title: value['title'] as String,
-      revision: revision is String ? revision : '',
-      updatedAt: DateTime.fromMillisecondsSinceEpoch(
-        (value['updatedAtEpoch'] as int) * 1000,
-      ),
-    );
-  }
-
-  static HostedPlanLease _lease(Object? value) {
-    if (value is! Map ||
-        value['leaseId'] is! String ||
-        value['revision'] is! String) {
-      throw const AccountException('The server sent an unexpected lease');
-    }
-    return HostedPlanLease(
-      leaseId: value['leaseId'] as String,
-      revision: value['revision'] as String,
-      mode: value['mode'] is String ? value['mode'] as String : 'browser',
-      expiresInSeconds: value['expiresInSeconds'] is int
-          ? value['expiresInSeconds'] as int
-          : null,
-    );
-  }
-
-  static Object? _json(String body) {
-    try {
-      return jsonDecode(body);
-    } on FormatException {
-      return null;
-    }
-  }
-
-  static String _field(int status, String body, String name) {
-    final decoded = _json(body);
-    if (status >= 200 &&
-        status < 300 &&
-        decoded is Map &&
-        decoded[name] is String) {
+  static String _field(HostedResponse response, String name) {
+    final decoded = response.json;
+    if (response.ok && decoded is Map && decoded[name] is String) {
       return decoded[name] as String;
     }
-    throw _refused(status, body);
-  }
-
-  static AccountException _refused(int status, String body) {
-    final decoded = _json(body);
-    final message = decoded is Map && decoded['message'] is String
-        ? decoded['message'] as String
-        : 'no details';
-    final code = decoded is Map && decoded['code'] is String
-        ? decoded['code'] as String
-        : null;
-    return AccountException(
-      'The server refused ($status): $message',
-      statusCode: status,
-      code: code,
-    );
+    throw response.refused();
   }
 }
 
@@ -453,7 +237,6 @@ extension type _Init._(JSObject _) implements JSObject {
 
 extension type _Response(JSObject _) implements JSObject {
   external int get status;
-  external JSPromise<JSString> text();
   external _Headers get headers;
   external JSPromise<JSArrayBuffer> arrayBuffer();
 }

@@ -80,6 +80,9 @@ class _AccountButtonState extends State<AccountButton> {
       if (mounted) {
         setState(() => _session = signedIn);
         widget.onSessionChanged?.call(signedIn);
+      } else if (signedIn != null) {
+        // The server changed while signing in: nobody holds this session.
+        widget.client.signOut(signedIn).ignore();
       }
     } on AccountException catch (error) {
       _report(error);

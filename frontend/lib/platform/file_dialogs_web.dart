@@ -1,8 +1,14 @@
+import 'dart:typed_data';
+
 import '../file_workflows.dart';
 import '../plan_session.dart';
 import 'browser_files.dart';
 
 FileDialogs defaultFileDialogs() => const BrowserFileDialogs();
+
+/// Browsers write through downloads ([PlanByteTarget]), never to a path.
+Future<void> writePlanCopy(String path, Uint8List bytes) =>
+    throw UnsupportedError('A browser cannot write to a file path');
 
 /// Plan pickers for a browser tab. Opening reads the picked file's bytes;
 /// saving writes encoded bytes to a chosen file or downloads them. A tab

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:domowik_editor/account.dart';
 import 'package:domowik_editor/platform/account_native.dart';
@@ -217,4 +218,267 @@ void main() {
       );
     });
   }
+
+  test('the desktop server: override, then preference, then the default', () {
+    expect(effectiveServerUrl(), defaultServerUrl);
+    expect(defaultServerUrl, 'https://planner.homehero.pro');
+    expect(effectiveServerUrl(saved: ''), '');
+    expect(effectiveServerUrl(saved: 'https://a.example'), 'https://a.example');
+    expect(
+      effectiveServerUrl(override: '', saved: 'https://a.example'),
+      '',
+      reason: 'an empty override turns accounts off',
+    );
+    expect(
+      effectiveServerUrl(override: ' https://b.example ', saved: ''),
+      'https://b.example',
+    );
+    expect(
+      ServerEndpoint('https://Planner.Example/').canonical,
+      ServerEndpoint('https://planner.example').canonical,
+    );
+  });
+
+  test(
+    'the desktop client follows the preference and makes no request',
+    () {
+      expect(createAccountClient(savedServerUrl: ''), isNull);
+      expect(createAccountClient(savedServerUrl: 'ftp://nope'), isNull);
+      final client = createAccountClient(
+        savedServerUrl: 'https://planner.example',
+      )!;
+      expect(client.server.canonical, 'https://planner.example');
+      expect(client.signInLeavesEditor, isFalse);
+      expect(
+        createAccountClient()!.server.canonical,
+        'https://planner.homehero.pro',
+      );
+    },
+    skip: Platform.environment.containsKey(serverUrlSetting)
+        ? '$serverUrlSetting overrides the preference here'
+        : false,
+  );
+
+  group('desktop plan requests', () {
+    late RecordingServer server;
+    late NativeAccountClient client;
+    const session = AccountSession(token: 'dmk_secret', tokenId: 't1');
+    var status = 200;
+    var answer = '';
+    Map<String, String> headers = {};
+    List<int>? bytes;
+
+    setUp(() async {
+      status = 200;
+      answer = '';
+      headers = {};
+      bytes = null;
+      server = RecordingServer((request, response) async {
+        response.statusCode = status;
+        headers.forEach(response.headers.set);
+        if (bytes != null) {
+          response.add(bytes!);
+        } else {
+          response.write(answer);
+        }
+      });
+      await server.start();
+      client = NativeAccountClient(ServerEndpoint(server.origin.toString()));
+    });
+    tearDown(() => server.stop());
+
+    test('authenticate with the token alone and take api leases', () async {
+      answer = '{"leaseId":"l1","revision":"7","expiresInSeconds":90}';
+      final lease = await client.acquireLease(session, 'p 1');
+      expect(lease.leaseId, 'l1');
+      expect(lease.revision, '7');
+      expect(lease.mode, 'api');
+      final sent = server.received.single;
+      expect(sent.method, 'POST');
+      expect(sent.path, '/api/v1/plans/p%201/lease');
+      expect(sent.headers.value('authorization'), 'Bearer dmk_secret');
+      expect(sent.headers.value('x-domowik-csrf'), isNull);
+      expect(sent.headers.value('cookie'), isNull);
+      expect(sent.headers.value('origin'), isNull);
+      expect(sent.headers.contentType?.mimeType, 'application/json');
+      expect(jsonDecode(utf8.decode(sent.body)), {'mode': 'api'});
+    });
+
+    test('upload, download and save keep revisions exact', () async {
+      final package = Uint8List.fromList([1, 2, 3, 0, 255]);
+      answer = _plan;
+      final imported = await client.importPlan(session, 'My flat', package);
+      expect(imported.id, 'p1');
+      expect(imported.revision, '7');
+      final upload = server.received.last;
+      expect(upload.path, '/api/v1/plans/import');
+      expect(upload.query, {'title': 'My flat'});
+      expect(upload.headers.contentType?.mimeType, 'application/octet-stream');
+      expect(upload.body, package);
+
+      bytes = package;
+      headers = {'x-domowik-revision': '7'};
+      final download = await client.downloadPlan(session, 'p1');
+      expect(download.bytes, package);
+      expect(download.revision, '7');
+
+      bytes = null;
+      headers = {};
+      answer = _plan.replaceFirst('"7"', '"8"');
+      final saved = await client.savePlanContent(
+        session,
+        'p1',
+        'l1',
+        '7',
+        package,
+      );
+      expect(saved.revision, '8');
+      final save = server.received.last;
+      expect(save.method, 'PUT');
+      expect(save.path, '/api/v1/plans/p1/content');
+      expect(save.headers.value('x-domowik-lease'), 'l1');
+      expect(save.headers.value('if-match'), '"7"');
+      expect(save.body, package);
+
+      status = 204;
+      answer = '';
+      await client.releaseLease(session, 'p1', 'l1');
+      expect(jsonDecode(utf8.decode(server.received.last.body)), {
+        'leaseId': 'l1',
+      });
+    });
+
+    test('a download without its revision is refused', () async {
+      bytes = [1, 2, 3];
+      await expectLater(
+        client.downloadPlan(session, 'p1'),
+        throwsA(isA<AccountException>()),
+      );
+    });
+
+    test('refusals keep the status and error code', () async {
+      status = 409;
+      answer = '{"code":"revision-conflict","message":"changed"}';
+      await expectLater(
+        client.savePlanContent(session, 'p1', 'l1', '7', Uint8List(1)),
+        throwsA(
+          isA<AccountException>()
+              .having((e) => e.statusCode, 'status', 409)
+              .having((e) => e.code, 'code', 'revision-conflict'),
+        ),
+      );
+      status = 409;
+      answer = '{"code":"lease-held","message":"held"}';
+      await expectLater(
+        client.acquireLease(session, 'p1'),
+        throwsA(
+          isA<AccountException>().having((e) => e.code, 'code', 'lease-held'),
+        ),
+      );
+    });
+
+    test('redirects are refused, not followed', () async {
+      status = 302;
+      headers = {'location': '${server.origin}/elsewhere'};
+      await expectLater(
+        client.listPlans(session),
+        throwsA(
+          isA<AccountException>().having((e) => e.statusCode, 'status', 302),
+        ),
+      );
+      expect(server.received, hasLength(1));
+    });
+
+    test('an oversized answer is refused', () async {
+      bytes = Uint8List(NativeAccountClient.maxResponseBytes + 1);
+      await expectLater(
+        client.listPlans(session),
+        throwsA(
+          isA<AccountException>().having(
+            (e) => e.message,
+            'message',
+            contains('too large'),
+          ),
+        ),
+      );
+    });
+
+    test('a slow answer times out', () async {
+      final stalled = RecordingServer((request, response) async {
+        await Future<void>.delayed(const Duration(seconds: 2));
+      });
+      await stalled.start();
+      addTearDown(stalled.stop);
+      await expectLater(
+        NativeAccountClient(
+          ServerEndpoint(stalled.origin.toString()),
+          responseTimeout: const Duration(milliseconds: 200),
+        ).listPlans(session),
+        throwsA(
+          isA<AccountException>().having(
+            (e) => e.message,
+            'message',
+            contains('did not answer'),
+          ),
+        ),
+      );
+    });
+
+    test('signing out an expired token still signs out', () async {
+      status = 401;
+      await client.signOut(session);
+      expect(server.received.single.method, 'DELETE');
+      expect(server.received.single.path, '/api/v1/tokens/t1');
+      status = 500;
+      await expectLater(
+        client.signOut(session),
+        throwsA(isA<AccountException>()),
+      );
+    });
+  });
 }
+
+/// One request a [RecordingServer] received.
+typedef Received = ({
+  String method,
+  String path,
+  Map<String, String> query,
+  HttpHeaders headers,
+  List<int> body,
+});
+
+/// A server that records each request and answers with [reply].
+class RecordingServer {
+  RecordingServer(this.reply);
+
+  final Future<void> Function(Received request, HttpResponse response) reply;
+  final received = <Received>[];
+  late final HttpServer _server;
+
+  Uri get origin => Uri.parse('http://127.0.0.1:${_server.port}');
+
+  Future<void> start() async {
+    _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    _server.listen((request) async {
+      final body = await request.fold<List<int>>(
+        [],
+        (all, c) => all..addAll(c),
+      );
+      final r = (
+        method: request.method,
+        path: request.uri.path,
+        query: request.uri.queryParameters,
+        headers: request.headers,
+        body: body,
+      );
+      received.add(r);
+      await reply(r, request.response);
+      await request.response.close();
+    });
+  }
+
+  Future<void> stop() => _server.close(force: true);
+}
+
+const _plan =
+    '{"id":"p1","title":"Flat","revision":"7","updatedAtEpoch":1793059200}';

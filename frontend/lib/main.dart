@@ -181,6 +181,7 @@ class PlanPage extends StatefulWidget {
     this.catalogClient,
     this.accountClient,
     this.graphicsPolicy,
+    this.accountClients,
   });
 
   /// Tests load the real native library directly; bundles use
@@ -211,12 +212,18 @@ class PlanPage extends StatefulWidget {
   /// supplied client; it must not be shared with another page.
   final CatalogClient? catalogClient;
 
-  /// Optional account transport, primarily for lifecycle tests. The hosted
-  /// UI appears only when this client also supports browser plan operations.
+  /// A fixed account transport, primarily for lifecycle tests. The hosted
+  /// UI appears only when this client also supports plan operations.
   final AccountClient? accountClient;
 
   /// Browser safety defaults to the host policy; tests may inject a policy.
   final WebGraphicsPolicy? graphicsPolicy;
+
+  /// Creates the account client for a saved desktop Server preference, so
+  /// tests can exercise changing servers without a real one. Hosts that load
+  /// the platform core default to [createAccountClient]; custom core hosts
+  /// (including tests) get no client unless they supply one.
+  final AccountClient? Function(String? savedServerUrl)? accountClients;
 
   @override
   State<PlanPage> createState() => _PlanPageState();
@@ -232,10 +239,12 @@ class _PlanPageState extends State<PlanPage>
       widget.catalogClient ??
       (widget.bridgeLoader == null ? createCatalogClient() : null);
 
-  /// Signing in to a server, when `DOMOWIK_SERVER_URL` configures one;
-  /// otherwise the editor is anonymous and local.
-  late final AccountClient? _accountClient =
-      widget.accountClient ?? createAccountClient();
+  /// Signing in to a server: an injected client, or the one the Server
+  /// preference (desktop) or the page (browser) names once preferences
+  /// load. Null keeps the editor anonymous and local. A server change
+  /// replaces it and bumps [_accountClientGeneration].
+  late AccountClient? _accountClient = widget.accountClient;
+  int _accountClientGeneration = 0;
   AccountSession? _accountSession;
   final ValueNotifier<int> _propertyContextChanges = ValueNotifier(0);
   final ValueNotifier<int> _accountSessionChanges = ValueNotifier(0);
@@ -470,16 +479,21 @@ class _PlanPageState extends State<PlanPage>
     _configReady = _userConfig
         .load()
         .then((_) {
-          if (mounted) setState(() {});
+          if (mounted) {
+            setState(() => _accountClient ??= _createAccountClient());
+          }
         })
         .catchError((Object error) {
           if (mounted)
-            setState(
-              () => _setStatus(
+            setState(() {
+              // An unreadable preference turns accounts off unless
+              // DOMOWIK_SERVER_URL names a server.
+              _accountClient ??= _createAccountClient(saved: '');
+              _setStatus(
                 'Could not load user configuration: $error',
                 isError: true,
-              ),
-            );
+              );
+            });
         });
     WidgetsBinding.instance.addObserver(this);
     _modifierMask = _readModifierMask();
@@ -491,6 +505,13 @@ class _PlanPageState extends State<PlanPage>
       () => _fileWorkflow.run(() async {
         if (!await _fileWorkflow.confirmLeaving()) return false;
         await _userConfig.flush();
+        // Lets the next run reopen the online plan at once; the server's
+        // lease expiry covers a release that cannot be confirmed.
+        try {
+          await _hostedWorkflow?.release();
+        } on Object {
+          // Closing never waits on the server beyond the release's bound.
+        }
         return true;
       }),
     );
@@ -1317,6 +1338,7 @@ class _PlanPageState extends State<PlanPage>
       final key = _planPreferencesKey;
       final previous = _userConfig.viewModeFor(key);
       final remembered = _userConfig.rememberedViewModes.containsKey(key);
+      final server = _effectiveServer();
       final saved = await showDialog<bool>(
         context: context,
         barrierDismissible: false,
@@ -1325,9 +1347,18 @@ class _PlanPageState extends State<PlanPage>
           documentKey: key,
           layoutName: _filePath?.split('/').last,
           currentViewMode: _viewMode,
+          showServer: _serverConfigurable,
+          serverOverride: serverUrlOverride(),
+          // Unsaved online work is settled while its server is still in use.
+          beforeServerChange: () async =>
+              _hostedPlan == null || await _fileWorkflow.confirmLeaving(),
         ),
       );
       if (!mounted || saved != true) return false;
+      if (_serverConfigurable && _effectiveServer() != server) {
+        await _switchServer();
+        if (!mounted) return false;
+      }
       setState(() {
         final next = _userConfig.viewModeFor(key);
         // An unrelated preference must not reset a temporary view choice.
@@ -2956,7 +2987,8 @@ class _PlanPageState extends State<PlanPage>
         title: const Text('Save your changes?'),
         content: Text(
           hosted
-              ? 'Save this online plan before leaving, download a copy, or leave without saving.'
+              ? 'Save this online plan before leaving, '
+                    '${_copiesAreFiles ? 'save' : 'download'} a copy, or leave without saving.'
               : 'Save this plan before leaving, or leave without saving.',
         ),
         actions: [
@@ -2973,7 +3005,7 @@ class _PlanPageState extends State<PlanPage>
             OutlinedButton(
               key: const ValueKey('leave-download-copy'),
               onPressed: () => Navigator.pop(context, LeaveDecision.saveCopy),
-              child: const Text('Download a copy'),
+              child: Text(_copiesAreFiles ? 'Save a copy…' : 'Download a copy'),
             ),
           FilledButton(
             onPressed: () => Navigator.pop(context, LeaveDecision.save),
@@ -3065,6 +3097,65 @@ class _PlanPageState extends State<PlanPage>
     }
     final detail = error is AccountException ? error.message : '$error';
     return 'The hosted action failed: $detail. Your current plan remains open.';
+  }
+
+  /// Whether this editor's server comes from the Server preference.
+  bool get _serverConfigurable =>
+      serverPreferenceAvailable &&
+      widget.accountClient == null &&
+      (widget.accountClients != null || widget.bridgeLoader == null);
+
+  /// The client for the [saved] Server preference (the stored one by
+  /// default), or null when there is none or it is not configurable here.
+  AccountClient? _createAccountClient({String? saved}) {
+    if (widget.accountClient != null) return widget.accountClient;
+    final savedUrl = saved ?? _userConfig.serverUrl;
+    if (widget.accountClients != null) return widget.accountClients!(savedUrl);
+    if (widget.bridgeLoader != null) return null;
+    return createAccountClient(savedServerUrl: savedUrl);
+  }
+
+  /// The effective server, compared to detect a change.
+  String _effectiveServer() => effectiveServerUrl(
+    override: serverUrlOverride(),
+    saved: _userConfig.serverUrl,
+  );
+
+  /// Moves to the newly saved server. The open plan stays open and is never
+  /// uploaded; its online lease is released and the old account signed out
+  /// as best-effort cleanup that cannot block the change. The new server
+  /// starts signed out.
+  Future<void> _switchServer() async {
+    final oldClient = _accountClient;
+    final oldSession = _accountSession;
+    await _detachHosted();
+    if (!mounted) return;
+    _accountSessionChanges.value++;
+    setState(() {
+      _accountClientGeneration++;
+      _accountClient = _createAccountClient();
+      _accountSession = null;
+      _setStatus(
+        _accountClient == null
+            ? 'online plans are off; plans are kept on this device'
+            : 'server changed to ${_accountClient!.server.origin.host}',
+        isError: false,
+      );
+    });
+    if (oldClient == null || oldSession == null) return;
+    try {
+      await oldClient.signOut(oldSession).timeout(const Duration(seconds: 5));
+    } on Object {
+      if (mounted) {
+        setState(
+          () => _setStatus(
+            'server changed, but the previous server could not confirm '
+            'sign-out; that sign-in expires on its own',
+            isError: true,
+          ),
+        );
+      }
+    }
   }
 
   void _accountSessionChanged(AccountSession? session) {
@@ -3260,6 +3351,8 @@ class _PlanPageState extends State<PlanPage>
         }
         return false;
       }
+      // The title names the online plan, never a local file to write.
+      session.detachFile(plan.title);
       setState(() {
         _resetForPlanReplacement();
         _hostedPlan = plan;
@@ -3451,31 +3544,37 @@ class _PlanPageState extends State<PlanPage>
     }
   }
 
-  /// Writes the current authoritative encoding to a browser download without
-  /// marking its Rust revision saved or binding it as the hosted plan's target.
+  /// Whether copies are files on disk rather than browser downloads.
+  bool get _copiesAreFiles => _bridge?.supportsPaths ?? false;
+
+  /// Writes the current authoritative encoding to a file or browser download
+  /// without marking its Rust revision saved or binding it as the hosted
+  /// plan's target.
   Future<bool> _saveLocalRecoveryCopy() async {
     final session = _session;
     if (_hostedPlan == null || session == null || _handle == 0) return false;
     final target = await _fileDialogs.savePlan('${_hostedPlan!.title}.domo');
     if (target == null || !mounted) return false;
-    if (target is! PlanByteTarget) {
-      setState(
-        () => _setStatus(
-          'downloading a copy is unavailable on this host',
-          isError: true,
-        ),
-      );
-      return false;
-    }
+    final verb = target is PlanPathTarget ? 'save' : 'download';
     try {
       final snapshot = session.captureForSave();
-      final stored = await target.write(snapshot.bytes);
+      final bool stored;
+      final String name;
+      switch (target) {
+        case PlanPathTarget(:final path):
+          await writePlanCopy(path, snapshot.bytes);
+          stored = true;
+          name = path;
+        case PlanByteTarget():
+          stored = await target.write(snapshot.bytes);
+          name = target.name;
+      }
       if (!mounted) return stored;
       setState(
         () => _setStatus(
           stored
-              ? 'downloaded a copy to ${target.name}; the online plan is ${_dirty ? 'not saved yet' : 'saved'}'
-              : 'downloaded ${target.name}, but this browser cannot confirm it was kept',
+              ? '${verb}ed a copy to $name; the online plan is ${_dirty ? 'not saved yet' : 'saved'}'
+              : 'downloaded $name, but this browser cannot confirm it was kept',
           isError: false,
         ),
       );
@@ -3483,7 +3582,7 @@ class _PlanPageState extends State<PlanPage>
     } on Object catch (error) {
       if (mounted) {
         setState(
-          () => _setStatus('could not download a copy: $error', isError: true),
+          () => _setStatus('could not $verb a copy: $error', isError: true),
         );
       }
       return false;
@@ -3833,6 +3932,7 @@ class _PlanPageState extends State<PlanPage>
 
   @override
   Widget build(BuildContext context) {
+    final accountClient = _accountClient;
     final error = _loadError;
     if (error != null) {
       return Scaffold(
@@ -3889,17 +3989,23 @@ class _PlanPageState extends State<PlanPage>
         onSaveAs: _requestSaveAsFile,
         saveAsLabel: _hostedPlan == null
             ? 'Save as…'
+            : _copiesAreFiles
+            ? 'Save a copy (.domo)…'
             : 'Download a copy (.domo)',
         onSaveAsOnline: _onlineAvailable ? _requestSaveAsOnlinePlan : null,
         onExportUsdz: _fileDialogs is ExportDialogs ? _requestExportUsdz : null,
         onAssets: _openAssetLibrary,
         onPreferences: _openPreferences,
-        account: _accountClient == null
+        account: accountClient == null
             ? null
             : AccountButton(
-                client: _accountClient,
+                // A new server gets a fresh control, never the old session.
+                key: ValueKey(_accountClientGeneration),
+                client: accountClient,
                 onSessionChanged: _accountSessionChanged,
-                beforeSignIn: _beforeAccountSignIn,
+                beforeSignIn: accountClient.signInLeavesEditor
+                    ? _beforeAccountSignIn
+                    : null,
                 onSignOut: _signOutFromAccount,
               ),
         propertyPlans: _propertyPlans(),

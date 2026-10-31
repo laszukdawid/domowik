@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'account.dart' show ServerEndpoint;
 import 'measurement_units.dart';
 import 'platform/config_storage.dart';
 
@@ -54,6 +55,10 @@ class UserConfigStore {
       ? AssetLibraryView.grid
       : AssetLibraryView.list;
   String get defaultViewMode => _data['defaultViewMode'] as String? ?? '2d';
+
+  /// The desktop Server preference: null when never set (the default
+  /// server), empty when turned off, otherwise a server origin.
+  String? get serverUrl => _data['serverUrl'] as String?;
 
   /// Presence opts a layout into remembering subsequent view-mode choices.
   /// Keys use the same document identity / legacy-file fallback as floors.
@@ -117,6 +122,9 @@ class UserConfigStore {
           split != 'vertical' &&
           split != 'horizontal') {
         throw const FormatException('Invalid split orientation');
+      }
+      if (data.containsKey('serverUrl') && data['serverUrl'] is! String) {
+        throw const FormatException('Invalid server URL');
       }
       if (data.containsKey('defaultViewMode') &&
           !planViewModes.containsKey(data['defaultViewMode'])) {
@@ -197,22 +205,28 @@ class UserConfigStore {
   /// Save the dialog's choices atomically; failed persistence applies none.
   /// Omitting [documentKey] preserves layout overrides. Providing a key sets
   /// its [rememberedViewMode], or clears its override when the mode is null.
+  /// A non-null [serverUrl] sets the Server preference: empty turns it off,
+  /// anything else must be a valid server and is stored as its origin.
   Future<void> savePreferences({
     required SplitOrientation splitOrientation,
     required UnitSystem unitSystem,
     String? defaultViewMode,
     String? documentKey,
     String? rememberedViewMode,
+    String? serverUrl,
   }) => _save(() {
     if (defaultViewMode != null &&
         !planViewModes.containsKey(defaultViewMode)) {
       throw const FormatException('Invalid default view mode');
     }
+    final server = serverUrl?.trim();
     final data = {
       ..._data,
       'splitOrientation': splitOrientation.name,
       'unitSystem': unitSystem.name,
       if (defaultViewMode != null) 'defaultViewMode': defaultViewMode,
+      if (server != null)
+        'serverUrl': server.isEmpty ? '' : ServerEndpoint(server).canonical,
     };
     return documentKey == null || documentKey.isEmpty
         ? data

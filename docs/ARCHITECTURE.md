@@ -176,6 +176,10 @@ CLI do share document and geometry behavior.
   validation. It remains independent of UI frameworks and network services.
 - **Editor:** interaction, dialogs, preferences and presentation. It does not
   own authoritative plan geometry or file-format rules.
+- **Hosted plan client:** one editor protocol serves both hosts: the browser
+  authenticates with the service's same-origin cookie and CSRF token, the
+  desktop with an in-memory API token from loopback sign-in. The service
+  stores package bytes; the core alone encodes and opens them.
 - **HomeHero property adapter:** the browser uses the existing hosted account
   session to call the hosted service. That service resolves the stored linked
   HomeHero identity and rechecks owner access; plan-room mappings and inventory

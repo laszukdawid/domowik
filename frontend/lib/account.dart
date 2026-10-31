@@ -11,7 +11,18 @@ import 'sha256.dart';
 /// routes it serves (`/api/v1/auth/desktop` and `/api/v1/auth/desktop/token`,
 /// and `/api/v1/auth/me` and `/api/v1/plans` for the account menu), never how
 /// the server signs people in.
+///
+/// On the desktop this environment variable or build define overrides the
+/// Server preference; an empty value turns accounts off.
 const serverUrlSetting = 'DOMOWIK_SERVER_URL';
+
+/// The desktop app's server when the preference was never set.
+const defaultServerUrl = 'https://planner.homehero.pro';
+
+/// The desktop app's server URL: an [override] wins, then the [saved]
+/// preference, then [defaultServerUrl]. Empty means no server.
+String effectiveServerUrl({String? override, String? saved}) =>
+    (override ?? saved ?? defaultServerUrl).trim();
 
 /// The configured server: an HTTPS origin, or plain HTTP on loopback for local
 /// development. No path, query, fragment or credentials.
@@ -34,6 +45,9 @@ class ServerEndpoint {
 
   final Uri origin;
 
+  /// `scheme://host[:port]`, so equivalent spellings compare equal.
+  String get canonical => origin.origin;
+
   Uri api(String path, [Map<String, String>? query]) =>
       origin.replace(path: '/api/v1/$path', queryParameters: query);
 }
@@ -52,7 +66,7 @@ String s256(String verifier) =>
     base64Url.encode(sha256(ascii.encode(verifier))).replaceAll('=', '');
 
 /// A signed-in account. Desktop: an API token and its id, kept in memory for
-/// this run of the app only. Browser: the session's CSRF token (the session
+/// this run of the app only and never written to disk. Browser: the session's CSRF token (the session
 /// itself is an HttpOnly cookie) and no id.
 class AccountSession {
   const AccountSession({required this.token, this.tokenId = ''});
@@ -79,7 +93,7 @@ class HostedPlan {
   final DateTime updatedAt;
 }
 
-/// A hosted browser writer lease. [revision] is the checkout revision and is
+/// A hosted writer lease. [revision] is the checkout revision and is
 /// deliberately kept as a string for exact `If-Match` round trips.
 class HostedPlanLease {
   const HostedPlanLease({
@@ -102,8 +116,8 @@ class HostedPlanDownload {
   final String revision;
 }
 
-/// Optional browser-only plan operations. Kept separate from [AccountClient]
-/// so existing native clients and account-only integrations remain compatible.
+/// Optional plan operations. Kept separate from [AccountClient] so
+/// account-only integrations remain compatible.
 abstract interface class HostedPlanClient {
   Future<List<HostedPlan>> listPlans(AccountSession session);
   Future<HostedPlan> createPlan(AccountSession session, String title);
@@ -194,6 +208,10 @@ class AccountException implements Exception {
 /// Signs in and out of a Domowik server.
 abstract interface class AccountClient {
   ServerEndpoint get server;
+
+  /// Whether signing in leaves the editor (a browser page navigates to the
+  /// server), so unsaved work must be settled first.
+  bool get signInLeavesEditor;
 
   /// The session already in place when the editor starts, if any.
   Future<AccountSession?> restore();

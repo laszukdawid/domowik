@@ -200,6 +200,28 @@ unselected walls and floor defaults stay unchanged. Invalid changes, including
 making a wall too short or thin for a hosted door/window, are rejected as a whole.
 **Cancel** or Escape discards the form without editing the plan.
 
+## Store plans online from the desktop
+
+Plans stay on your computer unless you choose otherwise. To also keep plans on
+the Domowik planner service, click **Sign in** in the header: your web browser
+opens the service's sign-in page, where you use your HomeHero account, then
+returns you to the editor. Your open plan and its edits stay as they were, and
+nothing is uploaded until you ask.
+
+Signed in, **New** and **Open** also offer **New online plan…** and **Open
+online plan…**, and the Save menu offers **Save as new online plan…**. Online
+plans work as in the browser (see below): **Save** saves online, and **Save a
+copy (.domo)…** writes a local copy without changing the online plan. The app
+does not remember the sign-in: each time you start it, click **Sign in**
+again. If your browser is still signed in, that takes a moment and no password.
+
+**Preferences → Server** chooses the service, `https://planner.homehero.pro`
+by default. Clear the field to turn online plans off. Changing it signs you
+out; if an online plan has unsaved changes you are first asked to save them,
+save a copy or leave them unsaved. The open plan stays open as a local,
+untitled plan. Developers can override the setting with the
+`DOMOWIK_SERVER_URL` environment variable.
+
 ## In a web browser
 
 The browser editor ([getting started](GETTING-STARTED.md#run-the-browser-editor))
