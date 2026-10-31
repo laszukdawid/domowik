@@ -254,3 +254,13 @@ No external plan, model, image or test vector was consulted or adapted. It adds
 no dependencies or third-party assets. Its two documentation screenshots show
 the actual Linux editor; export/editor fonts and platform scaffolding retain
 the project's existing notices. Capture details are in [Documentation images](images/README.md).
+
+## HomeHero property and inventory integration
+
+The browser property manager and room inventory controls implement the
+owner-approved HomeHero/Planner HTTP contract and use the editor's existing
+same-origin account session. Property, location and item IDs in focused tests
+are synthetic; no personal plan, live account, external application source,
+artwork or test vector was used. No third-party dependency, distributed asset
+or notice obligation was added. External inventory is read from the hosted
+service at request time and is not included in a Domowik plan package.

@@ -4882,3 +4882,24 @@ sign-in navigation, sign-out and close require an explicit save, confirmed
 local copy, leave-unsaved choice or cancellation. Release is attempted after
 that choice; service lease expiry remains the fallback when a release cannot
 be confirmed. Hosted offline editing and merge are not provided.
+
+### 11.5 HomeHero property plans and room inventory (owner request 2026-10-30)
+
+**Normative experimental behavior.** In the browser editor, Property plans uses
+the current hosted account session to list plans associated with the live
+HomeHero property, create and associate an alternative, explicitly link an
+owned hosted plan, open a plan through the existing writer checkout, or unlink
+the association. Unlinking leaves the hosted plan intact. A property ID in the
+page URL is only a validated lookup hint; the hosted service and HomeHero still
+authorize each request.
+
+Only a saved hosted plan and a currently associated, explicitly named room
+record can be linked to a HomeHero location. The user chooses the location by
+stable ID. Room names are labels and are never used to infer identity. A room
+with unsaved changes must be saved before it can be linked. Selecting a linked
+room fetches current read-only inventory; the service rechecks current access
+on every read. The inventory exists only in transient UI memory and is cleared
+when the account, plan, room, link or dialog context changes. Fixed HomeHero
+item detail links are validated before opening. Integration-disabled,
+unlinked, deleted, stale and restricted states are shown without changing plan
+content or inventory.

@@ -36,6 +36,7 @@ import 'account.dart';
 import 'account_button.dart';
 import 'hosted_library.dart';
 import 'hosted_workflow.dart';
+import 'property_planner.dart';
 import 'catalog.dart';
 import 'editor_fonts.dart';
 import 'editor_shell.dart';
@@ -231,6 +232,12 @@ class _PlanPageState extends State<PlanPage>
   late final AccountClient? _accountClient =
       widget.accountClient ?? createAccountClient();
   AccountSession? _accountSession;
+  final ValueNotifier<int> _propertyContextChanges = ValueNotifier(0);
+  final ValueNotifier<int> _accountSessionChanges = ValueNotifier(0);
+  int? _propertyObservedDocumentRevision;
+  String? _propertyObservedPlanId;
+  String? _propertyObservedLevelId;
+  bool? _propertyObservedDirty;
   HostedPlan? _hostedPlan;
   HostedWorkflowCoordinator? _hostedWorkflow;
   String? _hostedLibraryActionError;
@@ -1034,6 +1041,8 @@ class _PlanPageState extends State<PlanPage>
     _geometryCache.clear();
     _canvasFocus.dispose();
     _session?.dispose();
+    _propertyContextChanges.dispose();
+    _accountSessionChanges.dispose();
     super.dispose();
   }
 
@@ -2376,7 +2385,13 @@ class _PlanPageState extends State<PlanPage>
             assetState['clipboardCount'] as int? ?? _clipboardCount;
       }
       final revision = state['document_revision'] as int;
+      final dirty = state['dirty'] as bool;
       final assetRevision = state['asset_revision'] as int? ?? 0;
+      _observePropertyContext(
+        documentRevision: revision,
+        levelId: _levelId,
+        dirty: dirty,
+      );
       if (!_resetLevelView &&
           _geometryCache.session == _handle &&
           revision == _documentRevision &&
@@ -2578,6 +2593,25 @@ class _PlanPageState extends State<PlanPage>
         _outstandingBuffers = bridge.outstandingBuffers();
       });
     }
+  }
+
+  void _observePropertyContext({
+    required int documentRevision,
+    required String? levelId,
+    required bool dirty,
+  }) {
+    final planId = _hostedPlan?.id;
+    if (_propertyObservedDocumentRevision == documentRevision &&
+        _propertyObservedPlanId == planId &&
+        _propertyObservedLevelId == levelId &&
+        _propertyObservedDirty == dirty) {
+      return;
+    }
+    _propertyObservedDocumentRevision = documentRevision;
+    _propertyObservedPlanId = planId;
+    _propertyObservedLevelId = levelId;
+    _propertyObservedDirty = dirty;
+    _propertyContextChanges.value++;
   }
 
   /// Asks the CORE for the level's occupied region and rooms.
@@ -2945,6 +2979,12 @@ class _PlanPageState extends State<PlanPage>
     return null;
   }
 
+  PropertyPlannerClient? get _propertyPlannerClient {
+    final client = _accountClient;
+    if (client is PropertyPlannerClient) return client as PropertyPlannerClient;
+    return null;
+  }
+
   String _friendlyWorkflowError(Object error) {
     if (error is AccountException && error.code == 'lease-held') {
       return 'This plan is being edited in another browser or API session. '
@@ -2961,6 +3001,7 @@ class _PlanPageState extends State<PlanPage>
 
   void _accountSessionChanged(AccountSession? session) {
     if (!mounted) return;
+    _accountSessionChanges.value++;
     setState(() => _accountSession = session);
   }
 
@@ -2989,6 +3030,7 @@ class _PlanPageState extends State<PlanPage>
           return false;
         }
         if (mounted) {
+          _accountSessionChanges.value++;
           setState(() {
             _accountSession = null;
             _setStatus(
@@ -3009,14 +3051,34 @@ class _PlanPageState extends State<PlanPage>
         _hostedPlan?.title ??
         _filePath?.split('/').last.replaceAll(RegExp(r'\.domo$'), '') ??
         'Untitled plan';
-    return HostedPlanLibraryButton(
-      client: client,
-      session: _accountSession,
-      currentPlanTitle: title,
-      onOpen: _requestOpenHostedPlan,
-      onCreate: _requestCreateHostedPlan,
-      onImportCurrent: _requestImportCurrentPlan,
-      lastActionError: () => _hostedLibraryActionError,
+    final propertyClient = _propertyPlannerClient;
+    final accountSessionRevision = _accountSessionChanges.value;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        HostedPlanLibraryButton(
+          client: client,
+          session: _accountSession,
+          currentPlanTitle: title,
+          onOpen: _requestOpenHostedPlan,
+          onCreate: _requestCreateHostedPlan,
+          onImportCurrent: _requestImportCurrentPlan,
+          lastActionError: () => _hostedLibraryActionError,
+        ),
+        if (propertyClient != null)
+          PropertyPlannerManagerButton(
+            client: propertyClient,
+            planClient: client,
+            session: _accountSession,
+            propertyHint: Uri.base.queryParameters['property'],
+            isSessionCurrent: (session) =>
+                mounted &&
+                identical(_accountSession, session) &&
+                _accountSessionChanges.value == accountSessionRevision,
+            sessionChanges: _accountSessionChanges,
+            onOpen: _requestOpenHostedPlan,
+          ),
+      ],
     );
   }
 
@@ -6237,6 +6299,48 @@ class _PlanPageState extends State<PlanPage>
   /// underneath differs — a face with no record needs one created, a face with
   /// one needs it updated — and [`_nameRoom`] asks the core for the right
   /// command rather than deciding here.
+  Future<void> _openPropertyRoomInventory(
+    String roomId,
+    String roomName,
+  ) async {
+    final client = _propertyPlannerClient;
+    final session = _accountSession;
+    final planId = _hostedPlan?.id;
+    final levelId = _levelId;
+    final propertyContextRevision = _propertyContextChanges.value;
+    final accountSessionRevision = _accountSessionChanges.value;
+    if (client == null ||
+        session == null ||
+        planId == null ||
+        levelId == null) {
+      return;
+    }
+    bool isCurrent() =>
+        mounted &&
+        identical(_accountSession, session) &&
+        _accountSessionChanges.value == accountSessionRevision &&
+        _propertyContextChanges.value == propertyContextRevision &&
+        _hostedPlan?.id == planId &&
+        !_dirty &&
+        _levelId == levelId &&
+        _derived.roomRecords.any(
+          (record) => record.id == roomId && record.isAssociated,
+        );
+    await showDialog<void>(
+      context: context,
+      builder: (_) => PropertyRoomInventoryDialog(
+        client: client,
+        session: session,
+        planId: planId,
+        roomId: roomId,
+        roomName: roomName,
+        isContextCurrent: isCurrent,
+        sessionChanges: _accountSessionChanges,
+        contextChanges: _propertyContextChanges,
+      ),
+    );
+  }
+
   List<Widget> _roomPanel(ThemeData theme) {
     if (_derived.rooms.isEmpty) return const [];
     final homeless = _derived.roomRecords
@@ -6284,6 +6388,29 @@ class _PlanPageState extends State<PlanPage>
                     ? null
                     : () => _paintRoom(_derived.rooms[i]),
               ),
+              if (_propertyPlannerClient != null &&
+                  _hostedPlan != null &&
+                  _derived.rooms[i].recordId != null &&
+                  _derived.roomRecords.any(
+                    (record) =>
+                        record.id == _derived.rooms[i].recordId &&
+                        record.isAssociated &&
+                        record.name != null &&
+                        record.name!.trim().isNotEmpty,
+                  ))
+                IconButton(
+                  key: ValueKey('room-homehero-${_derived.rooms[i].recordId}'),
+                  tooltip: _dirty
+                      ? 'Save the hosted plan before linking inventory'
+                      : 'HomeHero inventory and location link',
+                  icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                  onPressed: _dirty || _accountSession == null
+                      ? null
+                      : () => _openPropertyRoomInventory(
+                          _derived.rooms[i].recordId!,
+                          _derived.rooms[i].label ?? 'Room',
+                        ),
+                ),
             ],
           ),
         ),

@@ -326,5 +326,69 @@ void main() {
         );
       },
     );
+
+    test(
+      'property reads and explicit links stay on the account session origin',
+      () async {
+        final client = BrowserAccountClient(server);
+        const account = AccountSession(token: 'session-csrf');
+        final overviewRequests = answer(
+          200,
+          '{"property":{"id":"property-1","name":"Home"},'
+          '"locations":[{"id":"location-1","name":"Kitchen"}],"plans":[]}',
+        );
+        final overview = await client.propertyOverview(
+          account,
+          propertyHint: 'property-1',
+        );
+        expect(overview.property.name, 'Home');
+        expect(overview.locations.single.id, 'location-1');
+        expect(
+          overviewRequests.single.url,
+          '$origin/api/v1/homehero/property?propertyId=property-1',
+        );
+        expect(overviewRequests.single.method, 'GET');
+        expect(overviewRequests.single.csrf, isNull);
+        expect(overviewRequests.single.credentials, 'same-origin');
+        expect(overviewRequests.single.redirect, 'error');
+
+        final planRequests = answer(204, null);
+        await client.linkPlanProperty(account, 'plan-1', 'property-1');
+        expect(planRequests.single.url, '$origin/api/v1/plans/plan-1/property');
+        expect(planRequests.single.method, 'PUT');
+        expect(planRequests.single.csrf, 'session-csrf');
+        expect(planRequests.single.jsonBody, '{"propertyId":"property-1"}');
+
+        final roomRequests = answer(204, null);
+        await client.linkRoomLocation(
+          account,
+          'plan-1',
+          'room-1',
+          'location-1',
+        );
+        expect(
+          roomRequests.single.url,
+          '$origin/api/v1/plans/plan-1/rooms/room-1/location',
+        );
+        expect(roomRequests.single.csrf, 'session-csrf');
+        expect(roomRequests.single.jsonBody, '{"locationId":"location-1"}');
+
+        final inventoryRequests = answer(
+          200,
+          '{"property":{"id":"property-1","name":"Home"},'
+          '"location":{"id":"location-1","name":"Kitchen"},'
+          '"roomId":"room-1","items":[{"id":"item/1","name":"Mixer",'
+          '"detailsUrl":"https://console.homehero.pro/view/item%2F1"}]}',
+        );
+        final inventory = await client.roomInventory(
+          account,
+          'plan-1',
+          'room-1',
+        );
+        expect(inventory.items.single.id, 'item/1');
+        expect(inventoryRequests.single.method, 'GET');
+        expect(inventoryRequests.single.csrf, isNull);
+      },
+    );
   });
 }
