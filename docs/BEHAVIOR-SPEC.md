@@ -4741,6 +4741,30 @@ Surface/unsupported-model failures are surfaced rather than mistaken for an
 empty scene. Experimental texture backend evidence does not close ADR 0003's
 platform or measured-performance gates.
 
+**Browser graphics safety (owner-approved fallback).** Desktop Firefox on Linux
+uses Safe 2D by default because WebGPU presentation can crash the native browser
+on affected graphics stacks. Safe 2D displays the editable plan and an explanation,
+does not mount the 3D view or load/initialize its renderer, and overrides requested
+3D/split views without automatically rewriting saved view preferences. This
+includes remembered modes and actions that normally reveal 3D. It creates no
+document operations, changes no assets and adds no undo entry.
+The page-only URL parameter `DOMOWIK_WEBGPU=0` selects Safe 2D in any browser;
+`DOMOWIK_WEBGPU=1` explicitly bypasses the Linux Firefox gate for experimental
+testing, with no promise of native crash containment. Other values do not bypass
+the default. Native presenters and Firefox on macOS retain their existing
+behavior. No automatic GPU self-test is run on a protected page: that test could
+itself crash the browser. Surface initialization failures that the browser reports
+as ordinary `no-webgpu` or `webgpu-disabled` refusals switch the page to Safe 2D,
+keep full selectable diagnostics under **3D diagnostics**, and suppress further
+3D initialization until the page is reloaded. The fallback does not rewrite
+saved view preferences, modify the plan or add an undo entry. Other surface and
+scene errors remain visible diagnostics rather than being treated as an empty scene.
+The normal error UI explains the unavailable view and continued 2D editing in
+plain language; raw exception text appears only after expanding diagnostics or
+explicitly copying an error. The Linux Firefox explanation identifies a
+precaution for affected graphics configurations, not an inherent failure of
+every Linux Firefox installation.
+
 Performance-first owner direction: camera navigation never decodes model bytes,
 triangulates floors, rebuilds scene snapshots or uploads geometry. Imported
 meshes are cached by digest and shared between instances; bounded display LOD

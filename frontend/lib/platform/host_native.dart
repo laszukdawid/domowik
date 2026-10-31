@@ -2,6 +2,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../selftest.dart' show bundleRoot;
+import '../web_graphics_policy.dart';
+
+/// Browser safety policy never restricts a native presenter.
+WebGraphicsPolicy hostGraphicsPolicy() => const WebGraphicsPolicy.allowed();
 
 /// Whether this host has a filesystem the editor may browse and write.
 const bool hostHasFilesystem = true;

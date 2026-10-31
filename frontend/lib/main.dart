@@ -54,6 +54,7 @@ import 'asset_rotation.dart';
 import 'user_config.dart';
 import 'preferences_dialog.dart';
 import 'three_d_view.dart';
+import 'web_graphics_policy.dart';
 import 'warnings_banner.dart';
 import 'plan_painter.dart';
 import 'wall_chain_state.dart';
@@ -175,6 +176,7 @@ class PlanPage extends StatefulWidget {
     this.modelDirectoryPicker,
     this.modelUploads,
     this.catalogClient,
+    this.graphicsPolicy,
   });
 
   /// Tests load the real native library directly; bundles use
@@ -204,6 +206,9 @@ class PlanPage extends StatefulWidget {
   /// Native hosts do not enable hosted discovery. The page owns and closes a
   /// supplied client; it must not be shared with another page.
   final CatalogClient? catalogClient;
+
+  /// Browser safety defaults to the host policy; tests may inject a policy.
+  final WebGraphicsPolicy? graphicsPolicy;
 
   @override
   State<PlanPage> createState() => _PlanPageState();
@@ -333,6 +338,18 @@ class _PlanPageState extends State<PlanPage>
   final GlobalKey _paintKey = GlobalKey();
   final GlobalKey<ThreeDViewState> _threeDKey = GlobalKey<ThreeDViewState>();
   String _viewMode = '2d';
+  late final WebGraphicsPolicy _hostGraphicsPolicy =
+      widget.graphicsPolicy ?? hostGraphicsPolicy();
+  String? _web3dFailure;
+  WebGraphicsPolicy get _graphicsPolicy => _web3dFailure == null
+      ? _hostGraphicsPolicy
+      : const WebGraphicsPolicy.safe2d(
+          'Safe 2D: 3D could not start with your browser\'s current graphics setup. '
+          'You can continue editing and saving your plan in 2D. '
+          'Your saved view preferences have not been changed. '
+          'Reload the page to retry 3D after changing your browser setup.',
+        );
+  String get _effectiveViewMode => _graphicsPolicy.viewMode(_viewMode);
   Offset? _dragFrom;
   Offset? _dragTo;
   Offset? _pointerPosition;
@@ -1287,13 +1304,26 @@ class _PlanPageState extends State<PlanPage>
 
   void _changeViewMode(String mode) {
     if (_fileActionPending || !planViewModes.containsKey(mode)) return;
+    if (mode != '2d' && !_graphicsPolicy.allows3d) {
+      setState(
+        () => _setStatus(_graphicsPolicy.disabledReason!, isError: false),
+      );
+      return;
+    }
     _cancelDrag();
     setState(() => _viewMode = mode);
     _rememberViewMode();
   }
 
+  void _on3dUnavailable(String details) {
+    if (!mounted || _web3dFailure != null) return;
+    // Keep the requested mode and persisted preferences intact. The effective
+    // policy now unmounts 3D and suppresses retries for this page's lifetime.
+    setState(() => _web3dFailure = details);
+  }
+
   void _rememberViewMode() {
-    if (_benchmarking) return;
+    if (_benchmarking || !_graphicsPolicy.allows3d) return;
     final key = _planPreferencesKey;
     if (!_userConfig.rememberedViewModes.containsKey(key)) return;
     _userConfig.saveRememberedViewMode(key, _viewMode).catchError((
@@ -1867,7 +1897,7 @@ class _PlanPageState extends State<PlanPage>
       ];
       _poseDraft = List.of(_poseInitial!);
       _poseDraftValid = true;
-      if (show3d) _viewMode = 'split';
+      if (show3d && _graphicsPolicy.allows3d) _viewMode = 'split';
     });
     if (show3d) _rememberViewMode();
   }
@@ -1911,7 +1941,7 @@ class _PlanPageState extends State<PlanPage>
   /// Sends at most one translation preview per frame, using the latest drag.
   void _scheduleDragPreview() {
     if (_dragPreviewScheduled ||
-        _viewMode == '2d' ||
+        _effectiveViewMode == '2d' ||
         _poseAssetId != null ||
         _dragPreviewTarget == null)
       return;
@@ -3223,7 +3253,7 @@ class _PlanPageState extends State<PlanPage>
         account: _accountClient == null
             ? null
             : AccountButton(client: _accountClient),
-        viewMode: _viewMode,
+        viewMode: _effectiveViewMode,
         onViewModeChanged: _changeViewMode,
         onUndo: _undoDepth > 0 || _poseHasChanges ? _changeHistory : null,
         onRedo: _redoDepth > 0 ? () => _changeHistory(redo: true) : null,
@@ -3437,6 +3467,46 @@ class _PlanPageState extends State<PlanPage>
   }
 
   Widget _workspace(Widget plan) {
+    if (_graphicsPolicy.disabledReason case final reason?) {
+      // Never mount ThreeDView: saved modes and implicit 3D actions must not
+      // initialize a browser GPU surface while safe mode is active.
+      return Column(
+        children: [
+          Material(
+            key: const ValueKey('safe-2d-banner'),
+            color: Theme.of(context).colorScheme.secondaryContainer,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.info_outline),
+                      const SizedBox(width: 12),
+                      Expanded(child: SelectableText(reason)),
+                    ],
+                  ),
+                  if (_web3dFailure case final details?)
+                    ExpansionTile(
+                      title: const Text('3D diagnostics'),
+                      children: [
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 120),
+                          child: SingleChildScrollView(
+                            child: SelectableText(details),
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(child: plan),
+        ],
+      );
+    }
     // A different view mode changes the plan pane's size, whichever path
     // changed it; keeping the old zoom would crop the plan, so frame the
     // content again on the next layout.
@@ -3509,6 +3579,7 @@ class _PlanPageState extends State<PlanPage>
                   active: _viewMode != '2d',
                   selectedIds: _selection.ids.toList()..sort(),
                   onPick: _pickIn3d,
+                  onUnavailable: _on3dUnavailable,
                   onUndo: _undoDepth > 0 || _poseHasChanges
                       ? _changeHistory
                       : null,

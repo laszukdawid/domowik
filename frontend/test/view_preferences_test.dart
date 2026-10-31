@@ -11,7 +11,9 @@ import 'package:domowik_editor/main.dart';
 import 'package:domowik_editor/plan_session.dart';
 import 'package:domowik_editor/three_d_view.dart';
 import 'package:domowik_editor/user_config.dart';
+import 'package:domowik_editor/web_graphics_policy.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _Storage implements ConfigStorage {
@@ -50,6 +52,7 @@ void main() {
   late _Dialogs dialogs;
   late String first, second, firstKey;
   late UserConfigStore store;
+  var surfaceCreates = 0;
 
   setUp(() {
     final suffix = Platform.isMacOS ? 'dylib' : 'so';
@@ -61,6 +64,7 @@ void main() {
     storage = _Storage();
     dialogs = _Dialogs();
     store = UserConfigStore(storage);
+    surfaceCreates = 0;
     String fixture(String name) {
       final opened = core.createDefault();
       try {
@@ -80,11 +84,11 @@ void main() {
             as String;
     core.close(opened.handle);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          ThreeDViewState.channel,
-          (call) async =>
-              call.method == 'create' ? {'textureId': 71, 'session': 1} : null,
-        );
+        .setMockMethodCallHandler(ThreeDViewState.channel, (call) async {
+          if (call.method != 'create') return null;
+          surfaceCreates++;
+          return {'textureId': 71, 'session': 1};
+        });
   });
 
   tearDown(() {
@@ -95,7 +99,10 @@ void main() {
     scratch.deleteSync(recursive: true);
   });
 
-  Future<void> start(WidgetTester tester) async {
+  Future<void> start(
+    WidgetTester tester, {
+    WebGraphicsPolicy? graphicsPolicy,
+  }) async {
     await tester.binding.setSurfaceSize(const Size(1200, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
@@ -104,6 +111,7 @@ void main() {
           bridgeLoader: () => core,
           configStore: store,
           fileDialogs: dialogs,
+          graphicsPolicy: graphicsPolicy,
         ),
       ),
     );
@@ -139,6 +147,134 @@ void main() {
     await tap(tester, find.byKey(const ValueKey('default-view-mode')));
     await tap(tester, find.text('2D + 3D split view').last);
   }
+
+  testWidgets(
+    'safe 2D overrides defaults and remembered modes without GPU work',
+    (tester) async {
+      await store.savePreferences(
+        splitOrientation: SplitOrientation.vertical,
+        unitSystem: store.unitSystem,
+        defaultViewMode: '3d',
+      );
+      await store.saveRememberedViewMode(firstKey, 'split');
+      final savedConfig = List<int>.of(storage.bytes!);
+      final savedPlan = File(first).readAsBytesSync();
+      await start(
+        tester,
+        graphicsPolicy: WebGraphicsPolicy.forBrowser(
+          userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Firefox/159.0',
+          page: Uri.parse('https://editor.invalid/'),
+        ),
+      );
+      expect(mode(tester), '2d');
+      expect(find.byKey(const ValueKey('safe-2d-banner')), findsOneWidget);
+      expect(find.byType(ThreeDView), findsNothing);
+      await open(tester, first);
+      for (final label in ['3D view', '2D + 3D split view', '2D plan']) {
+        await chooseView(tester, label);
+        expect(mode(tester), '2d');
+        expect(find.byType(ThreeDView), findsNothing);
+      }
+      await open(tester, second);
+      expect(mode(tester), '2d');
+      expect(surfaceCreates, 0);
+      expect(store.defaultViewMode, '3d');
+      expect(store.rememberedViewModes[firstKey], 'split');
+      // Opening files may update the independent remembered-floor hint.
+      final before = jsonDecode(utf8.decode(savedConfig)) as Map;
+      final after = jsonDecode(utf8.decode(storage.bytes!)) as Map;
+      expect(after['defaultViewMode'], before['defaultViewMode']);
+      expect(after['rememberedViewModes'], before['rememberedViewModes']);
+      expect(File(first).readAsBytesSync(), savedPlan);
+      expect(find.textContaining('• Unsaved'), findsNothing);
+      final canvas = find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.painter is PlanPainter,
+      );
+      int wallCount() =>
+          (tester.widget<CustomPaint>(canvas).painter! as PlanPainter)
+              .walls
+              .length;
+      await tap(tester, find.byKey(const ValueKey('wall-chain-tool')));
+      await tester.dragFrom(
+        tester.getTopLeft(canvas) + const Offset(100, 150),
+        const Offset(250, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(wallCount(), 1);
+      await tap(tester, find.widgetWithText(ChoiceChip, 'Select'));
+      await tap(tester, find.byTooltip('Undo'));
+      expect(wallCount(), 0);
+      await tap(tester, find.byTooltip('Redo'));
+      expect(wallCount(), 1);
+      await tap(tester, find.byKey(const ValueKey('save-action')));
+      expect(find.textContaining('• Unsaved'), findsNothing);
+      await open(tester, second);
+      expect(wallCount(), 1);
+      expect(mode(tester), '2d');
+      await tester.binding.setSurfaceSize(const Size(560, 720));
+      await tester.pumpAndSettle();
+      await chooseView(tester, '3D view');
+      expect(mode(tester), '2d');
+      expect(find.byKey(const ValueKey('safe-2d-banner')), findsOneWidget);
+      expect(surfaceCreates, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'an unavailable WebGPU adapter falls back for the page without retries',
+    (tester) async {
+      await store.savePreferences(
+        splitOrientation: SplitOrientation.vertical,
+        unitSystem: store.unitSystem,
+        defaultViewMode: '3d',
+      );
+      await store.saveRememberedViewMode(firstKey, 'split');
+      final savedPlan = File(first).readAsBytesSync();
+      const diagnostic = 'No suitable graphics adapter found';
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(ThreeDViewState.channel, (call) async {
+            if (call.method == 'create') {
+              surfaceCreates++;
+              throw PlatformException(
+                code: 'no-webgpu',
+                message: List.filled(30, diagnostic).join('\n'),
+              );
+            }
+            fail('a failed surface must not load or render a scene');
+          });
+      await start(tester);
+      expect(mode(tester), '2d');
+      expect(find.byType(ThreeDView), findsNothing);
+      expect(find.byKey(const ValueKey('safe-2d-banner')), findsOneWidget);
+      expect(find.textContaining('current graphics setup'), findsOneWidget);
+      expect(surfaceCreates, 1);
+      expect(find.textContaining(diagnostic), findsNothing);
+      expect(find.textContaining('PlatformException'), findsNothing);
+      await tap(tester, find.text('3D diagnostics'));
+      expect(find.textContaining(diagnostic), findsOneWidget);
+      await tap(tester, find.text('3D diagnostics'));
+      await open(tester, first);
+      for (final label in ['3D view', '2D + 3D split view', '2D plan']) {
+        await chooseView(tester, label);
+        expect(mode(tester), '2d');
+        expect(find.byType(ThreeDView), findsNothing);
+      }
+      await open(tester, second);
+      await tester.binding.setSurfaceSize(const Size(560, 720));
+      await tester.pumpAndSettle();
+      await chooseView(tester, '3D view');
+      await tap(tester, find.text('3D diagnostics'));
+      expect(find.textContaining(diagnostic), findsOneWidget);
+      expect(mode(tester), '2d');
+      expect(surfaceCreates, 1);
+      expect(store.defaultViewMode, '3d');
+      expect(store.rememberedViewModes[firstKey], 'split');
+      expect(File(first).readAsBytesSync(), savedPlan);
+      expect(find.textContaining('• Unsaved'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'opt-in remembers last mode per layout across restart without saving the plan',

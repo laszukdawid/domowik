@@ -28,6 +28,9 @@ later phase does not imply that earlier exit criteria are complete.
   active-floor choice, including for older files without document identity.
   Device-local view preferences offer a global 2D/3D/split default and opt-in
   last-used mode memory per layout, without changing plan files.
+  The web editor defaults desktop Linux Firefox to Safe 2D without initializing
+  WebGPU 3D; page-only safety/testing overrides leave saved preferences intact.
+  Reported WebGPU startup refusals also fall back to 2D until page reload.
   The asset library offers list/grid browsing with on-demand model thumbnails.
   Solid wall colors (including bulk selection) and per-material placed-model
   colors are editable, undoable and saved in the plan; plan previews and 3D agree.

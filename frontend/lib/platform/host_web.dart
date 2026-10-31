@@ -1,4 +1,14 @@
 import 'dart:typed_data';
+import 'dart:js_interop';
+
+import '../web_graphics_policy.dart';
+
+@JS('navigator.userAgent')
+external String get _userAgent;
+
+/// Resolve safety before requesting an adapter, device, canvas or renderer.
+WebGraphicsPolicy hostGraphicsPolicy() =>
+    WebGraphicsPolicy.forBrowser(userAgent: _userAgent, page: Uri.base);
 
 // The browser host: no environment, no process, no filesystem. Probes that
 // need them are native-only and never start here.

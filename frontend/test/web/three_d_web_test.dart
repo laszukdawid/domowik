@@ -12,7 +12,9 @@ import 'package:domowik_editor/core/domowik_core.dart';
 import 'package:domowik_editor/core/web_core.dart';
 import 'package:domowik_editor/platform/scene_presenter_web.dart';
 import 'package:domowik_editor/three_d_view.dart';
+import 'package:domowik_editor/web_graphics_policy.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_test/flutter_test.dart';
 
 @JS('navigator.gpu')
@@ -40,165 +42,179 @@ void main() {
     return reply.text!;
   }
 
-  test(
-    'scenes load from the core; navigation and pose updates reuse GPU geometry',
-    () async {
-      expect(_gpu, isNotNull, reason: 'this browser offers no WebGPU');
-      final plan = core.createDefault().handle;
-      addTearDown(() => core.close(plan));
-      final level =
-          ((jsonDecode(core.snapshot(plan).text!) as Map)['levels'] as List)
-                  .single['id']
-              as String;
-      addWall(plan, level, [0, 0], [4000, 0]);
-      addWall(plan, level, [4000, 0], [4000, 3000]);
+  test('safe mode refuses create before any renderer initialization', () async {
+    final presenter = WebScenePresenter(
+      core,
+      graphicsPolicy: const WebGraphicsPolicy.safe2d('Safe 2D test policy'),
+    );
+    await expectLater(
+      presenter.invokeMapMethod<String, Object?>('create'),
+      throwsA(
+        isA<PlatformException>()
+            .having((e) => e.code, 'code', 'webgpu-disabled')
+            .having((e) => e.message, 'message', 'Safe 2D test policy'),
+      ),
+    );
+    await expectLater(
+      presenter.invokeMethod<void>('stats', {'session': 1}),
+      throwsA(isA<PlatformException>()),
+    );
+  });
 
-      final presenter = WebScenePresenter(core);
-      final created = (await presenter.invokeMapMethod<String, Object?>(
-        'create',
-      ))!;
-      expect(created['loadScene'], isTrue);
-      final session = created['session'];
-      addTearDown(
-        () => presenter.invokeMethod<void>('destroy', {'session': session}),
-      );
+  test('scenes load from the core; navigation and pose updates reuse GPU geometry', () async {
+    expect(_gpu, isNotNull, reason: 'this browser offers no WebGPU');
+    final plan = core.createDefault().handle;
+    addTearDown(() => core.close(plan));
+    final level =
+        ((jsonDecode(core.snapshot(plan).text!) as Map)['levels'] as List)
+                .single['id']
+            as String;
+    addWall(plan, level, [0, 0], [4000, 0]);
+    addWall(plan, level, [4000, 0], [4000, 3000]);
 
-      Future<Map<String, Object?>> load(int generation) async =>
-          (await presenter.invokeMapMethod<String, Object?>('loadScene', {
-            'session': session,
-            'plan': plan,
-            'generation': generation,
-            'levelIds': [level],
-            'ghostedIds': const [],
-          }))!;
-      Future<Map<String, Object?>> stats() async => (await presenter
-          .invokeMapMethod<String, Object?>('stats', {'session': session}))!;
-      Future<void> camera(double turn) =>
-          presenter.invokeMethod<void>('camera', {
-            'session': session,
-            'matrix': [
-              1.0, 0.0, 0.0, 0.0, //
-              0.0, 1.0, 0.0, 0.0,
-              0.0, 0.0, -0.1, -1.0,
-              turn, 0.0, -1.0, 4.0,
-            ],
-            'width': 320,
-            'height': 240,
-          });
+    final presenter = WebScenePresenter(core);
+    final created = (await presenter.invokeMapMethod<String, Object?>(
+      'create',
+    ))!;
+    expect(created['loadScene'], isTrue);
+    final session = created['session'];
+    addTearDown(
+      () => presenter.invokeMethod<void>('destroy', {'session': session}),
+    );
 
-      final scene = await load(1);
-      expect(scene['generation'], 1);
-      expect(scene['radius'], greaterThan(0));
-      expect((scene['originMm'] as List), hasLength(2));
-      await camera(0);
-      final first = await stats();
-      expect(first['triangles'], greaterThan(0));
-      expect(first['frames'], 1);
-      expect(first['error'], isEmpty);
+    Future<Map<String, Object?>> load(int generation) async =>
+        (await presenter.invokeMapMethod<String, Object?>('loadScene', {
+          'session': session,
+          'plan': plan,
+          'generation': generation,
+          'levelIds': [level],
+          'ghostedIds': const [],
+        }))!;
+    Future<Map<String, Object?>> stats() async => (await presenter
+        .invokeMapMethod<String, Object?>('stats', {'session': session}))!;
+    Future<void> camera(double turn) => presenter.invokeMethod<void>('camera', {
+      'session': session,
+      'matrix': [
+        1.0, 0.0, 0.0, 0.0, //
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, -0.1, -1.0,
+        turn, 0.0, -1.0, 4.0,
+      ],
+      'width': 320,
+      'height': 240,
+    });
 
-      for (var i = 1; i <= 20; i++) {
-        await camera(i / 20);
-      }
-      final navigated = await stats();
-      expect(navigated['frames'], 21);
-      expect(navigated['cameraUpdates'], 21);
-      expect(navigated['meshUploads'], first['meshUploads']);
-      expect(navigated['instanceUploads'], first['instanceUploads']);
-      expect(navigated['sceneUpdates'], first['sceneUpdates']);
+    final scene = await load(1);
+    expect(scene['generation'], 1);
+    expect(scene['radius'], greaterThan(0));
+    expect((scene['originMm'] as List), hasLength(2));
+    await camera(0);
+    final first = await stats();
+    expect(first['triangles'], greaterThan(0));
+    expect(first['frames'], 1);
+    expect(first['error'], isEmpty);
 
-      // An edit reloads the scene; unchanged meshes are not uploaded again.
-      addWall(plan, level, [0, 3000], [4000, 3000]);
-      await load(2);
-      await camera(0);
-      final edited = await stats();
-      expect(edited['sceneUpdates'], (first['sceneUpdates'] as int) + 1);
-      expect(edited['triangles'], greaterThan(first['triangles'] as int));
-      expect(edited['error'], isEmpty);
-      expect(core.outstandingBuffers(), 0);
-      // Keep using this real WebGPU session to test pose streaming after a
-      // scene edit, rather than allocating another device in headless Chrome.
-      final imported = core.importModel(
-        plan,
-        'tv.obj',
-        Uint8List.fromList(utf8.encode('v 0 0 0\nv 2 0 0\nv 0 1 2\nf 1 2 3\n')),
-      );
-      expect(imported.code, ok);
-      final placed = core.assets(
-        plan,
-        jsonEncode({
-          'kind': 'place',
-          'digest': jsonDecode(imported.text!)['digest'],
-          'levelId': level,
-          'positionMm': [2000, 1000],
-        }),
-      );
-      expect(placed.code, ok);
-      final id = jsonDecode(placed.text!)['instanceId'];
-      var generation = 2;
-      Future<Map<String, Object?>> loadPose({Object? token}) async =>
-          (await presenter.invokeMapMethod<String, Object?>('loadScene', {
-            'session': session,
-            'plan': plan,
-            'generation': ++generation,
-            'levelIds': [level],
-            'ghostedIds': <String>[],
-            'poseOnly': token != null,
-            'sceneToken': token,
-          }))!;
-      final full = await loadPose();
-      await camera(0);
-      final before = await stats();
-      expect(before['triangles'], greaterThan(0));
-      var updates = before['instanceUploads'] as int;
-      final timing = Stopwatch()..start();
-      for (var i = 1; i <= 20; i++) {
-        final angle = i * 5;
-        expect(
-          core
-              .assets(
-                plan,
-                jsonEncode({
-                  'kind': 'pose',
-                  'instanceId': id,
-                  'positionMm': [2000, 1000, 1500],
-                  'rotationDeg': [angle, 10, 30],
-                  'preview': true,
-                }),
-              )
-              .code,
-          ok,
-        );
-        final result = await loadPose(token: full['sceneToken']);
-        expect(result['instanceOnly'], true);
-        await camera(0);
-        final after = await stats();
-        expect(after['meshUploads'], before['meshUploads']);
-        expect(
-          after['triangles'],
-          before['triangles'],
-          reason:
-              'names-only frames must not replace resident geometry with empty meshes',
-        );
-        expect(
-          after['instanceUploads'],
-          ++updates,
-          reason: 'only the model group changes, not wall instances',
-        );
-        expect(after['error'], isEmpty);
-      }
-      timing.stop();
-      print(
-        'POSE browser core+transport+GPU submission: ${timing.elapsedMicroseconds / 20} us/update; 20 warm updates, not GPU/presentation latency',
-      );
+    for (var i = 1; i <= 20; i++) {
+      await camera(i / 20);
+    }
+    final navigated = await stats();
+    expect(navigated['frames'], 21);
+    expect(navigated['cameraUpdates'], 21);
+    expect(navigated['meshUploads'], first['meshUploads']);
+    expect(navigated['instanceUploads'], first['instanceUploads']);
+    expect(navigated['sceneUpdates'], first['sceneUpdates']);
+
+    // An edit reloads the scene; unchanged meshes are not uploaded again.
+    addWall(plan, level, [0, 3000], [4000, 3000]);
+    await load(2);
+    await camera(0);
+    final edited = await stats();
+    expect(edited['sceneUpdates'], (first['sceneUpdates'] as int) + 1);
+    expect(edited['triangles'], greaterThan(first['triangles'] as int));
+    expect(edited['error'], isEmpty);
+    expect(core.outstandingBuffers(), 0);
+    // Keep using this real WebGPU session to test pose streaming after a
+    // scene edit, rather than allocating another device in headless Chrome.
+    final imported = core.importModel(
+      plan,
+      'tv.obj',
+      Uint8List.fromList(utf8.encode('v 0 0 0\nv 2 0 0\nv 0 1 2\nf 1 2 3\n')),
+    );
+    expect(imported.code, ok);
+    final placed = core.assets(
+      plan,
+      jsonEncode({
+        'kind': 'place',
+        'digest': jsonDecode(imported.text!)['digest'],
+        'levelId': level,
+        'positionMm': [2000, 1000],
+      }),
+    );
+    expect(placed.code, ok);
+    final id = jsonDecode(placed.text!)['instanceId'];
+    var generation = 2;
+    Future<Map<String, Object?>> loadPose({Object? token}) async =>
+        (await presenter.invokeMapMethod<String, Object?>('loadScene', {
+          'session': session,
+          'plan': plan,
+          'generation': ++generation,
+          'levelIds': [level],
+          'ghostedIds': <String>[],
+          'poseOnly': token != null,
+          'sceneToken': token,
+        }))!;
+    final full = await loadPose();
+    await camera(0);
+    final before = await stats();
+    expect(before['triangles'], greaterThan(0));
+    var updates = before['instanceUploads'] as int;
+    final timing = Stopwatch()..start();
+    for (var i = 1; i <= 20; i++) {
+      final angle = i * 5;
       expect(
-        core.assets(plan, jsonEncode({'kind': 'clearPosePreview'})).code,
+        core
+            .assets(
+              plan,
+              jsonEncode({
+                'kind': 'pose',
+                'instanceId': id,
+                'positionMm': [2000, 1000, 1500],
+                'rotationDeg': [angle, 10, 30],
+                'preview': true,
+              }),
+            )
+            .code,
         ok,
       );
-      await loadPose(token: full['sceneToken']);
-      expect((await stats())['meshUploads'], before['meshUploads']);
-      expect(core.outstandingBuffers(), 0);
-    },
-  );
+      final result = await loadPose(token: full['sceneToken']);
+      expect(result['instanceOnly'], true);
+      await camera(0);
+      final after = await stats();
+      expect(after['meshUploads'], before['meshUploads']);
+      expect(
+        after['triangles'],
+        before['triangles'],
+        reason: 'names-only frames must not replace resident geometry with empty meshes',
+      );
+      expect(
+        after['instanceUploads'],
+        ++updates,
+        reason: 'only the model group changes, not wall instances',
+      );
+      expect(after['error'], isEmpty);
+    }
+    timing.stop();
+    print(
+      'POSE browser core+transport+GPU submission: ${timing.elapsedMicroseconds / 20} us/update; 20 warm updates, not GPU/presentation latency',
+    );
+    expect(
+      core.assets(plan, jsonEncode({'kind': 'clearPosePreview'})).code,
+      ok,
+    );
+    await loadPose(token: full['sceneToken']);
+    expect((await stats())['meshUploads'], before['meshUploads']);
+    expect(core.outstandingBuffers(), 0);
+  });
 
   testWidgets('uploading a missing model reloads the active 3D view', (
     tester,

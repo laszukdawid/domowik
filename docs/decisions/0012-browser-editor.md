@@ -160,7 +160,18 @@ as a platform view with pointer events passed through, and leaves all camera
 input to the shared Dart code.
 
 **WebGPU only.** There is no WebGL2 fallback: without WebGPU the 3D view says
-so and 2D keeps working. Browser keyboard and pointer input reaches the
+so and 2D keeps working. A GPU-free admission policy defaults desktop Firefox
+on Linux to Safe 2D, preventing 3D/module initialization even when saved
+preferences request 3D. The presenter independently enforces that policy. URL
+parameters select Safe 2D in any browser or explicitly bypass the Linux Firefox
+gate for experimental testing; see [the user guide](../USER-GUIDE.md). No automatic
+GPU probe is attempted on protected pages, since such a probe can itself crash
+the native browser. This is a conservative compatibility gate, not a driver
+capability test or a guarantee of crash containment. Firefox on macOS and native
+presenters are unchanged. A reported WebGPU startup refusal also latches Safe 2D
+until reload, with selectable diagnostics and no automatic retries or preference
+rewrites. This is ordinary exception handling, not native crash recovery.
+Browser keyboard and pointer input reaches the
 editor through Flutter; the page's context menu is disabled so secondary
 clicks reach the editor's menus. Modifier-scroll zooms the plan, not the page.
 Shortcuts a browser reserves for itself are outside the page's reach; the

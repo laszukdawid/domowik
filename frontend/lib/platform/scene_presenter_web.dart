@@ -23,6 +23,8 @@ import 'package:flutter/widgets.dart';
 
 import '../core/domowik_core.dart';
 import '../scene_presenter.dart';
+import '../web_graphics_policy.dart';
+import 'host_web.dart' show hostGraphicsPolicy;
 
 ScenePresenter hostScenePresenter(MethodChannel channel, DomowikCore core) =>
     WebScenePresenter(core);
@@ -88,8 +90,10 @@ class _Session {
 
 /// The browser presenter. One instance per 3D view; sessions are canvases.
 class WebScenePresenter implements ScenePresenter {
-  WebScenePresenter(this.core);
+  WebScenePresenter(this.core, {WebGraphicsPolicy? graphicsPolicy})
+    : _graphicsPolicy = graphicsPolicy ?? hostGraphicsPolicy();
   final DomowikCore core;
+  final WebGraphicsPolicy _graphicsPolicy;
   static int _nextSession = 1;
   final Map<int, _Session> _sessions = {};
 
@@ -105,6 +109,14 @@ class WebScenePresenter implements ScenePresenter {
   Future<Object?> _invoke(String method, Object? arguments) async {
     switch (method) {
       case 'create':
+        // Defence in depth: non-editor clients must also avoid the known
+        // crash path. Do not even load the module or read navigator.gpu first.
+        if (!_graphicsPolicy.allows3d) {
+          throw PlatformException(
+            code: 'webgpu-disabled',
+            message: _graphicsPolicy.disabledReason,
+          );
+        }
         if (_gpu == null) {
           throw PlatformException(
             code: 'no-webgpu',
