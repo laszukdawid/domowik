@@ -3,6 +3,7 @@ import 'dart:js_interop';
 import 'dart:typed_data';
 
 import '../account.dart';
+import '../property_planner.dart';
 
 /// The account client when the deployment names a server, through
 /// `<meta name="domowik-server-url">` or a `DOMOWIK_SERVER_URL` define; null
@@ -26,7 +27,8 @@ AccountClient? createAccountClient() {
 
 /// Sign-in in the hosted editor: the server runs the sign-in and sets an
 /// HttpOnly session cookie; the editor only learns the session's CSRF token.
-class BrowserAccountClient implements AccountClient, HostedPlanClient {
+class BrowserAccountClient
+    implements AccountClient, HostedPlanClient, PropertyPlannerClient {
   BrowserAccountClient(this.server, {void Function(String url)? navigate})
     : _navigate = navigate ?? _assign;
 
@@ -77,6 +79,107 @@ class BrowserAccountClient implements AccountClient, HostedPlanClient {
       throw const AccountException('The server sent an unexpected plan list');
     }
     return [for (final item in decoded) _plan(item)];
+  }
+
+  @override
+  Future<PlannerPropertyOverview> propertyOverview(
+    AccountSession session, {
+    String? propertyHint,
+  }) async {
+    final (status, body) = await _send(
+      'GET',
+      'homehero/property',
+      query: propertyHint == null ? null : {'propertyId': propertyHint},
+    );
+    if (status < 200 || status > 299) throw _refused(status, body);
+    return PlannerPropertyOverview.fromJson(_json(body));
+  }
+
+  @override
+  Future<PlannerPlanContext> planPropertyContext(
+    AccountSession session,
+    String planId,
+  ) async {
+    final (status, body) = await _send('GET', '${_planPath(planId)}/property');
+    if (status < 200 || status > 299) throw _refused(status, body);
+    return PlannerPlanContext.fromJson(_json(body));
+  }
+
+  @override
+  Future<void> linkPlanProperty(
+    AccountSession session,
+    String planId,
+    String propertyId,
+  ) async {
+    final (status, body) = await _send(
+      'PUT',
+      '${_planPath(planId)}/property',
+      csrf: session.token,
+      jsonBody: {'propertyId': propertyId},
+    );
+    if (status != 204) throw _refused(status, body);
+  }
+
+  @override
+  Future<void> unlinkPlanProperty(AccountSession session, String planId) async {
+    final (status, body) = await _send(
+      'DELETE',
+      '${_planPath(planId)}/property',
+      csrf: session.token,
+    );
+    if (status != 204) throw _refused(status, body);
+  }
+
+  @override
+  Future<void> linkRoomLocation(
+    AccountSession session,
+    String planId,
+    String roomId,
+    String locationId,
+  ) async {
+    final (status, body) = await _send(
+      'PUT',
+      '${_planPath(planId)}/rooms/${Uri.encodeComponent(roomId)}/location',
+      csrf: session.token,
+      jsonBody: {'locationId': locationId},
+    );
+    if (status != 204) throw _refused(status, body);
+  }
+
+  @override
+  Future<void> unlinkRoomLocation(
+    AccountSession session,
+    String planId,
+    String roomId,
+  ) async {
+    final (status, body) = await _send(
+      'DELETE',
+      '${_planPath(planId)}/rooms/${Uri.encodeComponent(roomId)}/location',
+      csrf: session.token,
+    );
+    if (status != 204) throw _refused(status, body);
+  }
+
+  @override
+  Future<PlannerRoomInventory> roomInventory(
+    AccountSession session,
+    String planId,
+    String roomId,
+  ) async {
+    final (status, body) = await _send(
+      'GET',
+      '${_planPath(planId)}/rooms/${Uri.encodeComponent(roomId)}/inventory',
+    );
+    if (status < 200 || status > 299) throw _refused(status, body);
+    return PlannerRoomInventory.fromJson(_json(body));
+  }
+
+  @override
+  Future<bool> openItemUri(Uri uri) async {
+    final safe = validatedHomeHeroItemUri(uri.toString());
+    if (safe == null) return false;
+    _openWindow(safe.toString(), '_blank', 'noopener,noreferrer');
+    return true;
   }
 
   @override
@@ -372,6 +475,9 @@ extension type _Element(JSObject _) implements JSObject {
 
 @JS('location')
 external _Location get _location;
+
+@JS('window.open')
+external JSAny? _openWindow(String url, String target, String features);
 
 extension type _Location(JSObject _) implements JSObject {
   external void assign(String url);

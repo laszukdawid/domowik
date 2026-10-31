@@ -165,6 +165,10 @@ CLI do share document and geometry behavior.
   validation. It remains independent of UI frameworks and network services.
 - **Editor:** interaction, dialogs, preferences and presentation. It does not
   own authoritative plan geometry or file-format rules.
+- **HomeHero property adapter:** the browser uses the existing hosted account
+  session to call the hosted service. That service resolves the stored linked
+  HomeHero identity and rechecks owner access; plan-room mappings and inventory
+  do not enter the document package.
 - **3D presenters:** platform surface and GPU lifecycle. They do not own the
   plan or determine room geometry.
 - **Future synchronization:** requires a separately specified protocol and

@@ -47,6 +47,13 @@ build. Do not assume an older build can read a newly saved file or interpret
 every optional extension. A reader's preservation of unknown data is not proof
 it displays that data correctly.
 
+HomeHero property/room associations are hosted-service metadata keyed by plan,
+room-record and location IDs. They are not stored in `.domo` packages and do
+not alter document or geometry semantics. The property manager and inventory
+controls are browser-only and require the configured same-origin hosted
+account. Local/offline plans remain independent of HomeHero; no format
+migration is involved.
+
 Older unpublished package layouts have a bounded repair command:
 
 ```sh
