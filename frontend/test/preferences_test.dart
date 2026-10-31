@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:domowik_bridge_plugin/domowik_bridge_plugin.dart';
@@ -25,7 +26,130 @@ Future<void> chooseImperial(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+Future<UserConfigStore> showPreferences(
+  WidgetTester tester, {
+  String? serverOverride,
+  Future<bool> Function()? beforeServerChange,
+}) async {
+  final store = UserConfigStore.inMemory();
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: PreferencesDialog(
+          store: store,
+          showServer: true,
+          serverOverride: serverOverride,
+          beforeServerChange: beforeServerChange,
+        ),
+      ),
+    ),
+  );
+  return store;
+}
+
 void main() {
+  testWidgets('an invalid server is shown and nothing is saved', (
+    tester,
+  ) async {
+    var asked = 0;
+    final store = await showPreferences(
+      tester,
+      beforeServerChange: () async {
+        asked++;
+        return true;
+      },
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const ValueKey('server-url')))
+          .controller!
+          .text,
+      'https://planner.homehero.pro',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('server-url')),
+      'http://planner.example/path',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Enter an https:// address'), findsOneWidget);
+    expect(asked, 0);
+    expect(store.serverUrl, isNull);
+
+    // Equivalent spelling of the current server is not a change.
+    await tester.enterText(
+      find.byKey(const ValueKey('server-url')),
+      'https://Planner.HomeHero.pro/',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(asked, 0);
+    expect(store.serverUrl, isNull);
+  });
+
+  testWidgets('an invalid stored server can be replaced or cleared', (
+    tester,
+  ) async {
+    for (final (entered, stored) in [
+      ('https://planner.example', 'https://planner.example'),
+      ('', ''),
+    ]) {
+      final store = UserConfigStore(
+        _MemoryStorage('{"version":1,"serverUrl":"http://remote.example"}'),
+      );
+      await store.load();
+      expect(store.serverUrl, 'http://remote.example');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showDialog<bool>(
+                context: context,
+                builder: (_) =>
+                    PreferencesDialog(store: store, showServer: true),
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('server-url')), entered);
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(find.byType(PreferencesDialog), findsNothing, reason: 'saved');
+      expect(store.serverUrl, stored);
+    }
+  });
+
+  testWidgets('a declined server change saves nothing', (tester) async {
+    final store = await showPreferences(
+      tester,
+      beforeServerChange: () async => false,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('server-url')),
+      'https://other.example',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(store.serverUrl, isNull);
+    expect(find.text('Save'), findsOneWidget, reason: 'the dialog stays');
+  });
+
+  testWidgets('an environment override is shown and cannot be edited', (
+    tester,
+  ) async {
+    await showPreferences(tester, serverOverride: 'http://127.0.0.1:8080');
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('server-url')),
+    );
+    expect(field.enabled, isFalse);
+    expect(field.controller!.text, 'http://127.0.0.1:8080');
+    expect(find.textContaining('Set by DOMOWIK_SERVER_URL'), findsOneWidget);
+  });
+
   testWidgets(
     'editor applies saved split, cancel preserves layout and view state',
     (tester) async {
@@ -123,4 +247,17 @@ void main() {
     expect(store.unitSystem, UnitSystem.metric);
     expect(blocker.readAsStringSync(), 'original');
   });
+}
+
+/// Preferences kept in memory, starting from [text].
+class _MemoryStorage implements ConfigStorage {
+  _MemoryStorage(this.text);
+
+  String text;
+
+  @override
+  Future<List<int>?> read(int limit) async => utf8.encode(text);
+
+  @override
+  Future<void> write(String text) async => this.text = text;
 }

@@ -186,6 +186,9 @@ class _FakeClient implements AccountClient {
   int profileReads = 0;
 
   @override
+  bool get signInLeavesEditor => navigates;
+
+  @override
   Future<AccountSession?> restore() async => existing;
 
   @override

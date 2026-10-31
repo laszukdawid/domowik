@@ -1,23 +1,35 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../account.dart';
+import '../hosted_api.dart';
 
-/// The account client when `DOMOWIK_SERVER_URL` names a server, from the
-/// environment or a `--dart-define`; null otherwise, and for an invalid URL,
-/// which leaves the editor anonymous and local.
-AccountClient? createAccountClient() {
-  final configured =
-      Platform.environment[serverUrlSetting] ??
-      const String.fromEnvironment(serverUrlSetting);
-  if (configured.trim().isEmpty) return null;
+/// The desktop app offers the Server preference.
+const serverPreferenceAvailable = true;
+
+/// The `DOMOWIK_SERVER_URL` override from the environment, then the build
+/// define; null when neither is set. An empty value turns accounts off.
+String? serverUrlOverride() =>
+    Platform.environment[serverUrlSetting] ??
+    (const bool.hasEnvironment(serverUrlSetting)
+        ? const String.fromEnvironment(serverUrlSetting)
+        : null);
+
+/// The account client for the effective server (see [effectiveServerUrl]);
+/// null when it is empty or invalid, which leaves the editor anonymous and
+/// local. Creating a client makes no request.
+AccountClient? createAccountClient({String? savedServerUrl}) {
+  final configured = effectiveServerUrl(
+    override: serverUrlOverride(),
+    saved: savedServerUrl,
+  );
+  if (configured.isEmpty) return null;
   try {
     return NativeAccountClient(ServerEndpoint(configured));
   } on FormatException {
-    stderr.writeln(
-      '$serverUrlSetting is not a valid server URL; signing in is off',
-    );
+    stderr.writeln('$configured is not a valid server URL; signing in is off');
     return null;
   }
 }
@@ -42,18 +54,38 @@ Future<void> openSystemBrowser(Uri url) async {
 
 /// Sign-in for a native app (RFC 8252): the system browser signs in at the
 /// server, which returns a one-time code to a loopback listener; the code and
-/// its PKCE verifier are exchanged for an API token.
-class NativeAccountClient implements AccountClient {
+/// its PKCE verifier are exchanged for an API token. Plan requests send that
+/// token as `Authorization: Bearer` and take `api` writer leases.
+class NativeAccountClient extends HostedPlanProtocol implements AccountClient {
   NativeAccountClient(
     this.server, {
     this.openBrowser = openSystemBrowser,
     this.timeout = const Duration(minutes: 5),
+    this.responseTimeout = const Duration(seconds: 30),
   });
+
+  /// The largest answer read: the service's expanded plan limit.
+  static const maxResponseBytes = 64 * 1024 * 1024;
 
   @override
   final ServerEndpoint server;
   final BrowserOpener openBrowser;
   final Duration timeout;
+
+  /// Bounds the wait for an answer to start and each pause while it arrives.
+  final Duration responseTimeout;
+
+  @override
+  String get leaseMode => 'api';
+
+  @override
+  bool get signInLeavesEditor => false;
+
+  @override
+  Map<String, String> credentials(
+    AccountSession session, {
+    required bool mutation,
+  }) => {'Authorization': 'Bearer ${session.token}'};
 
   /// Nothing outlives the app: every run starts signed out.
   @override
@@ -75,19 +107,27 @@ class NativeAccountClient implements AccountClient {
           'code_challenge_method': 'S256',
         }),
       );
-      final issued = await _send(
-        'POST',
-        server.api('auth/desktop/token'),
-        body: {
-          'code': await code.timeout(
-            timeout,
-            onTimeout: () =>
-                throw const AccountException('Signing in took too long'),
-          ),
-          'codeVerifier': verifier,
-          'redirectUri': redirect,
-        },
+      final body = jsonEncode({
+        'code': await code.timeout(
+          timeout,
+          onTimeout: () =>
+              throw const AccountException('Signing in took too long'),
+        ),
+        'codeVerifier': verifier,
+        'redirectUri': redirect,
+      });
+      // The exchange has no session yet; the service still wants its
+      // pre-authentication header.
+      final response = await transport(
+        HostedRequest(
+          'POST',
+          server.api('auth/desktop/token'),
+          headers: {'Content-Type': 'application/json', 'X-Domowik-CSRF': '1'},
+          text: body,
+        ),
       );
+      if (!response.ok) throw response.refused();
+      final issued = response.json;
       if (issued is! Map ||
           issued['token'] is! String ||
           issued['id'] is! String) {
@@ -121,61 +161,58 @@ class NativeAccountClient implements AccountClient {
     throw const AccountException('Signing in was interrupted');
   }
 
+  /// Revokes the token. A token the server no longer knows (401) is already
+  /// signed out.
   @override
   Future<void> signOut(AccountSession session) async {
-    await _send(
+    final response = await request(
+      session,
       'DELETE',
-      server.api('tokens/${session.tokenId}'),
-      token: session.token,
-      expectBody: false,
+      'tokens/${Uri.encodeComponent(session.tokenId)}',
     );
+    if (!response.ok && response.status != HttpStatus.unauthorized) {
+      throw response.refused();
+    }
   }
 
   @override
   Future<AccountProfile> profile(AccountSession session) async {
-    final plans = _send('GET', server.api('plans'), token: session.token)
-      ..ignore();
-    final me = await _send('GET', server.api('auth/me'), token: session.token);
+    final plans = requestJson(session, 'GET', 'plans')..ignore();
+    final me = await requestJson(session, 'GET', 'auth/me');
     return AccountProfile.fromJson(me, await plans);
   }
 
-  /// The decoded JSON answer, or null when [expectBody] is false.
-  Future<Object?> _send(
-    String method,
-    Uri url, {
-    Map<String, String>? body,
-    String? token,
-    bool expectBody = true,
-  }) async {
+  /// One request without redirects; the answer is bounded in time and size.
+  @override
+  Future<HostedResponse> transport(HostedRequest request) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 10);
     try {
-      final request = await client.openUrl(method, url);
-      request.followRedirects = false;
-      if (token != null) {
-        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      }
+      final outgoing = await client.openUrl(request.method, request.url);
+      outgoing.followRedirects = false;
+      request.headers.forEach(outgoing.headers.set);
+      final body =
+          request.bytes ??
+          (request.text == null ? null : utf8.encode(request.text!));
       if (body != null) {
-        request.headers
-          ..contentType = ContentType.json
-          ..set('x-domowik-csrf', '1');
-        request.write(jsonEncode(body));
+        outgoing.contentLength = body.length;
+        outgoing.add(body);
       }
-      final response = await request.close().timeout(
-        const Duration(seconds: 30),
-      );
-      final text = await response
-          .transform(utf8.decoder)
-          .join()
-          .timeout(const Duration(seconds: 30));
-      if (response.statusCode < 200 || response.statusCode > 299) {
-        throw AccountException(
-          'The server refused (${response.statusCode}): ${_message(text)}',
-        );
+      final response = await outgoing.close().timeout(responseTimeout);
+      final received = BytesBuilder(copy: false);
+      await for (final chunk in response.timeout(responseTimeout)) {
+        if (received.length + chunk.length > maxResponseBytes) {
+          throw const AccountException('The server sent too large an answer');
+        }
+        received.add(chunk);
       }
-      return expectBody ? jsonDecode(text) : null;
-    } on FormatException {
-      throw const AccountException('The server sent an unexpected answer');
+      return HostedResponse(response.statusCode, received.takeBytes(), (name) {
+        try {
+          return response.headers.value(name);
+        } on HttpException {
+          return null; // Repeated: not a usable single value.
+        }
+      });
     } on IOException {
       // Also a connection cut mid-answer (HttpException) or a TLS failure.
       throw AccountException('Could not reach ${server.origin}');
@@ -184,17 +221,5 @@ class NativeAccountClient implements AccountClient {
     } finally {
       client.close(force: true);
     }
-  }
-
-  static String _message(String text) {
-    try {
-      final decoded = jsonDecode(text);
-      if (decoded is Map && decoded['message'] is String) {
-        return decoded['message'] as String;
-      }
-    } on FormatException {
-      // Not JSON: fall through.
-    }
-    return 'no details';
   }
 }

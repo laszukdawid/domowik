@@ -8,6 +8,34 @@ import 'package:domowik_editor/measurement_units.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('the server preference is unset, off, or a canonical origin', () async {
+    final root = await Directory.systemTemp.createTemp('domowik-server-');
+    addTearDown(() => root.delete(recursive: true));
+    final file = File('${root.path}/config.json');
+    final store = UserConfigStore(FileConfigStorage(file));
+    expect(store.serverUrl, isNull);
+    Future<void> save(String? server) => store.savePreferences(
+      splitOrientation: SplitOrientation.vertical,
+      unitSystem: UnitSystem.metric,
+      serverUrl: server,
+    );
+    await save(null);
+    expect(jsonDecode(await file.readAsString()), isNot(contains('serverUrl')));
+    await save(' https://Planner.Example/ ');
+    expect(store.serverUrl, 'https://planner.example');
+    await save(null);
+    expect(store.serverUrl, 'https://planner.example');
+    await expectLater(
+      save('https://planner.example/api'),
+      throwsFormatException,
+    );
+    expect(store.serverUrl, 'https://planner.example');
+    await save('');
+    final restarted = UserConfigStore(FileConfigStorage(file));
+    await restarted.load();
+    expect(restarted.serverUrl, '');
+  });
+
   test('asset library view defaults to list and survives unrelated preference saves', () async {
     final root = await Directory.systemTemp.createTemp('domowik-library-view-');
     addTearDown(() => root.delete(recursive: true));
@@ -103,6 +131,7 @@ void main() {
       '{"version":1,"assetLibraryView":"tiles"}',
       '{"version":1,"defaultViewMode":"unknown"}',
       '{"version":1,"defaultViewMode":null}',
+      '{"version":1,"serverUrl":42}',
     ]) {
       await file.writeAsString(content);
       final store = UserConfigStore(FileConfigStorage(file));

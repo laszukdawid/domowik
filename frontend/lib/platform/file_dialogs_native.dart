@@ -22,3 +22,23 @@ class DesktopFileDialogs extends NativeFileDialogs implements ExportDialogs {
     });
   }
 }
+
+/// Writes a recovery copy of [bytes] (an encoding from the core) to [path]
+/// through a temporary file in the same directory, so a failed write never
+/// leaves a partial file at [path].
+Future<void> writePlanCopy(String path, Uint8List bytes) async {
+  final temporary = File(
+    '$path.tmp-$pid-${DateTime.now().microsecondsSinceEpoch}',
+  );
+  try {
+    await temporary.writeAsBytes(bytes, flush: true);
+    await temporary.rename(path);
+  } on Object {
+    try {
+      await temporary.delete();
+    } on FileSystemException {
+      // Nothing was written, or it is already gone.
+    }
+    rethrow;
+  }
+}

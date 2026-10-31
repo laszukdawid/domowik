@@ -8,6 +8,7 @@ import 'package:domowik_editor/core/ffi_core.dart';
 import 'package:domowik_editor/file_workflows.dart';
 import 'package:domowik_editor/main.dart';
 import 'package:domowik_editor/plan_session.dart';
+import 'package:domowik_editor/user_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,9 +30,13 @@ class _HostedClient implements AccountClient, HostedPlanClient {
   String? failRenewCode;
   int _nextId = 1;
   int signOutCalls = 0;
+  bool leavesEditor = true;
 
   @override
   ServerEndpoint get server => ServerEndpoint('https://planner.example');
+
+  @override
+  bool get signInLeavesEditor => leavesEditor;
 
   HostedPlan _newPlan(String title, Uint8List bytes) {
     final id = 'hosted-${_nextId++}';
@@ -46,8 +51,10 @@ class _HostedClient implements AccountClient, HostedPlanClient {
     return plan;
   }
 
+  AccountSession? restored = _accountSession;
+
   @override
-  Future<AccountSession?> restore() async => _accountSession;
+  Future<AccountSession?> restore() async => restored;
 
   @override
   Future<AccountSession?> signIn() async => _accountSession;
@@ -182,7 +189,7 @@ class _HostedClient implements AccountClient, HostedPlanClient {
 
 class _Dialogs implements FileDialogs {
   PlanSource? nextOpen;
-  PlanByteTarget? nextSave;
+  PlanTarget? nextSave;
   Future<bool> Function()? closeHandler;
   int saveCalls = 0;
   String? suggestedName;
@@ -224,14 +231,20 @@ void main() {
     dialogs = _Dialogs();
   });
 
-  Future<void> start(WidgetTester tester) async {
+  Future<void> start(
+    WidgetTester tester, {
+    AccountClient? Function(String? savedServerUrl)? accountClients,
+    UserConfigStore? configStore,
+  }) async {
     await tester.binding.setSurfaceSize(const Size(1200, 850));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
         home: PlanPage(
           bridgeLoader: () => FfiCore(bridge),
-          accountClient: client,
+          accountClient: accountClients == null ? client : null,
+          accountClients: accountClients,
+          configStore: configStore,
           fileDialogs: dialogs,
         ),
       ),
@@ -467,7 +480,7 @@ void main() {
       dialogs.nextSave = PlanByteTarget('recovery.domo', (_) async => false);
 
       await newLocalPlan(tester);
-      await tap(tester, find.text('Download a copy'));
+      await tap(tester, find.byKey(const ValueKey('leave-download-copy')));
       await tester.pumpAndSettle();
       expect(find.textContaining('Online · Keep me • Unsaved'), findsOneWidget);
       expect(find.text('Untitled plan'), findsNothing);
@@ -675,7 +688,145 @@ void main() {
         client.calls.where((call) => call == 'release:${plan.id}'),
         hasLength(1),
       );
-      expect(find.text('Logout • Unsaved'), findsOneWidget);
+      expect(find.textContaining('Online · Logout'), findsNothing);
+      expect(find.textContaining('• Unsaved'), findsOneWidget);
+
+      // The online title never became a local file: Save asks where.
+      dialogs.nextSave = null;
+      tester
+          .widget<InkWell>(find.byKey(const ValueKey('save-action')))
+          .onTap!();
+      await tester.pumpAndSettle();
+      expect(dialogs.saveCalls, 1);
+      expect(File('Logout').existsSync(), isFalse);
     },
   );
+
+  testWidgets('a desktop recovery copy is a file and keeps the plan online', (
+    tester,
+  ) async {
+    final root = Directory.systemTemp.createTempSync('domowik-copy-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    await start(tester);
+    final plan = client._newPlan('Copy me', seedBytes);
+    await openHosted(tester, plan);
+    await drawWall(tester);
+    final copy = '${root.path}/copy.domo';
+    dialogs.nextSave = PlanPathTarget(copy);
+
+    await tap(tester, find.byKey(const ValueKey('save-menu')));
+    await tester.tap(find.byKey(const ValueKey('save-as')));
+    // The copy is real file I/O, which needs the real event loop.
+    for (
+      var i = 0;
+      i < 50 && find.textContaining('saved a copy').evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    expect(dialogs.suggestedName, 'Copy me.domo');
+    expect(File(copy).lengthSync(), greaterThan(0));
+    expect(root.listSync(), hasLength(1), reason: 'no temporary file left');
+    expect(find.textContaining('Online · Copy me • Unsaved'), findsOneWidget);
+    expect(client.calls.where((call) => call.startsWith('release')), isEmpty);
+
+    // Save still goes online, never to the copy.
+    tester.widget<InkWell>(find.byKey(const ValueKey('save-action'))).onTap!();
+    await tester.pumpAndSettle();
+    expect(client.calls.last, startsWith('save:${plan.id}'));
+  });
+
+  testWidgets('desktop sign-in keeps unsaved work open without asking', (
+    tester,
+  ) async {
+    client
+      ..restored = null
+      ..leavesEditor = false;
+    await start(tester);
+    await drawWall(tester);
+    await tap(tester, find.byKey(const ValueKey('account')));
+    expect(find.text('Save your changes?'), findsNothing);
+    expect(find.textContaining('• Unsaved'), findsOneWidget);
+    expect(find.text('person@example.test'), findsOneWidget);
+    expect(client.calls, isEmpty, reason: 'signing in uploads nothing');
+  });
+
+  testWidgets('a close releases the online lease after approval', (
+    tester,
+  ) async {
+    await start(tester);
+    final plan = client._newPlan('Closing', seedBytes);
+    await openHosted(tester, plan);
+    expect(await dialogs.closeHandler!(), isTrue);
+    expect(client.calls.last, 'release:${plan.id}');
+  });
+
+  testWidgets('changing the server settles online work and starts signed out', (
+    tester,
+  ) async {
+    final other = _HostedClient(seedBytes)..restored = null;
+    final requested = <String?>[];
+    final store = UserConfigStore.inMemory();
+    await start(
+      tester,
+      configStore: store,
+      accountClients: (saved) {
+        requested.add(saved);
+        return saved == 'https://other.example' ? other : client;
+      },
+    );
+    expect(requested, [null]);
+    final plan = client._newPlan('Moving', seedBytes);
+    await openHosted(tester, plan);
+    await drawWall(tester);
+
+    Future<void> changeServer(String choice) async {
+      await tap(tester, find.byTooltip('Preferences'));
+      await tester.enterText(
+        find.byKey(const ValueKey('server-url')),
+        'https://Other.example/',
+      );
+      await tap(tester, find.widgetWithText(FilledButton, 'Save').last);
+      expect(find.text('Save your changes?'), findsOneWidget);
+      // The leave dialog sits above Preferences.
+      await tap(tester, find.text(choice).last);
+    }
+
+    await changeServer('Cancel');
+    expect(find.byType(AlertDialog), findsOneWidget, reason: 'still open');
+    await tap(tester, find.text('Cancel'));
+    expect(store.serverUrl, isNull);
+    expect(client.signOutCalls, 0);
+    expect(find.textContaining('Online · Moving • Unsaved'), findsOneWidget);
+
+    await changeServer("Don't save");
+    expect(store.serverUrl, 'https://other.example');
+    expect(requested, [null, 'https://other.example']);
+    expect(client.calls.last, 'release:${plan.id}');
+    expect(client.signOutCalls, 1);
+    expect(other.calls, isEmpty, reason: 'nothing moves to the new server');
+    expect(find.textContaining('Online ·'), findsNothing);
+    expect(find.textContaining('• Unsaved'), findsOneWidget);
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Server changed to planner.example'), findsOneWidget);
+  });
+
+  testWidgets('turning the server off removes accounts', (tester) async {
+    final store = UserConfigStore.inMemory();
+    await start(
+      tester,
+      configStore: store,
+      accountClients: (saved) => saved == '' ? null : client,
+    );
+    await tap(tester, find.byTooltip('Preferences'));
+    await tester.enterText(find.byKey(const ValueKey('server-url')), '');
+    await tap(tester, find.widgetWithText(FilledButton, 'Save'));
+    expect(store.serverUrl, '');
+    expect(find.byKey(const ValueKey('account')), findsNothing);
+    expect(client.signOutCalls, 1);
+  });
 }
