@@ -299,7 +299,7 @@ void main() {
       final saved = '${scratch.path}/saved-as.domo';
       dialogs.savingPath = saved;
       await tap(tester, find.byKey(const ValueKey('save-menu')));
-      await tap(tester, find.text('Save as'));
+      await tap(tester, find.text('Save as…'));
       expect(store.rememberedViewModes, hasLength(2));
       await open(tester, path);
       expect(mode(tester), 'split');

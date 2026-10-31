@@ -327,8 +327,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
     widget.sessionChanges.addListener(_contextChanged);
     if (_session == null) {
       _loading = false;
-      _error =
-          'Sign in to the hosted Planner account to manage property plans.';
+      _error = 'Sign in to manage property plans.';
     } else {
       _refresh();
     }
@@ -358,8 +357,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
       _loading = widget.session != null;
       if (widget.session == null) {
         _loading = false;
-        _error =
-            'Sign in to the hosted Planner account to manage property plans.';
+        _error = 'Sign in to manage property plans.';
       } else {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _refresh();
@@ -426,7 +424,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
       showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('Link an existing hosted plan'),
+          title: const Text('Link an existing online plan'),
           content: SizedBox(
             width: 400,
             height: 320,
@@ -455,7 +453,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Unlink this plan?'),
-      content: Text('“${plan.title}” will remain in your hosted plans.'),
+      content: Text('“${plan.title}” will remain in your online plans.'),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context, false),
@@ -513,7 +511,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
         .where((plan) => !associated.contains(plan.id))
         .toList();
     if (candidates.isEmpty) {
-      setState(() => _error = 'There are no other hosted plans to link.');
+      setState(() => _error = 'There are no other online plans to link.');
       return;
     }
     final selectedId = await _choosePlan(candidates);
@@ -615,7 +613,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
                 Text('HomeHero property: ${_overview!.property.name}'),
                 const SizedBox(height: 8),
                 const Text(
-                  'Hosted sign-in and property access are checked separately.',
+                  'Sign-in and property access are checked separately.',
                 ),
                 if (_error != null)
                   Padding(
@@ -682,7 +680,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
       key: ValueKey('property-plan-${summary.id}'),
       title: Text(summary.title),
       subtitle: Text(
-        plan == null ? 'Hosted plan unavailable' : 'Revision ${plan.revision}',
+        plan == null ? 'Online plan unavailable' : 'Revision ${plan.revision}',
       ),
       trailing: Wrap(
         children: [

@@ -4855,8 +4855,10 @@ its saved state, and the same plan and assets produce identical bytes.
 
 **Normative experimental behavior.** With a same-origin hosted service configured,
 the browser may restore an account session and explicitly list, create, open,
-or upload the current plan as a new hosted copy. Signing in or importing never
-uploads a local plan automatically. Local files continue to open and save
+or save the current plan as a new hosted ("online") plan. With a signed-in
+session New and Open offer these online actions beside their local ones, and
+the save menu offers Save as new online plan. Signing in never uploads a local
+plan automatically. Local files continue to open and save
 without an account or network connection; a hosted plan is identified and
 presented separately from a local file.
 
@@ -4874,11 +4876,34 @@ response. A timeout is unacknowledged: the current encoding remains available
 for local recovery, the plan stays dirty, and another hosted overwrite is
 blocked even if the request later completes on the server. The core decides
 whether an acknowledged encoding still matches the current edit revision; a
-newer edit stays dirty. Lease loss, revision conflict, or an unacknowledged
-save blocks another hosted overwrite until the user reopens or recovers the
-work.
+newer edit stays dirty.
 
-An explicit local-copy action writes the current core encoding to a `.domo`
+Lease renewal and recovery requests time out after 10 seconds. Only a server
+answer that the lease is no longer held marks it lost; other renewal failures
+keep renewing. After a lost lease or an unacknowledged save, the next Save
+first reconnects without force: it renews the known lease, or acquires a new
+one once the server reports the old one gone. It then saves only if the
+server revision still equals the last acknowledged revision, which renewal
+and acquisition never change; the conditional save is fenced by lease and
+revision on the server, so at most one competing upload of that revision
+commits. Any other revision, or a revision conflict on save, is a conflict:
+the lease is released best-effort and hosted Save stays refused for that
+checkout. A lease held elsewhere or a network failure leaves the plan unsaved
+and is retried by the next Save. An acknowledged save followed by newer edits
+needs no reconnection. If reopening the same plan fails, the editor re-takes
+its lease without downloading and keeps the previously acknowledged
+revision; a different server revision is a conflict. Every refusal leaves the
+edits open and offers the copy actions below.
+
+Save as new online plan uploads the current core encoding as a new hosted
+plan, then takes its lease without downloading it. Only when the lease
+revision equals the uploaded revision does the editor adopt it as the save
+target, mark the captured core revision saved, forget any local file binding
+and release the previous plan's lease best-effort; otherwise the current plan
+and binding are unchanged and the uploaded plan remains listed.
+
+For a hosted plan, the save menu's Download a copy action, and the same
+choice in the leave dialog, write the current core encoding to a `.domo`
 download. It does not mark the core saved, bind a local writer, or change the
 hosted plan's revision or dirty presentation. A browser download that cannot
 confirm storage does not authorize replacement. Dirty create/open/switch,

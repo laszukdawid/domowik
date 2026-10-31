@@ -92,6 +92,7 @@ class HostedWorkflowCoordinator {
     required this.session,
     this.renewalInterval,
     this.saveTimeout = const Duration(seconds: 30),
+    this.requestTimeout = const Duration(seconds: 10),
     this.onStateChanged,
   });
 
@@ -99,6 +100,9 @@ class HostedWorkflowCoordinator {
   final AccountSession session;
   final Duration? renewalInterval;
   final Duration saveTimeout;
+
+  /// Bounds lease requests (attach, renewal and recovery).
+  final Duration requestTimeout;
   final void Function(HostedWorkflowState state)? onStateChanged;
 
   HostedWorkflowState _state = HostedWorkflowState.idle;
@@ -179,9 +183,49 @@ class HostedWorkflowCoordinator {
     }
   }
 
+  /// Takes the writer lease for [plan] without downloading it, for bytes the
+  /// editor already holds at revision [baseline]. Returns false when the
+  /// server revision differs: the workflow is then in the sticky
+  /// [HostedWorkflowState.conflict] and its lease is released best-effort.
+  Future<bool> attach(HostedPlan plan, {required String baseline}) async {
+    _checkLive();
+    if (_lease != null || _state == HostedWorkflowState.checkingOut) {
+      throw StateError(
+        'Release the current hosted plan before opening another',
+      );
+    }
+    final generation = ++_checkoutGeneration;
+    _setState(HostedWorkflowState.checkingOut);
+    final HostedPlanLease acquired;
+    try {
+      acquired = await _acquire(plan);
+    } on Object {
+      if (!_disposed && generation == _checkoutGeneration) {
+        _setState(HostedWorkflowState.recoveryRequired);
+      }
+      rethrow;
+    }
+    if (_disposed || generation != _checkoutGeneration) {
+      _releaseQuietly(plan, acquired);
+      throw StateError('Hosted checkout was cancelled');
+    }
+    _plan = plan;
+    _lease = acquired;
+    _expectedRevision = baseline;
+    if (acquired.revision != baseline) {
+      _enterConflict();
+      return false;
+    }
+    _setState(HostedWorkflowState.ready);
+    _startRenewal(acquired);
+    return true;
+  }
+
   /// Renews the current writer lease. Lease responses can include a revision,
   /// but they never advance or roll back the revision used for conditional
-  /// content saves; only an acknowledged PUT does that.
+  /// content saves; only an acknowledged PUT does that. Only a server answer
+  /// that the lease is gone marks it lost; other failures leave renewal
+  /// running so a brief outage does not end the checkout.
   Future<void> renew() async {
     _checkLive();
     final plan = _plan;
@@ -189,7 +233,9 @@ class HostedWorkflowCoordinator {
     if (plan == null || lease == null || _renewing) return;
     _renewing = true;
     try {
-      final renewed = await client.renewLease(session, plan.id, lease.leaseId);
+      final renewed = await client
+          .renewLease(session, plan.id, lease.leaseId)
+          .timeout(requestTimeout);
       if (_disposed || _lease?.leaseId != lease.leaseId) return;
       _lease = HostedPlanLease(
         leaseId: lease.leaseId,
@@ -197,8 +243,12 @@ class HostedWorkflowCoordinator {
         mode: renewed.mode,
         expiresInSeconds: renewed.expiresInSeconds,
       );
-    } on Object {
-      if (!_disposed && _lease?.leaseId == lease.leaseId) {
+    } on Object catch (error) {
+      if (!_disposed &&
+          _lease?.leaseId == lease.leaseId &&
+          error is AccountException &&
+          error.code == 'lease-not-held' &&
+          _state != HostedWorkflowState.conflict) {
         _setState(HostedWorkflowState.leaseLost);
         _renewalTimer?.cancel();
       }
@@ -206,6 +256,93 @@ class HostedWorkflowCoordinator {
     } finally {
       _renewing = false;
     }
+  }
+
+  /// Makes the writer usable again after a lost lease or an unacknowledged
+  /// save, without force: renews the known lease, or acquires a new one once
+  /// the server confirms the old one is gone. Saving resumes only while the
+  /// server revision still equals the last acknowledged one, so a retry can
+  /// never replace another writer's work; any other revision enters the
+  /// sticky [HostedWorkflowState.conflict] and throws `revision-conflict`.
+  /// Network failures rethrow and leave the state unchanged.
+  Future<void> recover() async {
+    _checkLive();
+    final plan = _plan;
+    final lease = _lease;
+    final expected = _expectedRevision;
+    if (plan == null || lease == null || expected == null) {
+      throw StateError('No hosted writer lease is active');
+    }
+    if (_state == HostedWorkflowState.conflict) throw _conflict();
+    if (_saving) throw StateError('A hosted save is already in progress');
+    final generation = _checkoutGeneration;
+    HostedPlanLease current;
+    try {
+      final renewed = await client
+          .renewLease(session, plan.id, lease.leaseId)
+          .timeout(requestTimeout);
+      current = HostedPlanLease(
+        leaseId: lease.leaseId,
+        revision: renewed.revision,
+        mode: renewed.mode,
+        expiresInSeconds: renewed.expiresInSeconds,
+      );
+    } on AccountException catch (error) {
+      if (error.code != 'lease-not-held') rethrow;
+      current = await _acquire(plan);
+    }
+    if (_disposed || generation != _checkoutGeneration) {
+      if (current.leaseId != lease.leaseId) _releaseQuietly(plan, current);
+      throw StateError('Hosted checkout was cancelled');
+    }
+    _lease = current;
+    if (current.revision != expected) {
+      _enterConflict();
+      throw _conflict();
+    }
+    _recoveryBytes = null;
+    _setState(HostedWorkflowState.ready);
+    _startRenewal(current);
+  }
+
+  static AccountException _conflict() => const AccountException(
+    'The online version changed since the last confirmed save',
+    code: 'revision-conflict',
+  );
+
+  /// Enters the sticky conflict state. The lease is released best-effort
+  /// because a writer that cannot save must not lock others out; the plan
+  /// and its baseline stay bound for messages and Save as.
+  void _enterConflict() {
+    _renewalTimer?.cancel();
+    _renewalTimer = null;
+    _setState(HostedWorkflowState.conflict);
+    final plan = _plan;
+    final lease = _lease;
+    if (plan != null && lease != null) _releaseQuietly(plan, lease);
+  }
+
+  /// Acquires without force within [requestTimeout]. A lease granted after
+  /// the timeout is released, so a slow answer cannot lock the plan.
+  Future<HostedPlanLease> _acquire(HostedPlan plan) {
+    final request = client.acquireLease(session, plan.id, force: false);
+    return request.timeout(
+      requestTimeout,
+      onTimeout: () {
+        request.then((late) => _releaseQuietly(plan, late)).ignore();
+        throw TimeoutException(
+          'No answer to the lease request',
+          requestTimeout,
+        );
+      },
+    );
+  }
+
+  void _releaseQuietly(HostedPlan plan, HostedPlanLease lease) {
+    client
+        .releaseLease(session, plan.id, lease.leaseId)
+        .timeout(requestTimeout)
+        .ignore();
   }
 
   /// Uploads one Rust-encoded snapshot with the current lease and exact
@@ -274,15 +411,13 @@ class HostedWorkflowCoordinator {
       if (!_disposed &&
           generation == _checkoutGeneration &&
           _lease?.leaseId == leaseId) {
-        if (_state != HostedWorkflowState.leaseLost &&
-            _state != HostedWorkflowState.conflict) {
+        final code = error is AccountException ? error.code : null;
+        if (code == 'revision-conflict') {
+          _enterConflict();
+        } else if (_state != HostedWorkflowState.conflict) {
           _setState(
-            error is AccountException &&
-                    (error.code == 'revision-conflict' ||
-                        error.code == 'lease-not-held')
-                ? (error.code == 'revision-conflict'
-                      ? HostedWorkflowState.conflict
-                      : HostedWorkflowState.leaseLost)
+            code == 'lease-not-held'
+                ? HostedWorkflowState.leaseLost
                 : HostedWorkflowState.recoveryRequired,
           );
         }
@@ -324,14 +459,14 @@ class HostedWorkflowCoordinator {
       // user behind a transient release failure. The server lease will expire.
       if (bestEffort) {
         _clearReleasedLease();
-      } else {
+      } else if (_state != HostedWorkflowState.conflict) {
         _startRenewal(lease);
       }
       return false;
     } on Object {
       if (bestEffort) {
         _clearReleasedLease();
-      } else {
+      } else if (_state != HostedWorkflowState.conflict) {
         _startRenewal(lease);
       }
       return false;

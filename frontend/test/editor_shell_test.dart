@@ -94,7 +94,7 @@ void main() {
     await tester.tap(find.text('Save'));
     await tester.tap(find.byKey(const ValueKey('save-menu')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Save as'));
+    await tester.tap(find.text('Save as…'));
     await tester.pumpAndSettle();
     for (final label in ['Walls', 'Door', 'Window']) {
       await tester.tap(find.text(label));
@@ -146,7 +146,7 @@ void main() {
       // chevron menu in both modes, and the Save As item only when open.
       expect(find.text('Save'), findsOneWidget);
       expect(find.byKey(const ValueKey('save-menu')), findsOneWidget);
-      expect(find.text('Save as'), findsNothing);
+      expect(find.text('Save as…'), findsNothing);
       expect(find.text('Redo applied'), findsOneWidget);
       await tester.tap(find.text('Furniture'));
       expect(calls, ['assets']);

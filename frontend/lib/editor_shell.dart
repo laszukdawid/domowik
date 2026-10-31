@@ -19,8 +19,11 @@ class EditorShell extends StatelessWidget {
     this.onAssets,
     this.onPreferences,
     this.account,
-    this.hostedPlans,
-    this.onSaveLocalCopy,
+    this.propertyPlans,
+    this.onNewOnline,
+    this.onOpenOnline,
+    this.onSaveAsOnline,
+    this.saveAsLabel = 'Save as…',
     this.onViewModeChanged,
     this.viewMode = '2d',
     required this.onUndo,
@@ -36,17 +39,27 @@ class EditorShell extends StatelessWidget {
 
   /// The sign-in control, when a server is configured.
   final Widget? account;
-  final Widget? hostedPlans;
-  final VoidCallback? onSaveLocalCopy;
+  final Widget? propertyPlans;
   final VoidCallback onNew;
   final VoidCallback onOpen;
+
+  /// Online counterparts of New and Open. When present, New and Open become
+  /// menus offering both; absent when no account is signed in.
+  final VoidCallback? onNewOnline;
+  final VoidCallback? onOpenOnline;
+
+  /// Saves where the plan lives: its online plan or its own file.
   final VoidCallback onSave;
 
-  /// Writes the plan where the user chooses, leaving the current file
-  /// behind. Reached from the save control's dropdown; a plan the plain
-  /// [onSave] cannot update silently (never saved, or a browser download)
-  /// reaches the same dialog through [onSave].
+  /// Writes the plan to a file the user chooses. Reached from the save
+  /// control's dropdown under [saveAsLabel]; a plan the plain [onSave]
+  /// cannot update silently (never saved, or a browser download) reaches the
+  /// same dialog through [onSave].
   final VoidCallback onSaveAs;
+  final String saveAsLabel;
+
+  /// Uploads the plan as a new online plan that later saves go to.
+  final VoidCallback? onSaveAsOnline;
 
   /// Writes the whole plan as a `.usdz` 3D scene; absent where the platform
   /// cannot choose an export location.
@@ -172,6 +185,28 @@ class EditorShell extends StatelessWidget {
           ),
         );
 
+  /// A labelled header menu; icon-only when the window is narrow. [items]
+  /// maps each entry's text to its action, in display order.
+  static Widget _headerMenu({
+    Key? key,
+    required bool compact,
+    required String tooltip,
+    required IconData icon,
+    required String label,
+    required Map<String, VoidCallback> items,
+  }) => PopupMenuButton<String>(
+    key: key,
+    tooltip: tooltip,
+    position: PopupMenuPosition.under,
+    onSelected: (item) => items[item]!(),
+    itemBuilder: (_) => [
+      for (final item in items.keys)
+        PopupMenuItem(value: item, child: Text(item)),
+    ],
+    icon: compact ? Icon(icon) : null,
+    child: compact ? null : _MenuLabel(icon: icon, label: label),
+  );
+
   @override
   Widget build(BuildContext context) => CallbackShortcuts(
     bindings: {
@@ -241,20 +276,46 @@ class EditorShell extends StatelessWidget {
                           alignment: WrapAlignment.end,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            _headerButton(
-                              compact: compact,
-                              onPressed: onNew,
-                              tooltip: 'New plan',
-                              icon: Icons.note_add_outlined,
-                              label: 'New',
-                            ),
-                            _headerButton(
-                              compact: compact,
-                              onPressed: onOpen,
-                              tooltip: 'Open plan',
-                              icon: Icons.folder_open_outlined,
-                              label: 'Open',
-                            ),
+                            if (onNewOnline == null)
+                              _headerButton(
+                                compact: compact,
+                                onPressed: onNew,
+                                tooltip: 'New plan',
+                                icon: Icons.note_add_outlined,
+                                label: 'New',
+                              )
+                            else
+                              _headerMenu(
+                                key: const ValueKey('new-menu'),
+                                compact: compact,
+                                tooltip: 'New plan',
+                                icon: Icons.note_add_outlined,
+                                label: 'New',
+                                items: {
+                                  'New plan': onNew,
+                                  'New online plan…': onNewOnline!,
+                                },
+                              ),
+                            if (onOpenOnline == null)
+                              _headerButton(
+                                compact: compact,
+                                onPressed: onOpen,
+                                tooltip: 'Open plan',
+                                icon: Icons.folder_open_outlined,
+                                label: 'Open',
+                              )
+                            else
+                              _headerMenu(
+                                key: const ValueKey('open-menu'),
+                                compact: compact,
+                                tooltip: 'Open plan',
+                                icon: Icons.folder_open_outlined,
+                                label: 'Open',
+                                items: {
+                                  'Open file…': onOpen,
+                                  'Open online plan…': onOpenOnline!,
+                                },
+                              ),
                             const SizedBox(width: 8),
                             if (onAssets != null)
                               _headerButton(
@@ -293,16 +354,7 @@ class EditorShell extends StatelessWidget {
                                 ],
                               ),
                             if (account != null) account!,
-                            if (hostedPlans != null) hostedPlans!,
-                            if (onSaveLocalCopy != null)
-                              _headerButton(
-                                key: const ValueKey('save-local-copy'),
-                                compact: compact,
-                                onPressed: onSaveLocalCopy,
-                                tooltip: 'Download a local .domo copy without changing hosted save state',
-                                icon: Icons.download_outlined,
-                                label: 'Local copy',
-                              ),
+                            if (propertyPlans != null) propertyPlans!,
                             if (onPreferences != null)
                               IconButton(
                                 key: const ValueKey('preferences'),
@@ -314,6 +366,8 @@ class EditorShell extends StatelessWidget {
                             _SaveSplitButton(
                               onSave: onSave,
                               onSaveAs: onSaveAs,
+                              saveAsLabel: saveAsLabel,
+                              onSaveAsOnline: onSaveAsOnline,
                               onExportUsdz: onExportUsdz,
                             ),
                           ],
@@ -469,19 +523,24 @@ class EditorShell extends StatelessWidget {
 /// A press anywhere left of the divider saves — everything but the last
 /// chevron-wide strip, roughly three quarters of the pill at the default
 /// text scale, since the chevron strip does not grow with the label. A
-/// press on that strip opens the menu items below it: Save As ([onSaveAs])
-/// and, where available, a 3D export ([onExportUsdz]). The control holds no state and is
+/// press on that strip opens the menu items below it: Save As ([onSaveAs],
+/// labelled [saveAsLabel]), Save as new online plan ([onSaveAsOnline]) and,
+/// where available, a 3D export ([onExportUsdz]). The control holds no state and is
 /// always enabled: the file-action gate covers the whole header while a
 /// file workflow runs, and a failed save or open menu changes nothing.
 class _SaveSplitButton extends StatelessWidget {
   const _SaveSplitButton({
     required this.onSave,
     required this.onSaveAs,
+    required this.saveAsLabel,
+    this.onSaveAsOnline,
     this.onExportUsdz,
   });
 
   final VoidCallback onSave;
   final VoidCallback onSaveAs;
+  final String saveAsLabel;
+  final VoidCallback? onSaveAsOnline;
   final VoidCallback? onExportUsdz;
 
   @override
@@ -538,16 +597,29 @@ class _SaveSplitButton extends StatelessWidget {
               tooltip: 'More ways to save',
               position: PopupMenuPosition.under,
               itemBuilder: (_) => [
-                const PopupMenuItem<String>(
+                PopupMenuItem<String>(
+                  key: const ValueKey('save-as'),
                   value: 'save-as',
                   child: Row(
                     children: [
-                      Icon(Icons.save_as_outlined, size: 18),
-                      SizedBox(width: 8),
-                      Text('Save as'),
+                      const Icon(Icons.save_as_outlined, size: 18),
+                      const SizedBox(width: 8),
+                      Flexible(child: Text(saveAsLabel)),
                     ],
                   ),
                 ),
+                if (onSaveAsOnline != null)
+                  const PopupMenuItem<String>(
+                    key: ValueKey('save-as-online'),
+                    value: 'save-as-online',
+                    child: Row(
+                      children: [
+                        Icon(Icons.cloud_upload_outlined, size: 18),
+                        SizedBox(width: 8),
+                        Flexible(child: Text('Save as new online plan…')),
+                      ],
+                    ),
+                  ),
                 if (onExportUsdz != null)
                   const PopupMenuItem<String>(
                     key: ValueKey('export-usdz'),
@@ -568,6 +640,7 @@ class _SaveSplitButton extends StatelessWidget {
               ],
               onSelected: (action) {
                 if (action == 'save-as') onSaveAs();
+                if (action == 'save-as-online') onSaveAsOnline?.call();
                 if (action == 'export-usdz') onExportUsdz?.call();
               },
               child: SizedBox(
@@ -583,6 +656,34 @@ class _SaveSplitButton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A header menu's face when there is room for words.
+class _MenuLabel extends StatelessWidget {
+  const _MenuLabel({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(color: color, fontWeight: FontWeight.w500),
+          ),
+          Icon(Icons.arrow_drop_down, color: color),
+        ],
       ),
     );
   }

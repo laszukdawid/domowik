@@ -24,8 +24,9 @@ later phase does not imply that earlier exit criteria are complete.
   browser. It supports walls, openings, levels, room labels, selection,
   furniture with R-activated 2D rotation, Shift-held 15° snapping and click-away
   acceptance, bulk wall height/thickness editing, undo/redo and plan file workflows.
-  A configured same-origin browser service also offers explicit hosted create,
-  open, copy upload and lease-protected save/reopen; local files remain independent.
+  A configured same-origin browser service also offers explicit online plan
+  create, open, save as new online plan and lease-protected save that
+  reconnects when no other writer has saved; local files remain independent.
   Plans open on the first listed floor by default and remember the device's last
   active-floor choice, including for older files without document identity.
   Device-local view preferences offer a global 2D/3D/split default and opt-in

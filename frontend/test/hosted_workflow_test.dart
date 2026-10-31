@@ -383,4 +383,234 @@ void main() {
       await workflow.dispose();
     },
   );
+
+  test('a transient renewal failure keeps the writer usable', () async {
+    final client = _Client()
+      ..renew = () => Future.error(const AccountException('offline'));
+    final workflow = _coordinator(client);
+    await workflow.checkout(_plan);
+    await expectLater(workflow.renew(), throwsA(isA<AccountException>()));
+    expect(workflow.state, HostedWorkflowState.ready);
+    await workflow.save(_Document());
+    expect(client.calls.last, 'save:lease-1:1:7');
+    await workflow.dispose();
+  });
+
+  test('recover re-acquires a lost lease at the confirmed revision', () async {
+    final client = _Client()
+      ..renew = () => Future.error(
+        const AccountException('expired', code: 'lease-not-held'),
+      );
+    final workflow = _coordinator(client);
+    await workflow.checkout(_plan);
+    await expectLater(workflow.renew(), throwsA(isA<AccountException>()));
+    expect(workflow.state, HostedWorkflowState.leaseLost);
+    await expectLater(workflow.save(_Document()), throwsA(isA<StateError>()));
+
+    client.acquireResult = const HostedPlanLease(
+      leaseId: 'lease-2',
+      revision: '1',
+    );
+    await workflow.recover();
+    expect(workflow.state, HostedWorkflowState.ready);
+    expect(workflow.lease?.leaseId, 'lease-2');
+    await workflow.save(_Document());
+    expect(client.calls.last, 'save:lease-2:1:7');
+    await workflow.dispose();
+  });
+
+  test(
+    'recover after an unacknowledged save retries on the same lease',
+    () async {
+      final client = _Client();
+      final pendingSave = Completer<HostedPlan>();
+      client.save = (_) => pendingSave.future;
+      final workflow = _coordinator(
+        client,
+        saveTimeout: const Duration(milliseconds: 15),
+      );
+      await workflow.checkout(_plan);
+      await expectLater(
+        workflow.save(_Document()),
+        throwsA(isA<TimeoutException>()),
+      );
+      client.renewResult = const HostedPlanLease(
+        leaseId: 'lease-1',
+        revision: '1',
+      );
+      await workflow.recover();
+      expect(workflow.state, HostedWorkflowState.ready);
+      expect(
+        client.calls.where((call) => call.startsWith('acquire')),
+        hasLength(1),
+      );
+      client.save = null;
+      await workflow.save(_Document());
+      expect(client.calls.last, 'save:lease-1:1:7');
+      await workflow.dispose();
+    },
+  );
+
+  test('recover refuses a moved revision and the conflict is sticky', () async {
+    final client = _Client();
+    client.save = (_) => Future.error(const AccountException('timeout'));
+    final workflow = _coordinator(client);
+    await workflow.checkout(_plan);
+    await expectLater(
+      workflow.save(_Document()),
+      throwsA(isA<AccountException>()),
+    );
+    // The unacknowledged upload landed, or another writer saved.
+    client.renewResult = const HostedPlanLease(
+      leaseId: 'lease-1',
+      revision: '2',
+    );
+    await expectLater(
+      workflow.recover(),
+      throwsA(
+        isA<AccountException>().having(
+          (error) => error.code,
+          'code',
+          'revision-conflict',
+        ),
+      ),
+    );
+    expect(workflow.state, HostedWorkflowState.conflict);
+    expect(workflow.expectedRevision, '1');
+    expect(client.calls.last, 'release');
+
+    final calls = client.calls.length;
+    client.renewResult = const HostedPlanLease(
+      leaseId: 'lease-1',
+      revision: '1',
+    );
+    await expectLater(workflow.recover(), throwsA(isA<AccountException>()));
+    expect(
+      client.calls,
+      hasLength(calls),
+      reason: 'no request once conflicted',
+    );
+    await workflow.dispose();
+  });
+
+  test('recover reports a lease held elsewhere and stays lost', () async {
+    final client = _Client()
+      ..renew = () => Future.error(
+        const AccountException('expired', code: 'lease-not-held'),
+      );
+    final workflow = _coordinator(client);
+    await workflow.checkout(_plan);
+    await expectLater(workflow.renew(), throwsA(isA<AccountException>()));
+    client.acquire = () =>
+        Future.error(const AccountException('held', code: 'lease-held'));
+    await expectLater(
+      workflow.recover(),
+      throwsA(
+        isA<AccountException>().having((e) => e.code, 'code', 'lease-held'),
+      ),
+    );
+    expect(workflow.state, HostedWorkflowState.leaseLost);
+    expect(workflow.lease?.leaseId, 'lease-1');
+    await workflow.dispose();
+  });
+
+  test('attach keeps the editor baseline when the server moved on', () async {
+    final client = _Client()
+      ..acquireResult = const HostedPlanLease(
+        leaseId: 'lease-1',
+        revision: '3',
+      );
+    final workflow = _coordinator(client);
+    expect(await workflow.attach(_plan, baseline: '1'), isFalse);
+    expect(workflow.state, HostedWorkflowState.conflict);
+    expect(workflow.expectedRevision, '1');
+    expect(client.calls, ['acquire:false', 'release']);
+    await workflow.dispose();
+  });
+
+  test('attach at the matching revision saves without downloading', () async {
+    final client = _Client();
+    final workflow = _coordinator(client);
+    expect(await workflow.attach(_plan, baseline: '1'), isTrue);
+    expect(workflow.state, HostedWorkflowState.ready);
+    await workflow.save(_Document());
+    expect(client.calls, ['acquire:false', 'save:lease-1:1:7']);
+    await workflow.dispose();
+  });
+
+  test('a lease granted after the request timed out is released', () async {
+    final client = _Client();
+    final lateAcquire = Completer<HostedPlanLease>();
+    client.acquire = () => lateAcquire.future;
+    final workflow = HostedWorkflowCoordinator(
+      client: client,
+      session: _session,
+      renewalInterval: const Duration(days: 1),
+      requestTimeout: const Duration(milliseconds: 15),
+    );
+    await expectLater(
+      workflow.attach(_plan, baseline: '1'),
+      throwsA(isA<TimeoutException>()),
+    );
+    expect(workflow.lease, isNull);
+    lateAcquire.complete(_lease);
+    await Future<void>.delayed(Duration.zero);
+    expect(client.calls, ['acquire:false', 'release']);
+    await workflow.dispose();
+  });
+
+  test(
+    'a conflicted writer does not resume renewal after a failed release',
+    () async {
+      final client = _Client()
+        ..acquireResult = const HostedPlanLease(
+          leaseId: 'lease-1',
+          revision: '2',
+        )
+        ..release = () => Future.error(const AccountException('offline'));
+      final workflow = HostedWorkflowCoordinator(
+        client: client,
+        session: _session,
+        renewalInterval: const Duration(milliseconds: 5),
+      );
+      expect(await workflow.attach(_plan, baseline: '1'), isFalse);
+      expect(await workflow.release(bestEffort: false), isFalse);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(client.calls.where((call) => call == 'renew'), isEmpty);
+      await workflow.dispose();
+    },
+  );
+
+  test(
+    'saving newer edits after an acknowledged save needs no reconnect',
+    () async {
+      final client = _Client();
+      final pendingSave = Completer<HostedPlan>();
+      client.save = (_) => pendingSave.future;
+      final workflow = _coordinator(client);
+      await workflow.checkout(_plan);
+      final document = _Document();
+      final saving = workflow.save(document);
+      document.generation++;
+      pendingSave.complete(client.saveResult);
+      expect((await saving).localDocumentClean, isFalse);
+      expect(workflow.state, HostedWorkflowState.recoveryRequired);
+
+      client.save = null;
+      client.saveResult = HostedPlan(
+        id: 'plan-1',
+        title: 'Flat',
+        revision: '3',
+        updatedAt: DateTime.utc(2026),
+      );
+      expect((await workflow.save(document)).localDocumentClean, isTrue);
+      expect(client.calls.where((call) => call == 'renew'), isEmpty);
+      expect(
+        client.calls.where((call) => call.startsWith('acquire')),
+        hasLength(1),
+      );
+      expect(client.calls.last, 'save:lease-1:2:7');
+      await workflow.dispose();
+    },
+  );
 }

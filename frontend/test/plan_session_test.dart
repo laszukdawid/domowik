@@ -260,6 +260,27 @@ void main() {
       opened.dispose();
     }
   });
+
+  test('detaching a file stops Save rewriting it', () async {
+    session.create();
+    final path = '${scratch.path}/local.domo';
+    expect((await session.save(PlanPathTarget(path))).succeeded, isTrue);
+    session.detachFile('Online copy');
+    expect(session.boundTarget, isNull, reason: 'a title is not a path');
+    expect(session.path, isNull);
+
+    final browser = PlanSession(_BytesCore(bridge));
+    try {
+      browser.create();
+      await browser.save(PlanByteTarget('browser.domo', (_) async => true));
+      expect(browser.boundTarget, isNotNull);
+      browser.detachFile('Online copy');
+      expect(browser.boundTarget, isNull);
+      expect(browser.path, 'Online copy');
+    } finally {
+      browser.dispose();
+    }
+  });
 }
 
 class _BytesCore extends FfiCore {

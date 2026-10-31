@@ -2,75 +2,60 @@ import 'package:flutter/material.dart';
 
 import 'account.dart';
 
-/// The hosted plan library entry point. It deliberately receives the same
+/// Lists the account's online plans and opens one. It receives the same
 /// in-memory session as AccountButton; it never restores or stores tokens.
-class HostedPlanLibraryButton extends StatelessWidget {
-  const HostedPlanLibraryButton({
-    super.key,
-    required this.client,
-    required this.session,
-    required this.currentPlanTitle,
-    required this.onOpen,
-    required this.onCreate,
-    required this.onImportCurrent,
-    required this.lastActionError,
-  });
+Future<void> showOnlinePlans(
+  BuildContext context, {
+  required HostedPlanClient client,
+  required AccountSession session,
+  required Future<bool> Function(HostedPlan plan) onOpen,
+  required String? Function() lastActionError,
+}) => showDialog<void>(
+  context: context,
+  builder: (context) => _OnlinePlansDialog(
+    client: client,
+    session: session,
+    onOpen: onOpen,
+    lastActionError: lastActionError,
+  ),
+);
 
-  final HostedPlanClient client;
-  final AccountSession? session;
-  final String currentPlanTitle;
-  final Future<bool> Function(HostedPlan plan) onOpen;
-  final Future<bool> Function(String title) onCreate;
-  final Future<bool> Function(String title) onImportCurrent;
-  final String? Function() lastActionError;
-
-  @override
-  Widget build(BuildContext context) => TextButton.icon(
-    key: const ValueKey('hosted-plan-library'),
-    onPressed: session == null
-        ? null
-        : () => showDialog<void>(
-            context: context,
-            builder: (context) => _HostedPlanLibraryDialog(
-              client: client,
-              session: session!,
-              currentPlanTitle: currentPlanTitle,
-              onOpen: onOpen,
-              onCreate: onCreate,
-              onImportCurrent: onImportCurrent,
-              lastActionError: lastActionError,
-            ),
-          ),
-    icon: const Icon(Icons.cloud_outlined),
-    label: const Text('Hosted plans'),
+/// Asks for an online plan's title; null when cancelled or left empty.
+Future<String?> askOnlinePlanTitle(
+  BuildContext context, {
+  required String action,
+  required String confirm,
+  required String initialValue,
+}) async {
+  final title = await showDialog<String>(
+    context: context,
+    builder: (context) => _OnlinePlanTitleDialog(
+      title: action,
+      confirm: confirm,
+      initialValue: initialValue,
+    ),
   );
+  return title == null || title.isEmpty ? null : title;
 }
 
-class _HostedPlanLibraryDialog extends StatefulWidget {
-  const _HostedPlanLibraryDialog({
+class _OnlinePlansDialog extends StatefulWidget {
+  const _OnlinePlansDialog({
     required this.client,
     required this.session,
-    required this.currentPlanTitle,
     required this.onOpen,
-    required this.onCreate,
-    required this.onImportCurrent,
     required this.lastActionError,
   });
 
   final HostedPlanClient client;
   final AccountSession session;
-  final String currentPlanTitle;
   final Future<bool> Function(HostedPlan plan) onOpen;
-  final Future<bool> Function(String title) onCreate;
-  final Future<bool> Function(String title) onImportCurrent;
   final String? Function() lastActionError;
 
   @override
-  State<_HostedPlanLibraryDialog> createState() =>
-      _HostedPlanLibraryDialogState();
+  State<_OnlinePlansDialog> createState() => _OnlinePlansDialogState();
 }
 
-class _HostedPlanLibraryDialogState extends State<_HostedPlanLibraryDialog> {
+class _OnlinePlansDialogState extends State<_OnlinePlansDialog> {
   List<HostedPlan> _plans = const [];
   String? _error;
   bool _loading = true;
@@ -83,11 +68,11 @@ class _HostedPlanLibraryDialogState extends State<_HostedPlanLibraryDialog> {
     _refresh();
   }
 
-  Future<void> _refresh({bool clearActionError = true}) async {
+  Future<void> _refresh() async {
     setState(() {
       _loading = true;
       _error = null;
-      if (clearActionError) _actionError = null;
+      _actionError = null;
     });
     try {
       final plans = await widget.client.listPlans(widget.session);
@@ -102,63 +87,6 @@ class _HostedPlanLibraryDialogState extends State<_HostedPlanLibraryDialog> {
         _error = '$error';
         _loading = false;
       });
-    }
-  }
-
-  Future<String?> _titleDialog({required String action}) async {
-    final title = await showDialog<String>(
-      context: context,
-      builder: (context) => _HostedPlanTitleDialog(
-        title: action,
-        initialValue: widget.currentPlanTitle,
-      ),
-    );
-    if (title == null || title.isEmpty) return null;
-    return title;
-  }
-
-  Future<void> _create() async {
-    final title = await _titleDialog(action: 'Create hosted plan');
-    if (title == null || !mounted) return;
-    setState(() {
-      _working = true;
-      _actionError = null;
-    });
-    final opened = await widget.onCreate(title);
-    if (!mounted) return;
-    setState(() => _working = false);
-    if (opened) {
-      Navigator.pop(context);
-    } else {
-      setState(
-        () => _actionError = widget.lastActionError() ?? 'Could not create and open the hosted plan. Your current plan remains open.',
-      );
-      await _refresh(clearActionError: false);
-    }
-  }
-
-  Future<void> _import() async {
-    final title = await _titleDialog(action: 'Upload current plan');
-    if (title == null || !mounted) return;
-    setState(() {
-      _working = true;
-      _actionError = null;
-    });
-    final imported = await widget.onImportCurrent(title);
-    if (!mounted) return;
-    setState(() => _working = false);
-    if (!imported) {
-      setState(
-        () => _actionError =
-            widget.lastActionError() ??
-            'Could not upload the current plan as a hosted copy.',
-      );
-    }
-    await _refresh(clearActionError: imported);
-    if (imported && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Uploaded "$title" as a hosted copy')),
-      );
     }
   }
 
@@ -182,8 +110,8 @@ class _HostedPlanLibraryDialogState extends State<_HostedPlanLibraryDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    key: const ValueKey('hosted-library-dialog'),
-    title: const Text('Hosted plan library'),
+    key: const ValueKey('online-plans-dialog'),
+    title: const Text('Open online plan'),
     content: SizedBox(
       width: 440,
       height: 420,
@@ -192,12 +120,12 @@ class _HostedPlanLibraryDialogState extends State<_HostedPlanLibraryDialog> {
         children: [
           if (_error != null)
             Text(
-              'Could not load hosted plans: $_error',
-              key: const ValueKey('hosted-library-error'),
+              'Could not load online plans: $_error',
+              key: const ValueKey('online-plans-error'),
             ),
           if (_actionError != null)
             Semantics(
-              key: const ValueKey('hosted-library-action-error'),
+              key: const ValueKey('online-plans-action-error'),
               liveRegion: true,
               container: true,
               child: Padding(
@@ -212,18 +140,18 @@ class _HostedPlanLibraryDialogState extends State<_HostedPlanLibraryDialog> {
             child: _loading
                 ? const Center(
                     child: CircularProgressIndicator(
-                      key: ValueKey('hosted-library-loading'),
+                      key: ValueKey('online-plans-loading'),
                     ),
                   )
                 : _plans.isEmpty && _error == null
-                ? const Center(child: Text('No hosted plans yet'))
+                ? const Center(child: Text('No online plans yet'))
                 : ListView(
                     children: [
                       for (final plan in _plans)
                         ListTile(
-                          key: ValueKey('hosted-open-${plan.id}'),
+                          key: ValueKey('online-open-${plan.id}'),
                           title: Text(plan.title),
-                          subtitle: Text('Revision ${plan.revision}'),
+                          subtitle: Text('Updated ${_date(plan.updatedAt)}'),
                           trailing: const Icon(Icons.open_in_new),
                           enabled: !_working,
                           onTap: () => _open(plan),
@@ -231,57 +159,47 @@ class _HostedPlanLibraryDialogState extends State<_HostedPlanLibraryDialog> {
                     ],
                   ),
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                key: const ValueKey('hosted-refresh'),
-                onPressed: _working ? null : _refresh,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Refresh'),
-              ),
-              OutlinedButton.icon(
-                key: const ValueKey('hosted-create'),
-                onPressed: _working ? null : _create,
-                icon: const Icon(Icons.add),
-                label: const Text('Create'),
-              ),
-              FilledButton.tonalIcon(
-                key: const ValueKey('hosted-import-current'),
-                onPressed: _working ? null : _import,
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Upload current as copy'),
-              ),
-            ],
-          ),
         ],
       ),
     ),
     actions: [
+      TextButton.icon(
+        key: const ValueKey('online-plans-refresh'),
+        onPressed: _working ? null : _refresh,
+        icon: const Icon(Icons.refresh),
+        label: const Text('Refresh'),
+      ),
       TextButton(
         onPressed: _working ? null : () => Navigator.pop(context),
         child: const Text('Close'),
       ),
     ],
   );
+
+  static String _date(DateTime at) {
+    final local = at.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)} '
+        '${two(local.hour)}:${two(local.minute)}';
+  }
 }
 
-class _HostedPlanTitleDialog extends StatefulWidget {
-  const _HostedPlanTitleDialog({
+class _OnlinePlanTitleDialog extends StatefulWidget {
+  const _OnlinePlanTitleDialog({
     required this.title,
+    required this.confirm,
     required this.initialValue,
   });
 
   final String title;
+  final String confirm;
   final String initialValue;
 
   @override
-  State<_HostedPlanTitleDialog> createState() => _HostedPlanTitleDialogState();
+  State<_OnlinePlanTitleDialog> createState() => _OnlinePlanTitleDialogState();
 }
 
-class _HostedPlanTitleDialogState extends State<_HostedPlanTitleDialog> {
+class _OnlinePlanTitleDialogState extends State<_OnlinePlanTitleDialog> {
   late final TextEditingController _controller = TextEditingController(
     text: widget.initialValue,
   );
@@ -296,7 +214,7 @@ class _HostedPlanTitleDialogState extends State<_HostedPlanTitleDialog> {
   Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.title),
     content: TextField(
-      key: const ValueKey('hosted-plan-title'),
+      key: const ValueKey('online-plan-title'),
       controller: _controller,
       autofocus: true,
       decoration: const InputDecoration(labelText: 'Plan title'),
@@ -304,14 +222,14 @@ class _HostedPlanTitleDialogState extends State<_HostedPlanTitleDialog> {
     ),
     actions: [
       TextButton(
-        key: const ValueKey('hosted-title-cancel'),
+        key: const ValueKey('online-title-cancel'),
         onPressed: () => Navigator.pop(context),
         child: const Text('Cancel'),
       ),
       FilledButton(
-        key: const ValueKey('hosted-title-confirm'),
+        key: const ValueKey('online-title-confirm'),
         onPressed: () => Navigator.pop(context, _controller.text.trim()),
-        child: Text(widget.title),
+        child: Text(widget.confirm),
       ),
     ],
   );

@@ -2181,7 +2181,7 @@ void main() {
       expect(walls(tester), 1);
       expect(dirty(), isTrue);
       await tap(tester, find.byTooltip('New plan'));
-      await tap(tester, find.text('Discard'));
+      await tap(tester, find.text("Don't save"));
       expect(walls(tester), 0);
       expect(dirty(), isFalse);
       expect(bridge.openPlans(), 1);
@@ -2194,14 +2194,14 @@ void main() {
       await start(tester);
       await draw(tester);
       await tap(tester, find.byTooltip('Open plan'));
-      await tap(tester, find.text('Save changes'));
+      await tap(tester, find.widgetWithText(FilledButton, 'Save'));
       expect(dialogs, ['savePlan']);
       expect(walls(tester), 1);
       expect(dirty(), isTrue);
 
       dialog = (_) async => '${scratch.path}/missing/plan.domo';
       await tap(tester, find.byTooltip('Open plan'));
-      await tap(tester, find.text('Save changes'));
+      await tap(tester, find.widgetWithText(FilledButton, 'Save'));
       expect(dialogs, ['savePlan', 'savePlan']);
       expect(find.textContaining('Could not save'), findsOneWidget);
       expect(dirty(), isTrue);
@@ -2209,7 +2209,7 @@ void main() {
       final saved = '${scratch.path}/plan.domo';
       dialog = (call) async => call.method == 'savePlan' ? saved : null;
       await tap(tester, find.byTooltip('Open plan'));
-      await tap(tester, find.text('Save changes'));
+      await tap(tester, find.widgetWithText(FilledButton, 'Save'));
       expect(File(saved).existsSync(), isTrue);
       expect(dialogs.last, 'openPlan');
       expect(walls(tester), 1);
@@ -2229,12 +2229,12 @@ void main() {
       await start(tester);
       await draw(tester);
       await tap(tester, find.byTooltip('Open plan'));
-      await tap(tester, find.text('Discard'));
+      await tap(tester, find.text("Don't save"));
       expect(walls(tester), 1);
       expect(dirty(), isTrue);
       dialog = (_) async => '${scratch.path}/absent.domo';
       await tap(tester, find.byTooltip('Open plan'));
-      await tap(tester, find.text('Discard'));
+      await tap(tester, find.text("Don't save"));
       expect(find.textContaining('Could not open'), findsOneWidget);
       expect(walls(tester), 1);
       expect(dirty(), isTrue);
@@ -2270,12 +2270,12 @@ void main() {
     dialog = (_) async => '${scratch.path}/missing/plan.domo';
     closing = nativeClose(tester);
     await tester.pumpAndSettle();
-    await tap(tester, find.text('Save changes'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Save'));
     expect(await closing, isFalse);
     expect(dirty(), isTrue);
     closing = nativeClose(tester);
     await tester.pumpAndSettle();
-    await tap(tester, find.text('Discard'));
+    await tap(tester, find.text("Don't save"));
     expect(await closing, isTrue);
   });
 
@@ -2344,7 +2344,7 @@ void main() {
     dialog = (_) async => saved;
     final closing = nativeClose(tester);
     await tester.pumpAndSettle();
-    await tap(tester, find.text('Save changes'));
+    await tap(tester, find.widgetWithText(FilledButton, 'Save'));
     expect(await closing, isTrue);
     expect(File(saved).existsSync(), isTrue);
     expect(dirty(), isFalse);

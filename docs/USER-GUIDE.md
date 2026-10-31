@@ -190,15 +190,31 @@ Browser differences:
 - **Open** reads a `.domo` file you pick; **Save** writes to a file you choose
   where the browser supports that (Chromium-based browsers), and the plan
   shows as saved once the browser reports the write. Further **Save**s update
-  that same file silently, and **Save as** asks again to pick a new file.
+  that same file silently, and **Save as…** asks again to pick a new file.
   Elsewhere **Save** downloads the plan, but a page cannot learn whether the
   download was kept, so the plan stays marked unsaved and every **Save**
-  offers the download again. Because no copy is certain, **Save changes**
-  does not let New or Open replace it. Check the downloaded file, then choose
-  **Discard** to leave. Nothing is stored in the browser between visits
-  except preferences.
+  offers the download again. Because no copy is certain, **Save** in the
+  leave dialog does not let New or Open replace it. Check the downloaded file,
+  then choose **Don't save** to leave. Nothing is stored in the browser
+  between visits except preferences.
 - Leaving or closing the tab with unsaved changes shows the browser's own
-  warning instead of the editor's Save / Discard / Cancel dialog.
+  warning instead of the editor's Save / Don't save / Cancel dialog.
+- **Online plans**, when the page's service is configured and you are signed
+  in: **New** and **Open** become menus that also offer **New online plan…**
+  and **Open online plan…**, and the Save menu offers **Save as new online
+  plan…**, after which Save writes to that new online plan. An online plan
+  shows as **Online · title**. Its **Save** saves online, and its Save menu
+  offers **Download a copy (.domo)**, which keeps Save pointed at the online
+  plan. The leave dialog also offers **Download a copy**. One tab or session
+  edits an online plan at a time. If a save cannot be confirmed, or a tab
+  left idle lost its hold on the plan, the next **Save** reconnects and
+  retries, as long as nobody else has saved the plan since. When Save cannot
+  finish, the title shows **Not saved online** and your edits stay open:
+  - if the plan is open in another tab or session, close it there (or wait
+    about a minute) and Save again;
+  - if someone else saved the plan since your last save, Save will not
+    overwrite it. Keep your version with **Save as new online plan…** or
+    **Download a copy**.
 - **Furniture** offers **Upload model** and **Import folder** instead of attached
   filesystem libraries. Folder selection recursively uploads supported model
   files, which are embedded in the plan but not placed automatically.
@@ -230,9 +246,10 @@ filename fragment, and clearing it restores the full list.
 **Save** writes to the plan's own file without asking: the file it was opened
 from, or the file it was last saved to (in the browser, one the browser
 confirmed it wrote). A new plan has no file yet, and a download cannot be
-rewritten, so there **Save** asks where to write. **Save as** always asks
-where to write, and the plan follows the chosen file. Cancelling the picker
-makes no save. Dirty plans are marked beside the filename.
+rewritten, so there **Save** asks where to write. **Save as…**, in the menu
+beside Save, always asks where to write, and the plan follows the chosen file.
+Cancelling the picker makes no save. Dirty plans are marked beside the
+filename.
 
 **Ctrl+S** (**Command+S** on macOS) runs the same Save action from the 2D or
 3D view, toolbar or inspector. It reuses the current file wherever the host
@@ -240,8 +257,8 @@ supports rewriting it.
 
 New, Open, window close and application quit ask before leaving unsaved work:
 
-- **Save changes** continues only after a successful save.
-- **Discard** permits leaving without saving the current edits.
+- **Save** continues only after a successful save.
+- **Don't save** permits leaving without saving the current edits.
 - **Cancel** keeps the current plan.
 
 Cancelled pickers and failed saves/opens preserve the current session. Pending
