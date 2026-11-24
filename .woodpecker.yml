@@ -18,21 +18,7 @@ when:
         - "examples/**"
 
 steps:
-  - name: catalog-test
-    image: python:3.12-alpine
-    commands:
-      - python3 -m unittest catalog/test_generate.py
-    backend_options:
-      kubernetes:
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
-            cpu: 500m
-            memory: 512Mi
-
-  - name: rust-core
+  - name: rust-and-catalog
     image: rust:1.98.0-slim-bookworm
     volumes:
       - woodpecker-ci-cache:/cache
@@ -41,11 +27,17 @@ steps:
       CARGO_TARGET_DIR: /cache/domowik-target
       CARGO_BUILD_JOBS: "2"
     commands:
-      - mkdir -p /cache/cargo /cache/domowik-target
+      - mkdir -p /cache/cargo /cache/domowik-target /cache/domowik-frontend-target
+      - apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
       - rustup component add rustfmt clippy
       - cargo fmt --check
       - cargo clippy --workspace --locked --all-targets -- -D warnings
       - cargo test --workspace --locked
+      - CARGO_TARGET_DIR=/cache/domowik-frontend-target cargo build --manifest-path frontend/Cargo.toml --release --locked -p domowik-frontend-bridge
+      - mkdir -p frontend/target/release
+      - cp /cache/domowik-frontend-target/release/libdomowik_bridge.so frontend/target/release/libdomowik_bridge.so
+      - python3 -m unittest catalog/test_generate.py
+      - rm -rf frontend/target
     backend_options:
       kubernetes:
         resources:
@@ -58,7 +50,7 @@ steps:
 
   - name: flutter-test
     image: plugfox/flutter:3.47.7
-    depends_on: [rust-core]
+    depends_on: [rust-and-catalog]
     volumes:
       - woodpecker-ci-cache:/cache
     environment:
