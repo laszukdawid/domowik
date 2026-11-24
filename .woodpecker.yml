@@ -1,0 +1,82 @@
+when:
+  - event: pull_request
+    branch: main
+    evaluate: 'CI_COMMIT_PULL_REQUEST_DRAFT != "true"'
+    path:
+      exclude:
+        - "**/*.md"
+        - "docs/**"
+        - "issues/**"
+        - "examples/**"
+  - event: push
+    branch: main
+    path:
+      exclude:
+        - "**/*.md"
+        - "docs/**"
+        - "issues/**"
+        - "examples/**"
+
+steps:
+  - name: catalog-test
+    image: python:3.12-alpine
+    commands:
+      - python3 -m unittest catalog/test_generate.py
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+  - name: rust-core
+    image: rust:1.98.0-slim-bookworm
+    volumes:
+      - woodpecker-ci-cache:/cache
+    environment:
+      CARGO_HOME: /cache/cargo
+      CARGO_TARGET_DIR: /cache/domowik-target
+      CARGO_BUILD_JOBS: "2"
+    commands:
+      - mkdir -p /cache/cargo /cache/domowik-target
+      - rustup component add rustfmt clippy
+      - cargo fmt --check
+      - cargo clippy --workspace --locked --all-targets -- -D warnings
+      - cargo test --workspace --locked
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 3000m
+            memory: 3584Mi
+
+  - name: flutter-test
+    image: plugfox/flutter:3.47.7
+    depends_on: [rust-core]
+    volumes:
+      - woodpecker-ci-cache:/cache
+    environment:
+      PUB_CACHE: /cache/pub-cache
+      DART_VM_OPTIONS: --old_gen_heap_size=1024
+      CI: "true"
+    commands:
+      - mkdir -p /cache/pub-cache
+      - cd frontend
+      - flutter pub get
+      - flutter analyze --no-pub
+      - flutter test --no-pub --concurrency=2
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 3000m
+            memory: 3584Mi
