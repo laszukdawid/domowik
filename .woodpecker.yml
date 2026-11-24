@@ -30,7 +30,7 @@ steps:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
     commands:
-      - apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+      - apt-get update && apt-get install -y --no-install-recommends python3 libcap2-bin && rm -rf /var/lib/apt/lists/*
       - |
         python3 - <<'PY'
         import shutil
@@ -45,7 +45,7 @@ steps:
       - rustup component add rustfmt clippy
       - cargo fmt --check
       - cargo clippy --workspace --locked --all-targets -- -D warnings
-      - cargo test --workspace --locked
+      - capsh --drop=cap_dac_override,cap_dac_read_search -- -c 'cargo test --workspace --locked'
       - CARGO_TARGET_DIR=/cache/domowik-frontend-target cargo build --manifest-path frontend/Cargo.toml --release --locked -p domowik-frontend-bridge
       - mkdir -p frontend/target/release
       - cp /cache/domowik-frontend-target/release/libdomowik_bridge.so frontend/target/release/libdomowik_bridge.so
