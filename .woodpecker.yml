@@ -1,0 +1,87 @@
+when:
+  - event: pull_request
+    branch: main
+    evaluate: 'CI_COMMIT_PULL_REQUEST_DRAFT != "true"'
+    path:
+      exclude:
+        - "**/*.md"
+        - "docs/**"
+        - "issues/**"
+        - "examples/**"
+  - event: push
+    branch: main
+    path:
+      exclude:
+        - "**/*.md"
+        - "docs/**"
+        - "issues/**"
+        - "examples/**"
+
+steps:
+  - name: rust-and-catalog
+    image: rust:1.98.0-slim-bookworm
+    volumes:
+      - woodpecker-ci-cache:/cache
+    environment:
+      CARGO_HOME: /cache/cargo
+      CARGO_TARGET_DIR: /cache/domowik-target
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends python3 libcap2-bin && rm -rf /var/lib/apt/lists/*
+      - |
+        python3 - <<'PY'
+        import shutil
+        u = shutil.disk_usage('/cache')
+        pct = u.used * 100 // u.total
+        print(f'/cache usage: {pct}%')
+        if pct > 75:
+            for p in ('/cache/domowik-target', '/cache/domowik-frontend-target', '/cache/domowik-serve-target'):
+                shutil.rmtree(p, ignore_errors=True)
+        PY
+      - mkdir -p /cache/cargo /cache/domowik-target /cache/domowik-frontend-target
+      - rustup component add rustfmt clippy
+      - cargo fmt --check
+      - cargo clippy --workspace --locked --all-targets -- -D warnings
+      - capsh --drop=cap_dac_override,cap_dac_read_search -- -c 'cargo test --workspace --locked'
+      - CARGO_TARGET_DIR=/cache/domowik-frontend-target cargo build --manifest-path frontend/Cargo.toml --release --locked -p domowik-frontend-bridge
+      - mkdir -p frontend/target/release
+      - cp /cache/domowik-frontend-target/release/libdomowik_bridge.so frontend/target/release/libdomowik_bridge.so
+      - python3 -m unittest catalog/test_generate.py
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 3000m
+            memory: 3584Mi
+
+  - name: flutter-test
+    image: plugfox/flutter:3.47.7
+    depends_on: [rust-and-catalog]
+    volumes:
+      - woodpecker-ci-cache:/cache
+    environment:
+      PUB_CACHE: /cache/pub-cache
+      DART_VM_OPTIONS: --old_gen_heap_size=1024
+      CI: "true"
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+      - mkdir -p /cache/pub-cache
+      - cd frontend
+      - flutter pub get
+      - flutter analyze --no-pub
+      - flutter test --no-pub --concurrency=2
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 3000m
+            memory: 3584Mi
