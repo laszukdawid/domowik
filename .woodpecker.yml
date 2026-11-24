@@ -26,9 +26,13 @@ steps:
       CARGO_HOME: /cache/cargo
       CARGO_TARGET_DIR: /cache/domowik-target
       CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     commands:
-      - mkdir -p /cache/cargo /cache/domowik-target /cache/domowik-frontend-target
       - apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+      - python3 -c "import shutil; u=shutil.disk_usage('/cache'); pct=u.used*100//u.total; print(f'/cache usage: {pct}%'); [shutil.rmtree(p, ignore_errors=True) for p in ('/cache/domowik-target','/cache/domowik-frontend-target','/cache/domowik-serve-target') if pct > 75]"
+      - mkdir -p /cache/cargo /cache/domowik-target /cache/domowik-frontend-target
       - rustup component add rustfmt clippy
       - cargo fmt --check
       - cargo clippy --workspace --locked --all-targets -- -D warnings
