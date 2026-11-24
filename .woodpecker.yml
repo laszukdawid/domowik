@@ -50,7 +50,6 @@ steps:
       - mkdir -p frontend/target/release
       - cp /cache/domowik-frontend-target/release/libdomowik_bridge.so frontend/target/release/libdomowik_bridge.so
       - python3 -m unittest catalog/test_generate.py
-      - rm -rf frontend/target
     backend_options:
       kubernetes:
         resources:
