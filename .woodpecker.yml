@@ -31,7 +31,16 @@ steps:
       CARGO_PROFILE_TEST_DEBUG: "0"
     commands:
       - apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
-      - python3 -c "import shutil; u=shutil.disk_usage('/cache'); pct=u.used*100//u.total; print(f'/cache usage: {pct}%'); [shutil.rmtree(p, ignore_errors=True) for p in ('/cache/domowik-target','/cache/domowik-frontend-target','/cache/domowik-serve-target') if pct > 75]"
+      - |
+        python3 - <<'PY'
+        import shutil
+        u = shutil.disk_usage('/cache')
+        pct = u.used * 100 // u.total
+        print(f'/cache usage: {pct}%')
+        if pct > 75:
+            for p in ('/cache/domowik-target', '/cache/domowik-frontend-target', '/cache/domowik-serve-target'):
+                shutil.rmtree(p, ignore_errors=True)
+        PY
       - mkdir -p /cache/cargo /cache/domowik-target /cache/domowik-frontend-target
       - rustup component add rustfmt clippy
       - cargo fmt --check
