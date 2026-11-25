@@ -149,6 +149,7 @@ steps:
         if changed is None:
             core_changed = True
             web_changed = True
+            catalog_changed = True
         else:
             core_changed = any(
                 p.startswith("crates/") or p in ("Cargo.toml", "Cargo.lock")
@@ -156,6 +157,12 @@ steps:
             )
             web_changed = core_changed or any(
                 p.startswith("frontend/") or p in ("LICENSE", "NOTICE")
+                for p in changed
+            )
+            catalog_changed = core_changed or any(
+                p.startswith("catalog/")
+                or p.startswith("frontend/native/")
+                or p in ("frontend/Cargo.toml", "frontend/Cargo.lock")
                 for p in changed
             )
 
@@ -166,11 +173,12 @@ steps:
                 "UPSTREAM_REV": commit,
                 "UPSTREAM_CORE_CHANGED": "true" if core_changed else "false",
                 "UPSTREAM_WEB_CHANGED": "true" if web_changed else "false",
+                "UPSTREAM_CATALOG_CHANGED": "true" if catalog_changed else "false",
             },
         }
         print(
             f"Triggering downstream pipeline for {commit[:8]} "
-            f"(core_changed={core_changed}, web_changed={web_changed})"
+            f"(core_changed={core_changed}, web_changed={web_changed}, catalog_changed={catalog_changed})"
         )
         req = urllib.request.Request(
             url,
