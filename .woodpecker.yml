@@ -17,9 +17,93 @@ when:
         - "issues/**"
         - "examples/**"
 
+# Steps run sequentially in declaration order so path-gated PR steps can skip
+# cleanly without breaking downstream dependencies.
 steps:
+  - name: build-bridge
+    image: rust:1.98.0-slim-bookworm
+    when:
+      - event: push
+        branch: main
+      - event: pull_request
+        branch: main
+        path:
+          - "frontend/**"
+          - "crates/**"
+          - "catalog/**"
+          - "Cargo.toml"
+          - "Cargo.lock"
+          - "rust-toolchain.toml"
+          - ".woodpecker.yml"
+    volumes:
+      - woodpecker-ci-cache:/cache
+    environment:
+      CARGO_HOME: /cache/cargo
+      CARGO_TARGET_DIR: /cache/domowik-ci-bridge-target
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      # CI-only FFI bridge for catalog & Flutter tests; release.yml and profile.web keep fat LTO.
+      CARGO_PROFILE_RELEASE_LTO: "thin"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "4"
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+      - mkdir -p /cache/cargo /cache/domowik-ci-bridge-target
+      - |
+        python3 - <<'PY'
+        import os, shutil, time
+        from pathlib import Path
+        active = Path("/cache/domowik-ci-bridge-target")
+        (active / ".ci-active").touch()
+        u = shutil.disk_usage("/cache")
+        pct = u.used * 100 // u.total
+        print(f"/cache usage: {pct}%")
+        if pct > 82:
+            now = time.time()
+            for cand in (Path("/cache/domowik-target"), Path("/cache/domowik-frontend-target")):
+                if not cand.exists():
+                    continue
+                newest = cand.stat().st_mtime
+                m = cand / ".ci-active"
+                if m.exists():
+                    newest = max(newest, m.stat().st_mtime)
+                if now - newest < 1800:
+                    print(f"Skipping active cache {cand}")
+                    continue
+                print(f"Pruning stale cache {cand}")
+                shutil.rmtree(cand, ignore_errors=True)
+        PY
+      - cargo build --manifest-path frontend/Cargo.toml --release --locked -p domowik-frontend-bridge
+      - mkdir -p frontend/target/release
+      - cp /cache/domowik-ci-bridge-target/release/libdomowik_bridge.so frontend/target/release/libdomowik_bridge.so
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 3000m
+            memory: 3584Mi
+
   - name: rust-and-catalog
     image: rust:1.98.0-slim-bookworm
+    when:
+      - event: push
+        branch: main
+      - event: pull_request
+        branch: main
+        path:
+          - "crates/**"
+          - "Cargo.toml"
+          - "Cargo.lock"
+          - "catalog/**"
+          - "frontend/Cargo.toml"
+          - "frontend/Cargo.lock"
+          - "frontend/native/**"
+          - "frontend/renderer/**"
+          - "frontend/web-renderer/**"
+          - "rust-toolchain.toml"
+          - ".woodpecker.yml"
     volumes:
       - woodpecker-ci-cache:/cache
     environment:
@@ -31,24 +115,35 @@ steps:
       CARGO_PROFILE_TEST_DEBUG: "0"
     commands:
       - apt-get update && apt-get install -y --no-install-recommends python3 libcap2-bin && rm -rf /var/lib/apt/lists/*
+      - mkdir -p /cache/cargo /cache/domowik-target
       - |
         python3 - <<'PY'
-        import shutil
-        u = shutil.disk_usage('/cache')
+        import shutil, time
+        from pathlib import Path
+        active = Path("/cache/domowik-target")
+        (active / ".ci-active").touch()
+        u = shutil.disk_usage("/cache")
         pct = u.used * 100 // u.total
-        print(f'/cache usage: {pct}%')
-        if pct > 75:
-            for p in ('/cache/domowik-target', '/cache/domowik-frontend-target', '/cache/domowik-serve-target'):
-                shutil.rmtree(p, ignore_errors=True)
+        print(f"/cache usage: {pct}%")
+        if pct > 82:
+            now = time.time()
+            for cand in (Path("/cache/domowik-ci-bridge-target"), Path("/cache/domowik-frontend-target")):
+                if not cand.exists():
+                    continue
+                newest = cand.stat().st_mtime
+                m = cand / ".ci-active"
+                if m.exists():
+                    newest = max(newest, m.stat().st_mtime)
+                if now - newest < 1800:
+                    print(f"Skipping active cache {cand}")
+                    continue
+                print(f"Pruning stale cache {cand}")
+                shutil.rmtree(cand, ignore_errors=True)
         PY
-      - mkdir -p /cache/cargo /cache/domowik-target /cache/domowik-frontend-target
       - rustup component add rustfmt clippy
       - cargo fmt --check
       - cargo clippy --workspace --locked --all-targets -- -D warnings
       - capsh --drop=cap_dac_override,cap_dac_read_search -- -c 'cargo test --workspace --locked'
-      - CARGO_TARGET_DIR=/cache/domowik-frontend-target cargo build --manifest-path frontend/Cargo.toml --release --locked -p domowik-frontend-bridge
-      - mkdir -p frontend/target/release
-      - cp /cache/domowik-frontend-target/release/libdomowik_bridge.so frontend/target/release/libdomowik_bridge.so
       - python3 -m unittest catalog/test_generate.py
     backend_options:
       kubernetes:
@@ -62,12 +157,22 @@ steps:
 
   - name: flutter-test
     image: plugfox/flutter:3.47.7
-    depends_on: [rust-and-catalog]
+    when:
+      - event: push
+        branch: main
+      - event: pull_request
+        branch: main
+        path:
+          - "frontend/**"
+          - "crates/**"
+          - "Cargo.toml"
+          - "Cargo.lock"
+          - ".woodpecker.yml"
     volumes:
       - woodpecker-ci-cache:/cache
     environment:
       PUB_CACHE: /cache/pub-cache
-      DART_VM_OPTIONS: --old_gen_heap_size=1024
+      DART_VM_OPTIONS: --old_gen_heap_size=1536
       CI: "true"
     commands:
       - apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
@@ -88,7 +193,6 @@ steps:
 
   - name: notify-downstream
     image: python:3.12-alpine
-    depends_on: [rust-and-catalog, flutter-test]
     when:
       - event: push
         branch: main
