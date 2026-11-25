@@ -85,3 +85,118 @@ steps:
           limits:
             cpu: 3000m
             memory: 3584Mi
+
+  - name: notify-downstream
+    image: python:3.12-alpine
+    depends_on: [rust-and-catalog, flutter-test]
+    when:
+      - event: push
+        branch: main
+    environment:
+      DOWNSTREAM_TRIGGER_URL:
+        from_secret: downstream_trigger_url
+      DOWNSTREAM_TRIGGER_TOKEN:
+        from_secret: downstream_trigger_token
+    commands:
+      - apk add --no-cache git
+      - |
+        python3 - <<'PY'
+        import json
+        import os
+        import subprocess
+        import sys
+        import urllib.request
+
+        url = os.environ.get("DOWNSTREAM_TRIGGER_URL", "").strip()
+        token = os.environ.get("DOWNSTREAM_TRIGGER_TOKEN", "").strip()
+        if not url or not token:
+            print("Downstream trigger not configured; skipping.")
+            sys.exit(0)
+
+        commit = os.environ.get("CI_COMMIT_SHA", "").strip()
+        prev = os.environ.get("CI_PREV_COMMIT_SHA", "").strip()
+        if not commit:
+            commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+
+        def try_diff(base, head):
+            res = subprocess.run(
+                ["git", "diff", "--name-only", f"{base}..{head}"],
+                capture_output=True,
+                text=True,
+            )
+            if res.returncode == 0:
+                return [line.strip() for line in res.stdout.splitlines() if line.strip()]
+            return None
+
+        changed = None
+        candidates = []
+        if prev and prev != "0" * 40 and prev != commit:
+            candidates.append((prev, commit))
+        candidates.append((f"{commit}~1", commit))
+
+        for base, head in candidates:
+            changed = try_diff(base, head)
+            if changed is not None:
+                break
+
+        if changed is None:
+            subprocess.run(["git", "fetch", "--depth", "20", "origin", "main"], check=False)
+            for base, head in candidates:
+                changed = try_diff(base, head)
+                if changed is not None:
+                    break
+
+        if changed is None:
+            core_changed = True
+            web_changed = True
+        else:
+            core_changed = any(
+                p.startswith("crates/") or p in ("Cargo.toml", "Cargo.lock")
+                for p in changed
+            )
+            web_changed = core_changed or any(
+                p.startswith("frontend/") or p in ("LICENSE", "NOTICE")
+                for p in changed
+            )
+
+        payload = {
+            "branch": "main",
+            "message": f"upstream: {commit[:8]}",
+            "variables": {
+                "UPSTREAM_REV": commit,
+                "UPSTREAM_CORE_CHANGED": "true" if core_changed else "false",
+                "UPSTREAM_WEB_CHANGED": "true" if web_changed else "false",
+            },
+        }
+        print(
+            f"Triggering downstream pipeline for {commit[:8]} "
+            f"(core_changed={core_changed}, web_changed={web_changed})"
+        )
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            print(f"Downstream trigger accepted: HTTP {resp.status}")
+            try:
+                info = json.loads(body)
+                if "number" in info:
+                    print(f"Triggered downstream pipeline #{info['number']}")
+            except Exception:
+                pass
+        PY
+    backend_options:
+      kubernetes:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
