@@ -401,6 +401,208 @@ void main() {
     expect(tester.getRect(find.byType(ClipRect).last), baseline);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'two-row header places identity + settings/avatar on top and in-app actions + right-aligned save below',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final calls = <String>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditorShell(
+            fileName: 'Main house',
+            isOnline: true,
+            onNew: () => calls.add('new-local'),
+            onNewOnline: () => calls.add('new-online'),
+            newOnlineTooltip: 'New property plan',
+            onOpen: () => calls.add('open-local'),
+            onOpenOnline: () => calls.add('open-online'),
+            onSave: () => calls.add('save'),
+            onSaveAs: () => calls.add('save-as'),
+            onAssets: () => calls.add('furniture'),
+            onPreferences: () => calls.add('preferences'),
+            onViewModeChanged: calls.add,
+            account: TextButton(
+              key: const ValueKey('account'),
+              onPressed: () => calls.add('account'),
+              child: const Text('person@example.test'),
+            ),
+            propertyPlans: TextButton(
+              key: const ValueKey('property-plans-button'),
+              onPressed: () => calls.add('property-plans'),
+              child: const Text('Property plans'),
+            ),
+            onUndo: null,
+            onRedo: null,
+            tools: const SizedBox(),
+            inspector: const SizedBox(),
+            canvas: const SizedBox(),
+            status: 'Ready',
+            statusIsError: false,
+          ),
+        ),
+      );
+
+      final topRow = tester.getRect(
+        find.byKey(const ValueKey('header-top-row')),
+      );
+      final actionsRow = tester.getRect(
+        find.byKey(const ValueKey('header-actions-row')),
+      );
+      expect(topRow.bottom, lessThanOrEqualTo(actionsRow.top + 1.0));
+
+      // Top row left: Domowik icon, name, Online badge, plan title.
+      final brandIcon = tester.getRect(find.byIcon(Icons.cottage_outlined));
+      final badge = tester.getRect(
+        find.byKey(const ValueKey('plan-storage-badge')),
+      );
+      final title = tester.getRect(find.byKey(const ValueKey('plan-title')));
+      expect(find.text('Online'), findsOneWidget);
+      expect(find.text('Main house'), findsOneWidget);
+      expect(brandIcon.center.dy, inInclusiveRange(topRow.top, topRow.bottom));
+      expect(badge.center.dy, inInclusiveRange(topRow.top, topRow.bottom));
+      expect(title.center.dy, inInclusiveRange(topRow.top, topRow.bottom));
+
+      // Top row right: Settings, then Account/Avatar in the top-right corner.
+      final prefs = tester.getRect(find.byKey(const ValueKey('preferences')));
+      final account = tester.getRect(find.byKey(const ValueKey('account')));
+      expect(prefs.center.dy, inInclusiveRange(topRow.top, topRow.bottom));
+      expect(account.center.dy, inInclusiveRange(topRow.top, topRow.bottom));
+      expect(account.left, greaterThanOrEqualTo(prefs.right));
+      expect(account.right, greaterThan(1000));
+
+      // Second row left: New, Open, Furniture, View, Property plans under the icon.
+      final newBtn = tester.getRect(find.byKey(const ValueKey('new-action')));
+      final openBtn = tester.getRect(find.byKey(const ValueKey('open-action')));
+      final furnitureBtn = tester.getRect(
+        find.byKey(const ValueKey('asset-library')),
+      );
+      final saveBtn = tester.getRect(find.byKey(const ValueKey('save-action')));
+      expect(
+        newBtn.center.dy,
+        inInclusiveRange(actionsRow.top, actionsRow.bottom),
+      );
+      expect(newBtn.left, lessThan(200));
+      expect(openBtn.left, greaterThan(newBtn.right));
+      expect(furnitureBtn.left, greaterThan(openBtn.right));
+      // Save is right-aligned on the second row.
+      expect(
+        saveBtn.center.dy,
+        inInclusiveRange(actionsRow.top, actionsRow.bottom),
+      );
+      expect(saveBtn.right, greaterThan(1050));
+
+      // Signed-in split New & Open default to online, with local options in dropdown.
+      await tester.tap(find.byKey(const ValueKey('new-action')));
+      await tester.tap(find.byKey(const ValueKey('open-action')));
+      await tester.tap(find.byKey(const ValueKey('new-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New local plan'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('open-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open local file…'));
+      await tester.pumpAndSettle();
+      expect(calls, ['new-online', 'open-online', 'new-local', 'open-local']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'offline plan shows Offline badge and narrow header fits cleanly',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 700));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EditorShell(
+            fileName: 'Untitled plan',
+            isOnline: false,
+            onNew: () {},
+            onNewOnline: () {},
+            onOpen: () {},
+            onOpenOnline: () {},
+            onSave: () {},
+            onSaveAs: () {},
+            onAssets: () {},
+            onPreferences: () {},
+            account: TextButton.icon(
+              key: const ValueKey('account'),
+              onPressed: () {},
+              icon: const Icon(Icons.account_circle_outlined),
+              label: const Text('Sign in'),
+            ),
+            onViewModeChanged: (_) {},
+            onUndo: null,
+            onRedo: null,
+            tools: const SizedBox(),
+            inspector: const SizedBox(),
+            canvas: const SizedBox(),
+            status: 'Ready',
+            statusIsError: false,
+          ),
+        ),
+      );
+      expect(find.text('Offline'), findsOneWidget);
+      expect(find.text('Untitled plan'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('clicking the plan title edits it inline and Escape cancels', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final renamed = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditorShell(
+          fileName: 'Untitled plan • Unsaved',
+          editableTitle: 'Untitled plan',
+          onRenamePlan: renamed.add,
+          onNew: () {},
+          onOpen: () {},
+          onSave: () {},
+          onSaveAs: () {},
+          onUndo: null,
+          onRedo: null,
+          tools: const SizedBox(),
+          inspector: const SizedBox(),
+          canvas: const SizedBox(),
+          status: 'Ready',
+          statusIsError: false,
+        ),
+      ),
+    );
+
+    // Click to edit, type a new name, press Escape -> cancelled.
+    await tester.tap(find.byKey(const ValueKey('plan-title')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('plan-title-input')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('plan-title-input')),
+      'Discarded name',
+    );
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('plan-title-input')), findsNothing);
+    expect(renamed, isEmpty);
+
+    // Click to edit, enter a new name, submit -> commits.
+    await tester.tap(find.byKey(const ValueKey('plan-title')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('plan-title-input')),
+      '  Main floor  ',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('plan-title-input')), findsNothing);
+    expect(renamed, ['Main floor']);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _CanvasCounter extends StatefulWidget {

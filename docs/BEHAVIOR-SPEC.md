@@ -4911,12 +4911,16 @@ only: every run starts signed out, the editor makes no account or plan
 request before the user signs in, and sign-out revokes the token (a token the
 service no longer accepts counts as signed out). Desktop sign-in keeps the
 open plan and its edits in place; browser sign-in leaves the page and needs
-the leave choices below. With a signed-in
-session New and Open offer these online actions beside their local ones, and
-the save menu offers Save as new online plan. Signing in never uploads a local
-plan automatically. Local files continue to open and save
-without an account or network connection; a hosted plan is identified and
-presented separately from a local file.
+the leave choices below. With a signed-in session, **New** defaults to creating a new hosted plan (and,
+when HomeHero property integration is available, linking it to the user's
+HomeHero property) with a local-plan option in its chevron menu, **Open**
+defaults to opening a hosted plan with a local-file option in its chevron menu,
+and **Save** defaults to online storage for unbound plans as well as hosted
+plans while **Save as** remains available for local storage alongside Save as
+new online plan. Signing in never uploads a local plan automatically. Local
+files continue to open and save without an account or network connection; a
+hosted plan is identified with an Online badge separately from an Offline local
+file.
 
 Opening a hosted plan first acquires its single writer lease (labelled
 `browser` or `api`) and then downloads its package. The lease revision and

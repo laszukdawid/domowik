@@ -57,7 +57,7 @@ void main() {
     expect(find.text('ann@example.com'), findsOneWidget);
   });
 
-  testWidgets('the menu names the account, the server and its plans', (
+  testWidgets('the menu names the account, the server and its plan quota', (
     tester,
   ) async {
     final client = _FakeClient(existing: const AccountSession(token: 'csrf'));
@@ -74,8 +74,8 @@ void main() {
     expect(find.text('ann@example.com'), findsNWidgets(2));
     expect(find.text('on planner.example'), findsOneWidget);
     expect(find.text('1 of 1 plan'), findsOneWidget);
-    expect(find.text('Flat'), findsOneWidget);
-    expect(find.textContaining('Updated '), findsOneWidget);
+    expect(find.text('Flat'), findsNothing);
+    expect(find.textContaining('Updated '), findsNothing);
     expect(client.profileReads, 2, reason: 'opening the menu refreshes it');
   });
 

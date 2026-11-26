@@ -121,6 +121,11 @@ class HostedPlanDownload {
 abstract interface class HostedPlanClient {
   Future<List<HostedPlan>> listPlans(AccountSession session);
   Future<HostedPlan> createPlan(AccountSession session, String title);
+  Future<HostedPlan> renamePlan(
+    AccountSession session,
+    String planId,
+    String title,
+  );
   Future<HostedPlan> importPlan(
     AccountSession session,
     String title,

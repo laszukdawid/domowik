@@ -101,6 +101,13 @@ class _Client implements HostedPlanClient {
       throw UnimplementedError();
 
   @override
+  Future<HostedPlan> renamePlan(
+    AccountSession session,
+    String planId,
+    String title,
+  ) => throw UnimplementedError();
+
+  @override
   Future<HostedPlan> importPlan(
     AccountSession session,
     String title,

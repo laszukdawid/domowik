@@ -11,9 +11,13 @@ class EditorShell extends StatelessWidget {
   const EditorShell({
     super.key,
     required this.fileName,
+    this.editableTitle,
+    this.onRenamePlan,
+    this.isOnline = false,
     required this.onNew,
     required this.onOpen,
     required this.onSave,
+    this.saveTooltip = 'Save plan',
     required this.onSaveAs,
     this.onExportUsdz,
     this.onAssets,
@@ -21,6 +25,7 @@ class EditorShell extends StatelessWidget {
     this.account,
     this.propertyPlans,
     this.onNewOnline,
+    this.newOnlineTooltip = 'New online plan',
     this.onOpenOnline,
     this.onSaveAsOnline,
     this.saveAsLabel = 'Save as…',
@@ -37,19 +42,35 @@ class EditorShell extends StatelessWidget {
 
   final String fileName;
 
-  /// The sign-in control, when a server is configured.
+  /// The raw editable plan name (without unsaved status suffixes) shown when
+  /// the user clicks the title to rename inline. Defaults to [fileName].
+  final String? editableTitle;
+
+  /// When supplied, clicking the plan title under the Domowik heading opens an
+  /// inline text field and calls this callback with the committed trimmed name.
+  final ValueChanged<String>? onRenamePlan;
+
+  /// Whether the open plan is currently stored online (vs offline / local).
+  final bool isOnline;
+
+  /// The sign-in / avatar control, placed in the top-right corner when a
+  /// server is configured.
   final Widget? account;
   final Widget? propertyPlans;
   final VoidCallback onNew;
   final VoidCallback onOpen;
 
   /// Online counterparts of New and Open. When present, New and Open become
-  /// menus offering both; absent when no account is signed in.
+  /// split controls whose default action uses the online workflow and whose
+  /// dropdown offers the local counterpart; absent when no account is signed in.
   final VoidCallback? onNewOnline;
+  final String newOnlineTooltip;
   final VoidCallback? onOpenOnline;
 
-  /// Saves where the plan lives: its online plan or its own file.
+  /// Saves where the plan lives: its online plan or its own file (and online
+  /// storage by default when signed in).
   final VoidCallback onSave;
+  final String saveTooltip;
 
   /// Writes the plan to a file the user chooses. Reached from the save
   /// control's dropdown under [saveAsLabel]; a plan the plain [onSave]
@@ -185,28 +206,6 @@ class EditorShell extends StatelessWidget {
           ),
         );
 
-  /// A labelled header menu; icon-only when the window is narrow. [items]
-  /// maps each entry's text to its action, in display order.
-  static Widget _headerMenu({
-    Key? key,
-    required bool compact,
-    required String tooltip,
-    required IconData icon,
-    required String label,
-    required Map<String, VoidCallback> items,
-  }) => PopupMenuButton<String>(
-    key: key,
-    tooltip: tooltip,
-    position: PopupMenuPosition.under,
-    onSelected: (item) => items[item]!(),
-    itemBuilder: (_) => [
-      for (final item in items.keys)
-        PopupMenuItem(value: item, child: Text(item)),
-    ],
-    icon: compact ? Icon(icon) : null,
-    child: compact ? null : _MenuLabel(icon: icon, label: label),
-  );
-
   @override
   Widget build(BuildContext context) => CallbackShortcuts(
     bindings: {
@@ -234,10 +233,14 @@ class EditorShell extends StatelessWidget {
           body: SafeArea(
             child: Column(
               children: [
+                // Row 1: General app/plan identity on the left (icon, Domowik,
+                // online/offline status, plan name) and high-level app/user
+                // management (Settings and Avatar / Sign in) on the top right.
                 Padding(
+                  key: const ValueKey('header-top-row'),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
-                    vertical: 10,
+                    vertical: 8,
                   ),
                   child: Row(
                     children: [
@@ -250,128 +253,160 @@ class EditorShell extends StatelessWidget {
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Text(
-                              'Domowik',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w700,
-                              ),
+                            Wrap(
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              spacing: 8,
+                              runSpacing: 2,
+                              children: [
+                                const Text(
+                                  'Domowik',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                _PlanStorageBadge(isOnline: isOnline),
+                              ],
                             ),
-                            Text(
-                              fileName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.onSurfaceVariant,
-                              ),
+                            _EditablePlanTitle(
+                              displayText: fileName,
+                              editableTitle: editableTitle ?? fileName,
+                              onRename: onRenamePlan,
                             ),
                           ],
                         ),
                       ),
-                      Flexible(
-                        flex: 3,
-                        child: Wrap(
-                          alignment: WrapAlignment.end,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            if (onNewOnline == null)
-                              _headerButton(
-                                compact: compact,
-                                onPressed: onNew,
-                                tooltip: 'New plan',
-                                icon: Icons.note_add_outlined,
-                                label: 'New',
-                              )
-                            else
-                              _headerMenu(
-                                key: const ValueKey('new-menu'),
-                                compact: compact,
-                                tooltip: 'New plan',
-                                icon: Icons.note_add_outlined,
-                                label: 'New',
-                                items: {
-                                  'New plan': onNew,
-                                  'New online plan…': onNewOnline!,
-                                },
-                              ),
-                            if (onOpenOnline == null)
-                              _headerButton(
-                                compact: compact,
-                                onPressed: onOpen,
-                                tooltip: 'Open plan',
-                                icon: Icons.folder_open_outlined,
-                                label: 'Open',
-                              )
-                            else
-                              _headerMenu(
-                                key: const ValueKey('open-menu'),
-                                compact: compact,
-                                tooltip: 'Open plan',
-                                icon: Icons.folder_open_outlined,
-                                label: 'Open',
-                                items: {
-                                  'Open file…': onOpen,
-                                  'Open online plan…': onOpenOnline!,
-                                },
-                              ),
-                            const SizedBox(width: 8),
-                            if (onAssets != null)
-                              _headerButton(
-                                key: const ValueKey('asset-library'),
-                                compact: compact,
-                                onPressed: onAssets,
-                                tooltip: 'Furniture and model library',
-                                icon: Icons.chair_outlined,
-                                label: 'Furniture',
-                              ),
-                            if (onViewModeChanged != null)
-                              PopupMenuButton<String>(
-                                key: const ValueKey('view-mode-menu'),
-                                tooltip: 'Choose 2D / 3D view',
-                                initialValue: viewMode,
-                                onSelected: onViewModeChanged,
-                                icon: compact
-                                    ? const Icon(Icons.view_in_ar_outlined)
-                                    : null,
-                                child: compact
-                                    ? null
-                                    : _ViewModeLabel(viewMode: viewMode),
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: '2d',
-                                    child: Text('2D plan'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: '3d',
-                                    child: Text('3D view'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'split',
-                                    child: Text('2D + 3D split view'),
-                                  ),
-                                ],
-                              ),
-                            if (account != null) account!,
-                            if (propertyPlans != null) propertyPlans!,
-                            if (onPreferences != null)
-                              IconButton(
-                                key: const ValueKey('preferences'),
-                                onPressed: onPreferences,
-                                tooltip: 'Preferences',
-                                icon: const Icon(Icons.settings_outlined),
-                              ),
-                            const SizedBox(width: 4),
-                            _SaveSplitButton(
-                              onSave: onSave,
-                              onSaveAs: onSaveAs,
-                              saveAsLabel: saveAsLabel,
-                              onSaveAsOnline: onSaveAsOnline,
-                              onExportUsdz: onExportUsdz,
-                            ),
-                          ],
+                      if (onPreferences != null)
+                        IconButton(
+                          key: const ValueKey('preferences'),
+                          onPressed: onPreferences,
+                          tooltip: 'Preferences',
+                          icon: const Icon(Icons.settings_outlined),
                         ),
+                      if (account != null) ...[
+                        const SizedBox(width: 4),
+                        account!,
+                      ],
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                // Row 2: In-app actions aligned under the Domowik icon on the
+                // left (New, Open, Furniture, 2D/3D, Property plans) and the
+                // Save split button right-aligned on the right.
+                Padding(
+                  key: const ValueKey('header-actions-row'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: SingleChildScrollView(
+                          key: const ValueKey('header-actions-scroll'),
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (onNewOnline == null)
+                                _headerButton(
+                                  key: const ValueKey('new-action'),
+                                  compact: compact,
+                                  onPressed: onNew,
+                                  tooltip: 'New plan',
+                                  icon: Icons.note_add_outlined,
+                                  label: 'New',
+                                )
+                              else
+                                _HeaderSplitButton(
+                                  actionKey: const ValueKey('new-action'),
+                                  menuKey: const ValueKey('new-menu'),
+                                  compact: compact,
+                                  onPressed: onNewOnline!,
+                                  tooltip: newOnlineTooltip,
+                                  menuTooltip: 'More new plan options',
+                                  icon: Icons.note_add_outlined,
+                                  label: 'New',
+                                  items: {'New local plan': onNew},
+                                ),
+                              if (onOpenOnline == null)
+                                _headerButton(
+                                  key: const ValueKey('open-action'),
+                                  compact: compact,
+                                  onPressed: onOpen,
+                                  tooltip: 'Open plan',
+                                  icon: Icons.folder_open_outlined,
+                                  label: 'Open',
+                                )
+                              else
+                                _HeaderSplitButton(
+                                  actionKey: const ValueKey('open-action'),
+                                  menuKey: const ValueKey('open-menu'),
+                                  compact: compact,
+                                  onPressed: onOpenOnline!,
+                                  tooltip: 'Open online plan',
+                                  menuTooltip: 'More open options',
+                                  icon: Icons.folder_open_outlined,
+                                  label: 'Open',
+                                  items: {'Open local file…': onOpen},
+                                ),
+                              if (onAssets != null) ...[
+                                const SizedBox(width: 4),
+                                _headerButton(
+                                  key: const ValueKey('asset-library'),
+                                  compact: compact,
+                                  onPressed: onAssets,
+                                  tooltip: 'Furniture and model library',
+                                  icon: Icons.chair_outlined,
+                                  label: 'Furniture',
+                                ),
+                              ],
+                              if (onViewModeChanged != null)
+                                PopupMenuButton<String>(
+                                  key: const ValueKey('view-mode-menu'),
+                                  tooltip: 'Choose 2D / 3D view',
+                                  initialValue: viewMode,
+                                  onSelected: onViewModeChanged,
+                                  icon: compact
+                                      ? const Icon(Icons.view_in_ar_outlined)
+                                      : null,
+                                  child: compact
+                                      ? null
+                                      : _ViewModeLabel(viewMode: viewMode),
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: '2d',
+                                      child: Text('2D plan'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: '3d',
+                                      child: Text('3D view'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'split',
+                                      child: Text('2D + 3D split view'),
+                                    ),
+                                  ],
+                                ),
+                              if (propertyPlans != null) ...[
+                                const SizedBox(width: 4),
+                                propertyPlans!,
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _SaveSplitButton(
+                        onSave: onSave,
+                        saveTooltip: saveTooltip,
+                        onSaveAs: onSaveAs,
+                        saveAsLabel: saveAsLabel,
+                        onSaveAsOnline: onSaveAsOnline,
+                        onExportUsdz: onExportUsdz,
                       ),
                     ],
                   ),
@@ -531,6 +566,7 @@ class EditorShell extends StatelessWidget {
 class _SaveSplitButton extends StatelessWidget {
   const _SaveSplitButton({
     required this.onSave,
+    required this.saveTooltip,
     required this.onSaveAs,
     required this.saveAsLabel,
     this.onSaveAsOnline,
@@ -538,6 +574,7 @@ class _SaveSplitButton extends StatelessWidget {
   });
 
   final VoidCallback onSave;
+  final String saveTooltip;
   final VoidCallback onSaveAs;
   final String saveAsLabel;
   final VoidCallback? onSaveAsOnline;
@@ -558,30 +595,33 @@ class _SaveSplitButton extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            InkWell(
-              key: const ValueKey('save-action'),
-              onTap: onSave,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                alignment: Alignment.center,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.save_outlined,
-                      size: 18,
-                      color: colors.onPrimary,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Save',
-                      style: Theme.of(context).textTheme.labelLarge
-                          ?.copyWith(color: colors.onPrimary),
-                    ),
-                  ],
+            Tooltip(
+              message: saveTooltip,
+              child: InkWell(
+                key: const ValueKey('save-action'),
+                onTap: onSave,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  alignment: Alignment.center,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.save_outlined,
+                        size: 18,
+                        color: colors.onPrimary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Save',
+                        style: Theme.of(context).textTheme.labelLarge
+                            ?.copyWith(color: colors.onPrimary),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -661,29 +701,297 @@ class _SaveSplitButton extends StatelessWidget {
   }
 }
 
-/// A header menu's face when there is room for words.
-class _MenuLabel extends StatelessWidget {
-  const _MenuLabel({required this.icon, required this.label});
+/// Status pill next to the app title showing whether the open plan is stored
+/// online or offline (local).
+class _PlanStorageBadge extends StatelessWidget {
+  const _PlanStorageBadge({required this.isOnline});
 
+  final bool isOnline;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final background = isOnline
+        ? colors.primaryContainer
+        : colors.surfaceContainerHighest;
+    final foreground = isOnline
+        ? colors.onPrimaryContainer
+        : colors.onSurfaceVariant;
+    return Container(
+      key: const ValueKey('plan-storage-badge'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isOnline ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+            size: 13,
+            color: foreground,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            isOnline ? 'Online' : 'Offline',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: isOnline ? FontWeight.w600 : FontWeight.w500,
+              color: foreground,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A split header action: the main area runs [onPressed] (the default action),
+/// and the chevron opens secondary [items] in display order.
+class _HeaderSplitButton extends StatelessWidget {
+  const _HeaderSplitButton({
+    required this.actionKey,
+    required this.menuKey,
+    required this.compact,
+    required this.onPressed,
+    required this.tooltip,
+    required this.menuTooltip,
+    required this.icon,
+    required this.label,
+    required this.items,
+  });
+
+  final Key actionKey;
+  final Key menuKey;
+  final bool compact;
+  final VoidCallback onPressed;
+  final String tooltip;
+  final String menuTooltip;
   final IconData icon;
   final String label;
+  final Map<String, VoidCallback> items;
 
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme.primary;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 20, color: color),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: TextStyle(color: color, fontWeight: FontWeight.w500),
+    return Material(
+      type: MaterialType.transparency,
+      child: IntrinsicHeight(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Tooltip(
+              message: tooltip,
+              child: InkWell(
+                key: actionKey,
+                borderRadius: const BorderRadius.horizontal(
+                  left: Radius.circular(20),
+                ),
+                onTap: onPressed,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 8 : 10,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 20, color: color),
+                      if (!compact) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          label,
+                          style: TextStyle(
+                            color: color,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            PopupMenuButton<String>(
+              key: menuKey,
+              tooltip: menuTooltip,
+              position: PopupMenuPosition.under,
+              onSelected: (item) => items[item]!(),
+              itemBuilder: (_) => [
+                for (final item in items.keys)
+                  PopupMenuItem(value: item, child: Text(item)),
+              ],
+              child: SizedBox(
+                width: 24,
+                child: Center(
+                  child: Icon(Icons.arrow_drop_down, size: 22, color: color),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Displays the plan name below the Domowik heading; when [onRename] is
+/// supplied, clicking it switches inline into a compact text field.
+class _EditablePlanTitle extends StatefulWidget {
+  const _EditablePlanTitle({
+    required this.displayText,
+    required this.editableTitle,
+    required this.onRename,
+  });
+
+  final String displayText;
+  final String editableTitle;
+  final ValueChanged<String>? onRename;
+
+  @override
+  State<_EditablePlanTitle> createState() => _EditablePlanTitleState();
+}
+
+class _EditablePlanTitleState extends State<_EditablePlanTitle> {
+  bool _editing = false;
+  bool _hovered = false;
+  bool _cancelled = false;
+  late final TextEditingController _controller = TextEditingController();
+  late final FocusNode _focusNode = FocusNode()..addListener(_handleFocus);
+
+  @override
+  void didUpdateWidget(covariant _EditablePlanTitle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.onRename == null && _editing) {
+      _editing = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_handleFocus);
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _startEditing() {
+    if (widget.onRename == null) return;
+    _cancelled = false;
+    _controller.text = widget.editableTitle;
+    _controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _controller.text.length,
+    );
+    setState(() => _editing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _editing) _focusNode.requestFocus();
+    });
+  }
+
+  void _handleFocus() {
+    if (!_focusNode.hasFocus && _editing) {
+      if (_cancelled) {
+        setState(() => _editing = false);
+      } else {
+        _commit();
+      }
+    }
+  }
+
+  void _cancel() {
+    _cancelled = true;
+    if (_editing) {
+      setState(() => _editing = false);
+    }
+    _focusNode.unfocus();
+  }
+
+  void _commit() {
+    if (!_editing) return;
+    final trimmed = _controller.text.trim();
+    setState(() => _editing = false);
+    if (trimmed.isNotEmpty && trimmed != widget.editableTitle) {
+      widget.onRename?.call(trimmed);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    if (_editing) {
+      return SizedBox(
+        width: 240,
+        child: Focus(
+          onKeyEvent: (_, event) {
+            if (event is KeyDownEvent &&
+                event.logicalKey == LogicalKeyboardKey.escape) {
+              _cancel();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: TextField(
+            key: const ValueKey('plan-title-input'),
+            controller: _controller,
+            focusNode: _focusNode,
+            autofocus: true,
+            style: TextStyle(fontSize: 12, color: colors.onSurface),
+            decoration: InputDecoration(
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: 3,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            onSubmitted: (_) => _commit(),
           ),
-          Icon(Icons.arrow_drop_down, color: color),
-        ],
+        ),
+      );
+    }
+
+    final text = Text(
+      widget.displayText,
+      key: const ValueKey('plan-title'),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
+    );
+    if (widget.onRename == null) return text;
+
+    return Tooltip(
+      message: 'Click to rename plan',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.text,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          key: const ValueKey('plan-title-button'),
+          onTap: _startEditing,
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(child: text),
+                const SizedBox(width: 4),
+                Icon(
+                  Icons.edit_outlined,
+                  size: 12,
+                  color: colors.onSurfaceVariant.withValues(
+                    alpha: _hovered ? 1.0 : 0.55,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

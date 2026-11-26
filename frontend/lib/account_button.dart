@@ -166,7 +166,7 @@ class _AccountButtonState extends State<AccountButton> {
             _loadProfile();
           }
         },
-        icon: const Icon(Icons.account_circle),
+        icon: _AccountAvatar(email: _profile?.email),
         label: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 180),
           child: Text(
@@ -175,6 +175,30 @@ class _AccountButtonState extends State<AccountButton> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Compact avatar badge shown for a signed-in account in the top-right header.
+class _AccountAvatar extends StatelessWidget {
+  const _AccountAvatar({required this.email});
+
+  final String? email;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final trimmed = email?.trim() ?? '';
+    return CircleAvatar(
+      radius: 12,
+      backgroundColor: colors.primaryContainer,
+      foregroundColor: colors.onPrimaryContainer,
+      child: trimmed.isEmpty
+          ? const Icon(Icons.person, size: 15)
+          : Text(
+              trimmed[0].toUpperCase(),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
     );
   }
 }
@@ -233,31 +257,6 @@ class _AccountDetails extends StatelessWidget {
                 key: const ValueKey('account-plan-usage'),
                 style: theme.textTheme.labelMedium,
               ),
-              if (plans.isEmpty)
-                Text('No plans on the server yet', style: muted)
-              else
-                for (final plan in plans)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.description_outlined, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(plan.title, overflow: TextOverflow.ellipsis),
-                              Text(
-                                'Updated ${_date(plan.updatedAt)}',
-                                style: muted,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
             ],
           ],
         ),
@@ -266,10 +265,4 @@ class _AccountDetails extends StatelessWidget {
   }
 
   static String _count(int n, String noun) => '$n $noun${n == 1 ? '' : 's'}';
-
-  static String _date(DateTime at) {
-    final local = at.toLocal();
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${local.year}-${two(local.month)}-${two(local.day)}';
-  }
 }

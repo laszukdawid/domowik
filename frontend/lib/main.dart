@@ -253,6 +253,7 @@ class _PlanPageState extends State<PlanPage>
   String? _propertyObservedLevelId;
   bool? _propertyObservedDirty;
   HostedPlan? _hostedPlan;
+  String? _customPlanTitle;
   HostedWorkflowCoordinator? _hostedWorkflow;
   String? _hostedLibraryActionError;
   bool _hostedSaveBlocked = false;
@@ -380,6 +381,7 @@ class _PlanPageState extends State<PlanPage>
   late final WebGraphicsPolicy _hostGraphicsPolicy =
       widget.graphicsPolicy ?? hostGraphicsPolicy();
   String? _web3dFailure;
+  bool _safe2dBannerDismissed = false;
   WebGraphicsPolicy get _graphicsPolicy => _web3dFailure == null
       ? _hostGraphicsPolicy
       : const WebGraphicsPolicy.safe2d(
@@ -1388,7 +1390,10 @@ class _PlanPageState extends State<PlanPage>
     if (!mounted || _web3dFailure != null) return;
     // Keep the requested mode and persisted preferences intact. The effective
     // policy now unmounts 3D and suppresses retries for this page's lifetime.
-    setState(() => _web3dFailure = details);
+    setState(() {
+      _web3dFailure = details;
+      _safe2dBannerDismissed = false;
+    });
   }
 
   void _rememberViewMode() {
@@ -3034,14 +3039,30 @@ class _PlanPageState extends State<PlanPage>
   }
 
   Future<void> _requestNewOnlinePlan() async {
+    final isPropertyPlan = _propertyPlannerClient != null;
     final title = await askOnlinePlanTitle(
       context,
-      action: 'New online plan',
+      action: isPropertyPlan ? 'New property plan' : 'New online plan',
       confirm: 'Create',
       initialValue: 'Untitled plan',
     );
     if (title == null || !mounted) return;
-    await _requestCreateHostedPlan(title);
+    await _requestCreateHostedPlan(title, linkToProperty: isPropertyPlan);
+  }
+
+  Future<bool> _promptAndSaveAsOnlinePlan() async {
+    final preset = _customPlanTitle?.trim();
+    if (preset != null && preset.isNotEmpty) {
+      return _saveAsOnlinePlan(preset);
+    }
+    final title = await askOnlinePlanTitle(
+      context,
+      action: 'Save online plan',
+      confirm: 'Save',
+      initialValue: _currentPlanTitle,
+    );
+    if (title == null || !mounted) return false;
+    return _saveAsOnlinePlan(title);
   }
 
   Future<void> _requestOpenOnlinePlan() async {
@@ -3209,8 +3230,53 @@ class _PlanPageState extends State<PlanPage>
 
   String get _currentPlanTitle =>
       _hostedPlan?.title ??
+      _customPlanTitle ??
       _filePath?.split('/').last.replaceAll(RegExp(r'\.domo$'), '') ??
       'Untitled plan';
+
+  Future<void> _renamePlan(String rawTitle) async {
+    final title = rawTitle.trim();
+    if (title.isEmpty) return;
+    final hosted = _hostedPlan;
+    if (hosted != null) {
+      if (title == hosted.title) return;
+      final client = _hostedPlanClient;
+      final accountSession = _accountSession;
+      if (client == null || accountSession == null) return;
+      try {
+        final renamed = await client.renamePlan(
+          accountSession,
+          hosted.id,
+          title,
+        );
+        if (!mounted || _hostedPlan?.id != hosted.id) return;
+        setState(() {
+          _hostedPlan = renamed;
+          _setStatus(
+            'renamed online plan to "${renamed.title}"',
+            isError: false,
+          );
+        });
+      } on Object catch (error) {
+        if (!mounted) return;
+        final detail = error is AccountException ? error.message : '$error';
+        setState(
+          () => _setStatus('could not rename plan: $detail', isError: true),
+        );
+      }
+      return;
+    }
+    if (title == _currentPlanTitle && _customPlanTitle != null) return;
+    if (title == 'Untitled plan' &&
+        _filePath == null &&
+        _customPlanTitle == null) {
+      return;
+    }
+    setState(() {
+      _customPlanTitle = title;
+      _setStatus('renamed plan to "$title"', isError: false);
+    });
+  }
 
   Widget? _propertyPlans() {
     final client = _hostedPlanClient;
@@ -3236,14 +3302,59 @@ class _PlanPageState extends State<PlanPage>
     return _fileWorkflow.replace(() => _checkoutHostedPlan(plan));
   }
 
-  Future<bool> _requestCreateHostedPlan(String title) {
+  Future<bool> _requestCreateHostedPlan(
+    String title, {
+    bool linkToProperty = false,
+  }) {
     _hostedLibraryActionError = null;
     return _fileWorkflow.replace(() async {
       final client = _hostedPlanClient;
       final accountSession = _accountSession;
       if (client == null || accountSession == null) return false;
       final plan = await client.createPlan(accountSession, title);
-      return _checkoutHostedPlan(plan);
+      var linkedProperty = false;
+      String? propertyLinkError;
+      final propertyClient = linkToProperty ? _propertyPlannerClient : null;
+      if (propertyClient != null) {
+        try {
+          final overview = await propertyClient.propertyOverview(
+            accountSession,
+            propertyHint: validatedPropertyHint(
+              Uri.base.queryParameters['property'],
+            ),
+          );
+          await propertyClient.linkPlanProperty(
+            accountSession,
+            plan.id,
+            overview.property.id,
+          );
+          linkedProperty = true;
+        } on Object catch (error) {
+          propertyLinkError = error is AccountException
+              ? error.message
+              : '$error';
+        }
+      }
+      final opened = await _checkoutHostedPlan(plan);
+      if (opened && mounted) {
+        if (linkedProperty) {
+          setState(
+            () => _setStatus(
+              'opened property plan "${plan.title}"',
+              isError: false,
+            ),
+          );
+        } else if (propertyLinkError != null) {
+          setState(
+            () => _setStatus(
+              'opened online plan "${plan.title}"; could not link to property '
+              '($propertyLinkError)',
+              isError: false,
+            ),
+          );
+        }
+      }
+      return opened;
     });
   }
 
@@ -3287,6 +3398,7 @@ class _PlanPageState extends State<PlanPage>
     final marked = session.markSaved(snapshot);
     setState(() {
       _hostedPlan = plan;
+      _customPlanTitle = null;
       _hostedWorkflow = candidate;
       _hostedSaveBlocked = false;
       _setStatus(
@@ -3650,17 +3762,20 @@ class _PlanPageState extends State<PlanPage>
     return true;
   }
 
-  /// Plain Save rewrites the plan's own file — the path it was opened from
-  /// or last saved to, or a browser file a picker confirmed once — without
-  /// asking where. With no such file (a new plan, or one this browser could
-  /// only download) it must ask, exactly as Save As does.
+  /// Plain Save:
+  /// - If this is an online plan, saves to that online plan.
+  /// - If the plan is bound to a local file (opened from disk or explicitly
+  ///   saved to a confirmed local target), rewrites that file silently.
+  /// - Otherwise, when signed in to an online service, defaults to saving to
+  ///   online storage; when signed out, asks where to save locally.
   Future<bool> _saveFile() async {
     if (_hostedPlan != null) return _saveHostedPlan();
     final session = _session;
     if (session == null || _handle == 0) return false;
     final target = session.boundTarget;
-    if (target == null) return _saveAsFile();
-    return _storePlan(session, target);
+    if (target != null) return _storePlan(session, target);
+    if (_onlineAvailable) return _promptAndSaveAsOnlinePlan();
+    return _saveAsFile();
   }
 
   /// Save As asks where to write, every time, and the plan adopts the
@@ -3669,7 +3784,10 @@ class _PlanPageState extends State<PlanPage>
     if (_hostedPlan != null) return _saveLocalRecoveryCopy();
     final session = _session;
     if (session == null || _handle == 0) return false;
-    final suggested = _filePath?.split('/').last ?? 'plan.domo';
+    final custom = _customPlanTitle?.trim();
+    final suggested = custom != null && custom.isNotEmpty
+        ? (custom.endsWith('.domo') ? custom : '$custom.domo')
+        : _filePath?.split('/').last ?? 'plan.domo';
     final target = await _fileDialogs.savePlan(suggested);
     if (target == null || !mounted) return false;
     return _storePlan(session, target);
@@ -3742,6 +3860,7 @@ class _PlanPageState extends State<PlanPage>
       setState(() {
         if (result.succeeded) {
           _dirty = false;
+          _customPlanTitle = null;
           _setStatus('saved to ${target.name}', isError: false);
         } else if (result.unconfirmed) {
           // Not a save: leaving would discard the only certain copy.
@@ -3791,6 +3910,7 @@ class _PlanPageState extends State<PlanPage>
 
   /// Shared UI baseline after the session successfully replaces a plan.
   void _resetForPlanReplacement() {
+    _customPlanTitle = null;
     _selection.clear();
     _placing = null;
     _wallChainTool = false;
@@ -3971,27 +4091,40 @@ class _PlanPageState extends State<PlanPage>
       );
     }
 
+    final saveGoesOnline =
+        _hostedPlan != null ||
+        (_onlineAvailable && _session?.boundTarget == null);
+
     return AbsorbPointer(
       absorbing: _fileActionPending && !_hostedSaveInFlight,
       child: EditorShell(
+        isOnline: _hostedPlan != null,
         fileName: _hostedPlan == null
-            ? '${_filePath?.split('/').last ?? 'Untitled plan'}${_dirty ? ' • Unsaved' : ''}'
-            : 'Online · ${_hostedPlan!.title}${_hostedSaveBlocked
+            ? '${_customPlanTitle ?? _filePath?.split('/').last ?? 'Untitled plan'}${_dirty ? ' • Unsaved' : ''}'
+            : '${_hostedPlan!.title}${_hostedSaveBlocked
                   ? ' • Not saved online'
                   : _dirty
                   ? ' • Unsaved'
                   : ''}',
+        editableTitle: _currentPlanTitle,
+        onRenamePlan: _renamePlan,
         onNew: _requestNewPlan,
         onOpen: _requestOpenFile,
         onNewOnline: _onlineAvailable ? _requestNewOnlinePlan : null,
+        newOnlineTooltip: _propertyPlannerClient != null
+            ? 'New property plan'
+            : 'New online plan',
         onOpenOnline: _onlineAvailable ? _requestOpenOnlinePlan : null,
         onSave: _requestSaveFile,
+        saveTooltip: saveGoesOnline ? 'Save plan online' : 'Save plan to file',
         onSaveAs: _requestSaveAsFile,
-        saveAsLabel: _hostedPlan == null
-            ? 'Save as…'
-            : _copiesAreFiles
-            ? 'Save a copy (.domo)…'
-            : 'Download a copy (.domo)',
+        saveAsLabel: _hostedPlan != null
+            ? _copiesAreFiles
+                  ? 'Save a copy (.domo)…'
+                  : 'Download a copy (.domo)'
+            : _onlineAvailable
+            ? 'Save as local file (.domo)…'
+            : 'Save as…',
         onSaveAsOnline: _onlineAvailable ? _requestSaveAsOnlinePlan : null,
         onExportUsdz: _fileDialogs is ExportDialogs ? _requestExportUsdz : null,
         onAssets: _openAssetLibrary,
@@ -4228,6 +4361,7 @@ class _PlanPageState extends State<PlanPage>
     if (_graphicsPolicy.disabledReason case final reason?) {
       // Never mount ThreeDView: saved modes and implicit 3D actions must not
       // initialize a browser GPU surface while safe mode is active.
+      if (_safe2dBannerDismissed) return plan;
       return Column(
         children: [
           Material(
@@ -4239,10 +4373,22 @@ class _PlanPageState extends State<PlanPage>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.info_outline),
+                      const Padding(
+                        padding: EdgeInsets.only(top: 2),
+                        child: Icon(Icons.info_outline),
+                      ),
                       const SizedBox(width: 12),
                       Expanded(child: SelectableText(reason)),
+                      IconButton(
+                        key: const ValueKey('dismiss-safe-2d-banner'),
+                        tooltip: 'Dismiss',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () =>
+                            setState(() => _safe2dBannerDismissed = true),
+                        icon: const Icon(Icons.close, size: 18),
+                      ),
                     ],
                   ),
                   if (_web3dFailure case final details?)

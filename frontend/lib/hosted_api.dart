@@ -151,6 +151,20 @@ abstract class HostedPlanProtocol implements HostedPlanClient {
       );
 
   @override
+  Future<HostedPlan> renamePlan(
+    AccountSession session,
+    String planId,
+    String title,
+  ) async => _plan(
+    await requestJson(
+      session,
+      'PATCH',
+      planPath(planId),
+      json: {'title': title},
+    ),
+  );
+
+  @override
   Future<HostedPlan> importPlan(
     AccountSession session,
     String title,

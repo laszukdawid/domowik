@@ -77,12 +77,16 @@ save as schema `0.2`; older builds cannot open them. Keep an original copy.
    active level.
 5. Save a `.domo` plan. The CLI can read, validate and export the same file.
 
-The header's labelled buttons create (**New**) and open (**Open**) plans,
-open the **Furniture** library and switch between **2D**, **3D** and
-**2D + 3D**; the gear opens preferences, and the split save control ends
-the row: press most of it to save the plan, or press its chevron section
-for **Save as**. In narrow windows the labelled buttons shrink to icons
-with tooltips. The sidebar opens on **Selection**, with object properties
+The header has two rows above the drawing toolbar. The top row shows the
+Domowik icon, app name, an **Online** / **Offline** badge and the plan name on
+the left (click the plan name to rename it inline), with **Preferences** (gear)
+and the **Account** / **Sign in** avatar control in the top-right corner. The second row holds in-app actions directly
+under the Domowik icon — **New**, **Open**, **Furniture**, the **2D** / **3D**
+/ **2D + 3D** view menu and (when available) **Property plans** — with the
+split **Save** control right-aligned at the end of the row: press most of it to
+save the plan, or press its chevron section for **Save as**. In narrow windows
+the labelled buttons shrink to icons with tooltips. The sidebar opens on
+**Selection**, with object properties
 and 3D placement directly below **Your plan**. **Floor** holds level controls,
 room information and floor totals. Selecting an object brings **Selection**
 forward. The tabs scroll independently; switching tabs preserves live placement
@@ -208,10 +212,14 @@ opens the service's sign-in page, where you use your HomeHero account, then
 returns you to the editor. Your open plan and its edits stay as they were, and
 nothing is uploaded until you ask.
 
-Signed in, **New** and **Open** also offer **New online plan…** and **Open
-online plan…**, and the Save menu offers **Save as new online plan…**. Online
-plans work as in the browser (see below): **Save** saves online, and **Save a
-copy (.domo)…** writes a local copy without changing the online plan. The app
+Signed in, **New** defaults to starting a new online plan (with **New local
+plan** in its dropdown), **Open** defaults to **Open online plan…** (with
+**Open local file…** in its dropdown), and **Save** defaults to online storage
+for unbound plans as well as open online plans. The Save menu offers local
+saving (**Save as local file (.domo)…** for an unbound plan, or **Save a copy
+(.domo)…** for an online plan) and **Save as new online plan…**. Online plans
+work as in the browser (see below): **Save** saves online, and **Save a copy
+(.domo)…** writes a local copy without changing the online plan. The app
 does not remember the sign-in: each time you start it, click **Sign in**
 again. If your browser is still signed in, that takes a moment and no password.
 
@@ -244,14 +252,18 @@ Browser differences:
 - Leaving or closing the tab with unsaved changes shows the browser's own
   warning instead of the editor's Save / Don't save / Cancel dialog.
 - **Online plans**, when the page's service is configured and you are signed
-  in: **New** and **Open** become menus that also offer **New online plan…**
-  and **Open online plan…**, and the Save menu offers **Save as new online
-  plan…**, after which Save writes to that new online plan. An online plan
-  shows as **Online · title**. Its **Save** saves online, and its Save menu
-  offers **Download a copy (.domo)**, which keeps Save pointed at the online
-  plan. The leave dialog also offers **Download a copy**. One tab or session
-  edits an online plan at a time. If a save cannot be confirmed, or a tab
-  left idle lost its hold on the plan, the next **Save** reconnects and
+  in: **New** defaults to starting a new property plan (creating an online plan
+  linked to your HomeHero property, with **New local plan** in its chevron
+  menu), **Open** defaults to opening an online plan (with **Open local file…**
+  in its chevron menu), and **Save** defaults to saving to online storage (or
+  the open online plan), while the Save chevron menu lets you save locally
+  (**Save as local file (.domo)…** or **Download a copy (.domo)**) or **Save as
+  new online plan…**. The top row displays an **Online** badge beside the plan
+  title for hosted plans and **Offline** for local plans. For an online plan,
+  **Save** saves online and **Download a copy (.domo)** keeps Save pointed at
+  the online plan. The leave dialog also offers **Download a copy**. One tab or
+  session edits an online plan at a time. If a save cannot be confirmed, or a
+  tab left idle lost its hold on the plan, the next **Save** reconnects and
   retries, as long as nobody else has saved the plan since. When Save cannot
   finish, the title shows **Not saved online** and your edits stay open:
   - if the plan is open in another tab or session, close it there (or wait
