@@ -257,6 +257,7 @@ Future<void> showPropertyPlannerDialog(
   required Future<bool> Function(HostedPlan plan) onOpen,
   PlannerPropertyOverview? initialOverview,
   List<HostedPlan>? initialPlans,
+  String? initialError,
 }) => showDialog<void>(
   context: context,
   builder: (_) => _PropertyPlannerDialog(
@@ -269,6 +270,7 @@ Future<void> showPropertyPlannerDialog(
     onOpen: onOpen,
     initialOverview: initialOverview,
     initialPlans: initialPlans,
+    initialError: initialError,
   ),
 );
 
@@ -321,6 +323,7 @@ class _PropertyPlannerDialog extends StatefulWidget {
     required this.onOpen,
     this.initialOverview,
     this.initialPlans,
+    this.initialError,
   });
 
   final PropertyPlannerClient client;
@@ -332,6 +335,7 @@ class _PropertyPlannerDialog extends StatefulWidget {
   final Future<bool> Function(HostedPlan plan) onOpen;
   final PlannerPropertyOverview? initialOverview;
   final List<HostedPlan>? initialPlans;
+  final String? initialError;
 
   @override
   State<_PropertyPlannerDialog> createState() => _PropertyPlannerDialogState();
@@ -359,6 +363,7 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
     } else if (widget.initialOverview != null && widget.initialPlans != null) {
       _overview = widget.initialOverview;
       _plans = List.of(widget.initialPlans!);
+      _error = widget.initialError;
       _loading = false;
     } else {
       _refresh();

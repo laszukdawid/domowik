@@ -214,6 +214,7 @@ class _PropertyHostedClient extends _HostedClient
   String propertyName = 'Maple House';
   String propertyId = 'property-1';
   final propertyHints = <String?>[];
+  Completer<PlannerPropertyOverview>? pendingOverview;
 
   @override
   Future<PlannerPropertyOverview> propertyOverview(
@@ -221,6 +222,7 @@ class _PropertyHostedClient extends _HostedClient
     String? propertyHint,
   }) async {
     propertyHints.add(propertyHint);
+    if (pendingOverview != null) return pendingOverview!.future;
     return PlannerPropertyOverview(
       property: PlannerNamedId(id: propertyId, name: propertyName),
       locations: const [PlannerNamedId(id: 'loc-1', name: 'Kitchen')],
@@ -993,6 +995,81 @@ void main() {
         find.text('Sign-in and property access are checked separately.'),
         findsNothing,
       );
+    },
+  );
+
+  testWidgets('slow property lookup does not clobber a renamed blank plan', (
+    tester,
+  ) async {
+    final overviewCompleter = Completer<PlannerPropertyOverview>();
+    final propertyClient = _PropertyHostedClient(seedBytes)
+      ..pendingOverview = overviewCompleter;
+    final plan = propertyClient._newPlan('Ground Floor', seedBytes);
+    propertyClient.linked.add(
+      PlannerPlanSummary(id: plan.id, title: plan.title),
+    );
+
+    await start(
+      tester,
+      accountClient: propertyClient,
+      propertyHint: 'property-1',
+    );
+
+    // User renames the blank plan while the property lookup is still pending.
+    await tap(tester, find.byKey(const ValueKey('plan-title')));
+    await tester.enterText(
+      find.byKey(const ValueKey('plan-title-input')),
+      'My Local Sketch',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expectOfflineTitle('My Local Sketch');
+
+    overviewCompleter.complete(
+      PlannerPropertyOverview(
+        property: const PlannerNamedId(id: 'property-1', name: 'Maple House'),
+        locations: const [PlannerNamedId(id: 'loc-1', name: 'Kitchen')],
+        plans: List.of(propertyClient.linked),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expectOfflineTitle('My Local Sketch');
+    expect(find.byKey(const ValueKey('property-planner-dialog')), findsNothing);
+  });
+
+  testWidgets(
+    'failed auto-open checkout falls back to Property plans with alternatives',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes)
+        ..failAcquireCode = 'lease-held';
+      final first = propertyClient._newPlan('Ground Floor', seedBytes);
+      final second = propertyClient._newPlan('Renovation', seedBytes);
+      propertyClient.linked.addAll([
+        PlannerPlanSummary(id: first.id, title: first.title),
+        PlannerPlanSummary(id: second.id, title: second.title),
+      ]);
+
+      await start(
+        tester,
+        accountClient: propertyClient,
+        propertyHint: 'property-1',
+      );
+
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('property-planner-error')),
+        findsOneWidget,
+      );
+      expect(find.text('Ground Floor'), findsOneWidget);
+      expect(find.text('Renovation'), findsOneWidget);
+
+      // Clicking the alternative plan card opens it directly.
+      await tap(tester, find.byKey(ValueKey('property-plan-${second.id}')));
+      expectOnlineTitle('Renovation');
     },
   );
 }

@@ -252,6 +252,7 @@ class _PlanPageState extends State<PlanPage>
   int _accountClientGeneration = 0;
   AccountSession? _accountSession;
   bool _initialPropertyHintHandled = false;
+  int _userDocumentActionGeneration = 0;
   final ValueNotifier<int> _propertyContextChanges = ValueNotifier(0);
   final ValueNotifier<int> _accountSessionChanges = ValueNotifier(0);
   int? _propertyObservedDocumentRevision;
@@ -3030,10 +3031,12 @@ class _PlanPageState extends State<PlanPage>
   }
 
   Future<void> _requestNewPlan() async {
+    _userDocumentActionGeneration++;
     await _fileWorkflow.replace(() async => _newPlan());
   }
 
   Future<void> _requestOpenFile() async {
+    _userDocumentActionGeneration++;
     await _fileWorkflow.replace(_openFile);
   }
 
@@ -3220,27 +3223,36 @@ class _PlanPageState extends State<PlanPage>
     }
     if (_hostedPlan != null ||
         _filePath != null ||
+        _customPlanTitle != null ||
         _dirty ||
-        _fileActionPending) {
+        _fileActionPending ||
+        ModalRoute.of(context)?.isCurrent != true) {
       _initialPropertyHintHandled = true;
       return;
     }
     _initialPropertyHintHandled = true;
     final sessionRevision = _accountSessionChanges.value;
+    final initialActionGeneration = _userDocumentActionGeneration;
+    final initialDocumentRevision = _documentRevision;
     bool sessionStillCurrent(AccountSession session) =>
         mounted &&
         identical(_accountSession, session) &&
         _accountSessionChanges.value == sessionRevision;
+    bool editorStillUntouched() =>
+        _hostedPlan == null &&
+        _filePath == null &&
+        _customPlanTitle == null &&
+        !_dirty &&
+        !_fileActionPending &&
+        _userDocumentActionGeneration == initialActionGeneration &&
+        _documentRevision == initialDocumentRevision &&
+        ModalRoute.of(context)?.isCurrent == true;
     try {
       final results = await Future.wait<Object>([
         propertyClient.propertyOverview(accountSession, propertyHint: hint),
         planClient.listPlans(accountSession),
       ]);
-      if (!sessionStillCurrent(accountSession) ||
-          _hostedPlan != null ||
-          _filePath != null ||
-          _dirty ||
-          _fileActionPending) {
+      if (!sessionStillCurrent(accountSession) || !editorStillUntouched()) {
         return;
       }
       final overview = results[0] as PlannerPropertyOverview;
@@ -3252,7 +3264,27 @@ class _PlanPageState extends State<PlanPage>
             plan,
       ];
       if (linkedPlans.isNotEmpty) {
-        await _requestOpenHostedPlan(linkedPlans.first);
+        final opened = await _requestOpenHostedPlan(linkedPlans.first);
+        if (opened ||
+            !sessionStillCurrent(accountSession) ||
+            !editorStillUntouched()) {
+          return;
+        }
+        await showPropertyPlannerDialog(
+          context,
+          client: propertyClient,
+          planClient: planClient,
+          session: accountSession,
+          propertyHint: hint,
+          isSessionCurrent: sessionStillCurrent,
+          sessionChanges: _accountSessionChanges,
+          onOpen: _requestOpenHostedPlan,
+          initialOverview: overview,
+          initialPlans: plans,
+          initialError:
+              _hostedLibraryActionError ??
+              'Could not open "${linkedPlans.first.title}".',
+        );
       } else {
         await showPropertyPlannerDialog(
           context,
@@ -3365,6 +3397,7 @@ class _PlanPageState extends State<PlanPage>
       return;
     }
     setState(() {
+      _userDocumentActionGeneration++;
       _customPlanTitle = title;
       _setStatus('renamed plan to "$title"', isError: false);
     });
