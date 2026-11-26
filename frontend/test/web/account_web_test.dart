@@ -162,6 +162,39 @@ void main() {
       );
     });
 
+    test(
+      'forwards a valid property hint during sign-in and ignores invalid ones',
+      () async {
+        final visited = <String>[];
+        final withValidHint = BrowserAccountClient(
+          server,
+          navigate: visited.add,
+          currentUri: () => Uri.parse('$origin/?property=prop-42_ok'),
+        );
+        final validSent = answer(
+          200,
+          '{"authorizationUrl":"https://idp.example/authorize?state=s1"}',
+        );
+        expect(await withValidHint.signIn(), isNull);
+        expect(
+          validSent.single.url,
+          '$origin/api/v1/auth/sign-in?property=prop-42_ok',
+        );
+
+        final withBadHint = BrowserAccountClient(
+          server,
+          navigate: visited.add,
+          currentUri: () => Uri.parse('$origin/?property=bad/hint'),
+        );
+        final badSent = answer(
+          200,
+          '{"authorizationUrl":"https://idp.example/authorize?state=s2"}',
+        );
+        expect(await withBadHint.signIn(), isNull);
+        expect(badSent.single.url, '$origin/api/v1/auth/sign-in');
+      },
+    );
+
     test('reads the account and its plans', () async {
       final client = BrowserAccountClient(server);
       final sent = answer(

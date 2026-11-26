@@ -36,12 +36,17 @@ AccountClient? createAccountClient({String? savedServerUrl}) {
 /// HttpOnly session cookie; the editor only learns the session's CSRF token.
 class BrowserAccountClient extends HostedPlanProtocol
     implements AccountClient, PropertyPlannerClient, UnloadLeaseReleaser {
-  BrowserAccountClient(this.server, {void Function(String url)? navigate})
-    : _navigate = navigate ?? _assign;
+  BrowserAccountClient(
+    this.server, {
+    void Function(String url)? navigate,
+    Uri Function()? currentUri,
+  }) : _navigate = navigate ?? _assign,
+       _currentUri = currentUri ?? _baseUri;
 
   @override
   final ServerEndpoint server;
   final void Function(String url) _navigate;
+  final Uri Function() _currentUri;
   final Map<(String, String), AccountSession> _unloadLeases = {};
   JSFunction? _pageHideListener;
 
@@ -126,10 +131,11 @@ class BrowserAccountClient extends HostedPlanProtocol
     String method,
     String path, {
     String? csrf,
+    Map<String, String>? query,
   }) => transport(
     HostedRequest(
       method,
-      server.api(path),
+      server.api(path, query),
       headers: {if (csrf != null) 'X-Domowik-CSRF': csrf},
     ),
   );
@@ -143,7 +149,15 @@ class BrowserAccountClient extends HostedPlanProtocol
 
   @override
   Future<AccountSession?> signIn() async {
-    final response = await _anonymous('POST', 'auth/sign-in', csrf: '1');
+    final propertyHint = validatedPropertyHint(
+      _currentUri().queryParameters['property'],
+    );
+    final response = await _anonymous(
+      'POST',
+      'auth/sign-in',
+      csrf: '1',
+      query: propertyHint == null ? null : {'property': propertyHint},
+    );
     // The page leaves (unless an unsaved-changes prompt keeps it); the
     // session is restored when the editor loads again.
     _navigate(_field(response, 'authorizationUrl'));
@@ -287,6 +301,8 @@ class BrowserAccountClient extends HostedPlanProtocol
 }
 
 void _assign(String url) => _location.assign(url);
+
+Uri _baseUri() => Uri.base;
 
 @JS('fetch')
 external JSPromise<_Response> _fetch(String url, _Init init);
