@@ -28,6 +28,14 @@ extension type _Element(JSObject _) implements JSObject {
   external void remove();
 }
 
+@JS('Event')
+extension type _Event._(JSObject _) implements JSObject {
+  external factory _Event(String type);
+}
+
+@JS('window.dispatchEvent')
+external bool _dispatchWindowEvent(_Event event);
+
 /// One request the editor sent.
 typedef Sent = ({
   String url,
@@ -35,6 +43,7 @@ typedef Sent = ({
   String? csrf,
   String credentials,
   String redirect,
+  bool? keepalive,
   String? lease,
   String? ifMatch,
   String? contentType,
@@ -65,6 +74,7 @@ List<Sent> answer(
       csrf: (headers['X-Domowik-CSRF'] as JSString?)?.toDart,
       credentials: (init['credentials'] as JSString).toDart,
       redirect: (init['redirect'] as JSString).toDart,
+      keepalive: (init['keepalive'] as JSBoolean?)?.toDart,
       lease: (headers['X-Domowik-Lease'] as JSString?)?.toDart,
       ifMatch: (headers['If-Match'] as JSString?)?.toDart,
       contentType: (headers['Content-Type'] as JSString?)?.toDart,
@@ -390,5 +400,33 @@ void main() {
         expect(inventoryRequests.single.csrf, isNull);
       },
     );
+
+    test('pagehide fires keepalive lease release for active leases and skips unregistered ones', () {
+      final client = BrowserAccountClient(server);
+      const account = AccountSession(token: 'csrf-token');
+      final sent = answer(204, null);
+
+      client.registerUnloadLease(account, 'p1', 'lease-9');
+      _dispatchWindowEvent(_Event('pagehide'));
+      expect(sent, hasLength(1));
+      expect(sent.single.method, 'POST');
+      expect(sent.single.url, '$origin/api/v1/plans/p1/lease/release');
+      expect(sent.single.csrf, 'csrf-token');
+      expect(sent.single.credentials, 'same-origin');
+      expect(sent.single.redirect, 'error');
+      expect(sent.single.keepalive, isTrue);
+      expect(sent.single.contentType, 'application/json');
+      expect(sent.single.jsonBody, '{"leaseId":"lease-9"}');
+
+      // A second pagehide does not re-send the already released lease.
+      _dispatchWindowEvent(_Event('pagehide'));
+      expect(sent, hasLength(1));
+
+      // Explicitly unregistering removes the lease so pagehide sends nothing.
+      client.registerUnloadLease(account, 'p2', 'lease-10');
+      client.unregisterUnloadLease('p2', 'lease-10');
+      _dispatchWindowEvent(_Event('pagehide'));
+      expect(sent, hasLength(1));
+    });
   });
 }

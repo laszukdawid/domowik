@@ -22,8 +22,24 @@ const _lease = HostedPlanLease(
 
 Uint8List _bytes(List<int> values) => Uint8List.fromList(values);
 
-class _Client implements HostedPlanClient {
+class _Client implements HostedPlanClient, UnloadLeaseReleaser {
   final calls = <String>[];
+  final unloadLeases = <String>{};
+
+  @override
+  void registerUnloadLease(
+    AccountSession session,
+    String planId,
+    String leaseId,
+  ) {
+    unloadLeases.add('$planId:$leaseId');
+  }
+
+  @override
+  void unregisterUnloadLease(String planId, String leaseId) {
+    unloadLeases.remove('$planId:$leaseId');
+  }
+
   HostedPlanLease acquireResult = _lease;
   HostedPlanLease renewResult = const HostedPlanLease(
     leaseId: 'lease-1',
@@ -618,6 +634,54 @@ void main() {
       );
       expect(client.calls.last, 'save:lease-1:2:7');
       await workflow.dispose();
+    },
+  );
+
+  test(
+    'tracks active leases for page-unload release across lifecycle transitions',
+    () async {
+      final client = _Client();
+      final workflow = _coordinator(client);
+      await workflow.checkout(_plan);
+      expect(client.unloadLeases, {'plan-1:lease-1'});
+
+      // Overlapping checkout of a second plan keeps the second lease registered
+      // after the first workflow releases and disposes.
+      final secondPlan = HostedPlan(
+        id: 'plan-2',
+        title: 'Cabin',
+        revision: '1',
+        updatedAt: DateTime.utc(2026),
+      );
+      client.acquireResult = const HostedPlanLease(
+        leaseId: 'lease-2',
+        revision: '1',
+        expiresInSeconds: 90,
+      );
+      final second = _coordinator(client);
+      await second.checkout(secondPlan);
+      expect(client.unloadLeases, {'plan-1:lease-1', 'plan-2:lease-2'});
+
+      await workflow.release();
+      await workflow.dispose();
+      expect(client.unloadLeases, {'plan-2:lease-2'});
+
+      // Recovering with a new lease replaces the registered lease ID.
+      client.renew = () =>
+          Future.error(const AccountException('gone', code: 'lease-not-held'));
+      await expectLater(second.renew(), throwsA(isA<AccountException>()));
+      expect(client.unloadLeases, isEmpty);
+
+      client.acquireResult = const HostedPlanLease(
+        leaseId: 'lease-3',
+        revision: '1',
+        expiresInSeconds: 90,
+      );
+      await second.recover();
+      expect(client.unloadLeases, {'plan-2:lease-3'});
+
+      await second.dispose();
+      expect(client.unloadLeases, isEmpty);
     },
   );
 }

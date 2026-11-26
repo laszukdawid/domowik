@@ -115,6 +115,21 @@ class HostedWorkflowCoordinator {
   bool _disposed = false;
   int _checkoutGeneration = 0;
 
+  UnloadLeaseReleaser? get _unloadReleaser {
+    final c = client;
+    return c is UnloadLeaseReleaser ? c as UnloadLeaseReleaser : null;
+  }
+
+  void _registerUnloadLease(HostedPlan plan, HostedPlanLease lease) {
+    _unloadReleaser?.registerUnloadLease(session, plan.id, lease.leaseId);
+  }
+
+  void _unregisterUnloadLease(HostedPlan? plan, HostedPlanLease? lease) {
+    if (plan != null && lease != null) {
+      _unloadReleaser?.unregisterUnloadLease(plan.id, lease.leaseId);
+    }
+  }
+
   HostedWorkflowState get state => _state;
   HostedPlan? get plan => _plan;
   HostedPlanLease? get lease => _lease;
@@ -159,6 +174,7 @@ class HostedWorkflowCoordinator {
       _lease = acquired;
       _expectedRevision = acquired.revision;
       _recoveryBytes = null;
+      _registerUnloadLease(plan, acquired);
       _setState(HostedWorkflowState.ready);
       _startRenewal(acquired);
       return HostedPlanCheckout(
@@ -216,6 +232,7 @@ class HostedWorkflowCoordinator {
       _enterConflict();
       return false;
     }
+    _registerUnloadLease(plan, acquired);
     _setState(HostedWorkflowState.ready);
     _startRenewal(acquired);
     return true;
@@ -249,6 +266,7 @@ class HostedWorkflowCoordinator {
           error is AccountException &&
           error.code == 'lease-not-held' &&
           _state != HostedWorkflowState.conflict) {
+        _unregisterUnloadLease(plan, lease);
         _setState(HostedWorkflowState.leaseLost);
         _renewalTimer?.cancel();
       }
@@ -295,11 +313,15 @@ class HostedWorkflowCoordinator {
       if (current.leaseId != lease.leaseId) _releaseQuietly(plan, current);
       throw StateError('Hosted checkout was cancelled');
     }
+    if (current.leaseId != lease.leaseId) {
+      _unregisterUnloadLease(plan, lease);
+    }
     _lease = current;
     if (current.revision != expected) {
       _enterConflict();
       throw _conflict();
     }
+    _registerUnloadLease(plan, current);
     _recoveryBytes = null;
     _setState(HostedWorkflowState.ready);
     _startRenewal(current);
@@ -319,6 +341,7 @@ class HostedWorkflowCoordinator {
     _setState(HostedWorkflowState.conflict);
     final plan = _plan;
     final lease = _lease;
+    _unregisterUnloadLease(plan, lease);
     if (plan != null && lease != null) _releaseQuietly(plan, lease);
   }
 
@@ -415,6 +438,9 @@ class HostedWorkflowCoordinator {
         if (code == 'revision-conflict') {
           _enterConflict();
         } else if (_state != HostedWorkflowState.conflict) {
+          if (code == 'lease-not-held') {
+            _unregisterUnloadLease(plan, lease);
+          }
           _setState(
             code == 'lease-not-held'
                 ? HostedWorkflowState.leaseLost
@@ -474,6 +500,7 @@ class HostedWorkflowCoordinator {
   }
 
   void _clearReleasedLease() {
+    _unregisterUnloadLease(_plan, _lease);
     ++_checkoutGeneration;
     _renewalTimer?.cancel();
     _renewalTimer = null;
@@ -509,6 +536,7 @@ class HostedWorkflowCoordinator {
     if (_disposed) return;
     final plan = _plan;
     final lease = _lease;
+    _unregisterUnloadLease(plan, lease);
     _disposed = true;
     ++_checkoutGeneration;
     _renewalTimer?.cancel();

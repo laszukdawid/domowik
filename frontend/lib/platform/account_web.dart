@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:js_interop';
 
 import '../account.dart';
@@ -34,13 +35,78 @@ AccountClient? createAccountClient({String? savedServerUrl}) {
 /// Sign-in in the hosted editor: the server runs the sign-in and sets an
 /// HttpOnly session cookie; the editor only learns the session's CSRF token.
 class BrowserAccountClient extends HostedPlanProtocol
-    implements AccountClient, PropertyPlannerClient {
+    implements AccountClient, PropertyPlannerClient, UnloadLeaseReleaser {
   BrowserAccountClient(this.server, {void Function(String url)? navigate})
     : _navigate = navigate ?? _assign;
 
   @override
   final ServerEndpoint server;
   final void Function(String url) _navigate;
+  final Map<(String, String), AccountSession> _unloadLeases = {};
+  JSFunction? _pageHideListener;
+
+  @override
+  void registerUnloadLease(
+    AccountSession session,
+    String planId,
+    String leaseId,
+  ) {
+    _unloadLeases[(planId, leaseId)] = session;
+    if (_pageHideListener == null) {
+      final listener = ((JSAny? _) => _releaseAllOnPageHide()).toJS;
+      _pageHideListener = listener;
+      _window.addEventListener('pagehide', listener);
+    }
+  }
+
+  @override
+  void unregisterUnloadLease(String planId, String leaseId) {
+    _unloadLeases.remove((planId, leaseId));
+    if (_unloadLeases.isEmpty && _pageHideListener != null) {
+      _window.removeEventListener('pagehide', _pageHideListener!);
+      _pageHideListener = null;
+    }
+  }
+
+  /// Synchronously fires `keepalive: true` release requests during `pagehide`
+  /// so closing a browser tab or window releases writer leases immediately
+  /// instead of holding them until server expiry.
+  void _releaseAllOnPageHide() {
+    if (_unloadLeases.isEmpty) return;
+    final entries = _unloadLeases.entries.toList();
+    _unloadLeases.clear();
+    if (_pageHideListener != null) {
+      _window.removeEventListener('pagehide', _pageHideListener!);
+      _pageHideListener = null;
+    }
+    for (final entry in entries) {
+      final (planId, leaseId) = entry.key;
+      final session = entry.value;
+      final url = server.api(
+        '${HostedPlanProtocol.planPath(planId)}/lease/release',
+      );
+      final headers = {
+        ...credentials(session, mutation: true),
+        'Content-Type': 'application/json',
+      };
+      final body = jsonEncode({'leaseId': leaseId});
+      try {
+        _fetch(
+          url.toString(),
+          _Init(
+            method: 'POST',
+            credentials: 'same-origin',
+            redirect: 'error',
+            keepalive: true,
+            headers: headers.jsify()! as JSObject,
+            body: body.toJS,
+          ),
+        ).toDart.ignore();
+      } catch (_) {
+        // Best-effort during page teardown; lease expiry remains the fallback.
+      }
+    }
+  }
 
   @override
   String get leaseMode => 'browser';
@@ -232,6 +298,7 @@ extension type _Init._(JSObject _) implements JSObject {
     String redirect,
     JSObject headers,
     JSAny? body,
+    bool? keepalive,
   });
 }
 
@@ -259,8 +326,16 @@ extension type _Element(JSObject _) implements JSObject {
 @JS('location')
 external _Location get _location;
 
+@JS('window')
+external _Window get _window;
+
 @JS('window.open')
 external JSAny? _openWindow(String url, String target, String features);
+
+extension type _Window(JSObject _) implements JSObject {
+  external void addEventListener(String type, JSFunction listener);
+  external void removeEventListener(String type, JSFunction listener);
+}
 
 extension type _Location(JSObject _) implements JSObject {
   external void assign(String url);

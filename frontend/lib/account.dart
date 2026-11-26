@@ -159,6 +159,19 @@ abstract interface class HostedPlanClient {
   );
 }
 
+/// Optional lifecycle hook for hosted plan clients whose host tears down
+/// synchronously on close without running async close handlers (a browser tab
+/// or window closing). Implementations issue a best-effort keepalive lease
+/// release when the page hides/unloads.
+abstract interface class UnloadLeaseReleaser {
+  void registerUnloadLease(
+    AccountSession session,
+    String planId,
+    String leaseId,
+  );
+  void unregisterUnloadLease(String planId, String leaseId);
+}
+
 /// Who is signed in and what their account holds on the server.
 class AccountProfile {
   const AccountProfile({

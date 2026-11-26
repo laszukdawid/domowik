@@ -4976,10 +4976,11 @@ authorize replacement. Dirty create/open/switch,
 sign-in navigation, sign-out and close require an explicit save, confirmed
 local copy, leave-unsaved choice or cancellation. Close asks where the host
 lets the editor answer first (currently macOS); a browser tab shows the
-browser's own leave warning instead. Release is
-attempted after that choice, and an approved desktop close attempts it for
-at most three seconds before the window closes. Service lease expiry remains the fallback
-when a release cannot be confirmed. Hosted offline editing and merge are not
+browser's own leave warning instead. Release is attempted after that choice: a
+browser tab fires a best-effort `keepalive` lease release on `pagehide` so
+closing a tab or window frees the plan immediately, and an approved desktop
+close attempts release for at most three seconds before the window closes.
+Service lease expiry remains the fallback when a release cannot be confirmed. Hosted offline editing and merge are not
 provided.
 
 ### 11.5 HomeHero property plans and room inventory (owner request 2026-10-30)
