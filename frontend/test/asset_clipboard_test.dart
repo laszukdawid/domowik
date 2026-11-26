@@ -163,10 +163,10 @@ void main() {
       final h = await start(tester);
 
       // An empty clipboard is inert and opens no menu on empty space.
-      await h.click(const Offset(900, 700));
+      await h.click(const Offset(900, 580));
       await h.shortcut(LogicalKeyboardKey.keyV);
       expect(find.textContaining('The clipboard is empty'), findsOneWidget);
-      await h.rightClick(const Offset(900, 700));
+      await h.rightClick(const Offset(900, 580));
       expect(find.text('Paste here'), findsNothing);
 
       await h.placeClipSofa(const Offset(320, 360));
@@ -226,10 +226,10 @@ void main() {
       expect(find.text('Cut'), findsOneWidget);
       expect(find.text('Paste here'), findsOneWidget);
       await h.tap(find.text('Copy').last);
-      await h.rightClick(const Offset(900, 700));
+      await h.rightClick(const Offset(900, 580));
       expect(find.text('Copy'), findsNothing);
       expect(find.text('Paste here'), findsOneWidget);
-      final menuTarget = h.scene().view.toPlan(const Offset(900, 700));
+      final menuTarget = h.scene().view.toPlan(const Offset(900, 580));
       await h.tap(find.text('Paste here').last);
       expect(h.scene().assets, hasLength(3));
       final fromMenu = h

@@ -78,7 +78,7 @@ void main() {
     final endpoint = top + painter(tester).toScreen(first.end);
     await tester.tap(find.byKey(const ValueKey('wall-chain-tool')));
     await tester.pumpAndSettle();
-    final gesture = await tester.startGesture(top + const Offset(600, 600));
+    final gesture = await tester.startGesture(top + const Offset(600, 480));
     await gesture.moveTo(endpoint + const Offset(2, 1));
     await tester.pump();
     expect(
@@ -296,7 +296,7 @@ void main() {
       final wall = painter(tester).walls.single;
       await tester.tap(find.byKey(const ValueKey('wall-chain-tool')));
       await tester.pumpAndSettle();
-      final gesture = await tester.startGesture(top + const Offset(600, 600));
+      final gesture = await tester.startGesture(top + const Offset(600, 480));
       await gesture.moveTo(
         top +
             painter(tester).toScreen((wall.start + wall.end) / 2) +
@@ -311,7 +311,7 @@ void main() {
       await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
       final release = top + const Offset(401, 233);
       final captured = await tester.startGesture(
-        top + const Offset(600, 600),
+        top + const Offset(600, 480),
         pointer: 77,
       );
       await captured.moveBy(const Offset(100, 0));
