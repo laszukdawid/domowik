@@ -282,9 +282,11 @@ Browser differences:
   local uploads still work; **Retry catalog** retries discovery when online.
   Models are illustrative low-poly Apache-2.0 content, not measured products.
 - Preferences are kept for this site in this browser.
-- 3D needs WebGPU; without it the 3D pane says so and 2D works as usual.
-  Error text is selectable; **Copy 3D error** copies the complete message for
-  sharing, including details that require scrolling in a small pane.
+- 3D prefers WebGPU and falls back to WebGL2 when WebGPU is unavailable;
+  without either, the editor switches to Safe 2D (with a dismissable banner and
+  diagnostics) while 2D works as usual. Error text is selectable; **Copy 3D
+  error** copies the complete message for sharing, including details that
+  require scrolling in a small pane.
 - Long model imports pause the page while they decode, and a fault in the core
   stops the editor for that tab (reload; unsaved changes are lost).
 

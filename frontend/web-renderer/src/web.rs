@@ -12,16 +12,55 @@ pub struct WebRenderer {
 
 #[wasm_bindgen]
 impl WebRenderer {
-    /// Creates a renderer drawing into `canvas`. Rejects when the browser has
-    /// no WebGPU, no adapter, or refuses a device.
+    /// Creates a renderer drawing into `canvas`, preferring WebGPU and falling
+    /// back to WebGL2 when the browser has no WebGPU adapter. Rejects when
+    /// neither backend can supply an adapter and device.
     pub async fn create(canvas: web_sys::HtmlCanvasElement) -> Result<WebRenderer, JsError> {
+        // Probe WebGPU adapter availability BEFORE touching `canvas`: calling
+        // `canvas.getContext('webgpu')` locks the canvas to WebGPU even when
+        // `navigator.gpu.requestAdapter()` later returns null (common on Linux
+        // Chromium without Vulkan), which would otherwise block WebGL2 on the
+        // same canvas.
+        match Self::create_webgpu(canvas.clone()).await {
+            Ok(renderer) => Ok(renderer),
+            Err(webgpu_error) => Self::create_webgl(canvas).await.map_err(|webgl_error| {
+                JsError::new(&format!(
+                    "no 3D adapter (WebGPU: {webgpu_error}; WebGL2: {webgl_error})"
+                ))
+            }),
+        }
+    }
+
+    async fn create_webgpu(canvas: web_sys::HtmlCanvasElement) -> Result<WebRenderer, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: None,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("no WebGPU adapter: {e}"))?;
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
-            .map_err(|e| JsError::new(&format!("WebGPU canvas surface: {e}")))?;
+            .map_err(|e| format!("WebGPU canvas surface: {e}"))?;
+        if !adapter.is_surface_supported(&surface) {
+            return Err("WebGPU adapter does not support canvas surface".to_owned());
+        }
+        Self::finish_create(adapter, surface, "WebGPU").await
+    }
+
+    async fn create_webgl(canvas: web_sys::HtmlCanvasElement) -> Result<WebRenderer, String> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::GL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .map_err(|e| format!("WebGL2 canvas surface: {e}"))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -29,7 +68,15 @@ impl WebRenderer {
                 ..Default::default()
             })
             .await
-            .map_err(|e| JsError::new(&format!("no WebGPU adapter: {e}")))?;
+            .map_err(|e| format!("no WebGL2 adapter: {e}"))?;
+        Self::finish_create(adapter, surface, "WebGL2").await
+    }
+
+    async fn finish_create(
+        adapter: wgpu::Adapter,
+        surface: wgpu::Surface<'static>,
+        backend_label: &str,
+    ) -> Result<WebRenderer, String> {
         let info = adapter.get_info();
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -39,7 +86,7 @@ impl WebRenderer {
                 ..Default::default()
             })
             .await
-            .map_err(|e| JsError::new(&format!("WebGPU device: {e}")))?;
+            .map_err(|e| format!("{backend_label} device: {e}"))?;
         // The canvas's preferred format, made non-sRGB to match the shader's
         // output values on every presenter.
         let capabilities = surface.get_capabilities(&adapter);
@@ -53,7 +100,15 @@ impl WebRenderer {
                     wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
                 )
             })
-            .ok_or_else(|| JsError::new("the canvas offers no 8-bit RGBA/BGRA format"))?;
+            .ok_or_else(|| "the canvas offers no 8-bit RGBA/BGRA format".to_owned())?;
+        let alpha_mode = if capabilities
+            .alpha_modes
+            .contains(&wgpu::CompositeAlphaMode::Opaque)
+        {
+            wgpu::CompositeAlphaMode::Opaque
+        } else {
+            wgpu::CompositeAlphaMode::Auto
+        };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -62,13 +117,13 @@ impl WebRenderer {
             height: 1,
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
-            alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+            alpha_mode,
             view_formats: vec![],
         };
         // Browsers may withhold adapter details for privacy.
         let name = match info.name.as_str() {
-            "" => "WebGPU adapter".to_owned(),
-            named => format!("{named} (WebGPU)"),
+            "" => format!("{backend_label} adapter"),
+            named => format!("{named} ({backend_label})"),
         };
         Ok(WebRenderer {
             renderer: Renderer::with_device(device, queue, name, format),

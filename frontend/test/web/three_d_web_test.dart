@@ -20,6 +20,9 @@ import 'package:flutter_test/flutter_test.dart';
 @JS('navigator.gpu')
 external JSObject? get _gpu;
 
+@JS('eval')
+external JSAny? _eval(JSString source);
+
 void main() {
   late DomowikCore core;
   setUpAll(() async {
@@ -321,4 +324,84 @@ void main() {
     );
     await presenter.invokeMethod<void>('destroy', {'session': session});
   });
+
+  test(
+    'WebGL2 fallback loads and renders a 3D scene when WebGPU is unavailable',
+    () async {
+      _eval(
+        '''
+        window.domowikSavedGpuDescriptor =
+          Object.getOwnPropertyDescriptor(navigator, 'gpu');
+        Object.defineProperty(navigator, 'gpu', {
+          configurable: true,
+          value: undefined
+        });
+      '''
+            .toJS,
+      );
+      addTearDown(() {
+        _eval(
+          '''
+          if (window.domowikSavedGpuDescriptor) {
+            Object.defineProperty(navigator, 'gpu', window.domowikSavedGpuDescriptor);
+          } else {
+            delete navigator.gpu;
+          }
+          delete window.domowikSavedGpuDescriptor;
+        '''
+              .toJS,
+        );
+      });
+
+      final plan = core.createDefault().handle;
+      addTearDown(() => core.close(plan));
+      final level =
+          ((jsonDecode(core.snapshot(plan).text!) as Map)['levels'] as List)
+                  .single['id']
+              as String;
+      addWall(plan, level, [0, 0], [4000, 0]);
+      addWall(plan, level, [4000, 0], [4000, 3000]);
+
+      final presenter = WebScenePresenter(core);
+      final created = (await presenter.invokeMapMethod<String, Object?>(
+        'create',
+      ))!;
+      final session = created['session'];
+      addTearDown(
+        () => presenter.invokeMethod<void>('destroy', {'session': session}),
+      );
+
+      final loaded = (await presenter.invokeMapMethod<String, Object?>(
+        'loadScene',
+        {
+          'session': session,
+          'plan': plan,
+          'generation': 1,
+          'levelIds': [level],
+          'ghostedIds': const [],
+        },
+      ))!;
+      expect(loaded['generation'], 1);
+
+      await presenter.invokeMethod<void>('camera', {
+        'session': session,
+        'matrix': [
+          1.0, 0.0, 0.0, 0.0, //
+          0.0, 1.0, 0.0, 0.0,
+          0.0, 0.0, -0.1, -1.0,
+          0.0, 0.0, -1.0, 4.0,
+        ],
+        'width': 320,
+        'height': 240,
+      });
+
+      final stats = (await presenter.invokeMapMethod<String, Object?>('stats', {
+        'session': session,
+      }))!;
+      expect(stats['adapter'], contains('WebGL2'));
+      expect(stats['triangles'], greaterThan(0));
+      expect(stats['frames'], 1);
+      expect(stats['error'], isEmpty);
+    },
+  );
 }

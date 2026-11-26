@@ -23,11 +23,12 @@ class _UnusedCore implements DomowikCore {
 
 void main() {
   setUp(() {
-    // Shadow only this test page's navigator property. These tests never ask
-    // the physical driver for an adapter, including on a known-unsafe host.
+    // Shadow only this test page's navigator/canvas properties. These tests
+    // control GPU/WebGL availability explicitly without relying on host flags.
     evaluate('''
       window.domowikTestGpuDescriptor =
         Object.getOwnPropertyDescriptor(navigator, 'gpu');
+      window.domowikTestGetContext = HTMLCanvasElement.prototype.getContext;
       window.domowikTestGpuReads = 0;
       window.domowikTestAdapterRequests = 0;
     ''');
@@ -39,7 +40,11 @@ void main() {
       } else {
         delete navigator.gpu;
       }
+      if (window.domowikTestGetContext) {
+        HTMLCanvasElement.prototype.getContext = window.domowikTestGetContext;
+      }
       delete window.domowikTestGpuDescriptor;
+      delete window.domowikTestGetContext;
       delete window.domowikTestGpuReads;
       delete window.domowikTestAdapterRequests;
     ''');
@@ -86,25 +91,33 @@ void main() {
     );
   });
 
-  test('missing WebGPU is reported without initializing a renderer', () async {
-    evaluate('''
+  test(
+    'missing WebGPU falls back to WebGL2 when WebGL2 is available',
+    () async {
+      evaluate('''
       Object.defineProperty(navigator, 'gpu', {
         configurable: true, value: undefined
       });
     ''');
-    final presenter = WebScenePresenter(
-      const _UnusedCore(),
-      graphicsPolicy: const WebGraphicsPolicy.allowed(),
-    );
-    await expectLater(
-      presenter.invokeMethod<Object?>('create'),
-      throwsA(
-        isA<PlatformException>().having((e) => e.code, 'code', 'no-webgpu'),
-      ),
-    );
-  });
+      final presenter = WebScenePresenter(
+        const _UnusedCore(),
+        graphicsPolicy: const WebGraphicsPolicy.allowed(),
+      );
+      final created = (await presenter.invokeMapMethod<String, Object?>(
+        'create',
+      ))!;
+      final session = created['session'];
+      addTearDown(
+        () => presenter.invokeMethod<void>('destroy', {'session': session}),
+      );
+      final stats = (await presenter.invokeMapMethod<String, Object?>('stats', {
+        'session': session,
+      }))!;
+      expect(stats['adapter'], contains('WebGL2'));
+    },
+  );
 
-  test('a null adapter is an ordinary refusal, not a forced backend', () async {
+  test('a null WebGPU adapter falls back to WebGL2 cleanly', () async {
     evaluate('''
       Object.defineProperty(navigator, 'gpu', {
         configurable: true,
@@ -120,15 +133,44 @@ void main() {
       const _UnusedCore(),
       graphicsPolicy: const WebGraphicsPolicy.allowed(),
     );
-    await expectLater(
-      presenter.invokeMethod<Object?>('create'),
-      throwsA(
-        isA<PlatformException>().having((e) => e.code, 'code', 'no-webgpu'),
-      ),
+    final created = (await presenter.invokeMapMethod<String, Object?>(
+      'create',
+    ))!;
+    final session = created['session'];
+    addTearDown(
+      () => presenter.invokeMethod<void>('destroy', {'session': session}),
     );
+    final stats = (await presenter.invokeMapMethod<String, Object?>('stats', {
+      'session': session,
+    }))!;
     expect(
       (evaluate('window.domowikTestAdapterRequests') as JSNumber).toDartInt,
       greaterThan(0),
+    );
+    expect(stats['adapter'], contains('WebGL2'));
+  });
+
+  test('missing WebGPU and WebGL2 is reported as no-webgpu refusal', () async {
+    evaluate('''
+      Object.defineProperty(navigator, 'gpu', {
+        configurable: true, value: undefined
+      });
+      HTMLCanvasElement.prototype.getContext = function(type) {
+        if (type === 'webgl2' || type === 'webgl') return null;
+        return window.domowikTestGetContext.apply(this, arguments);
+      };
+    ''');
+    final presenter = WebScenePresenter(
+      const _UnusedCore(),
+      graphicsPolicy: const WebGraphicsPolicy.allowed(),
+    );
+    await expectLater(
+      presenter.invokeMethod<Object?>('create'),
+      throwsA(
+        isA<PlatformException>()
+            .having((e) => e.code, 'code', 'no-webgpu')
+            .having((e) => e.message, 'message', contains('WebGL2')),
+      ),
     );
   });
 }

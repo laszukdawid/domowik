@@ -429,10 +429,12 @@ void main() {
     expect(scene(tester).assets.single.widthMm, placed.widthMm);
     final poseButton = find.byKey(const ValueKey('pose-asset'));
     await tester.ensureVisible(poseButton);
+    await tester.pumpAndSettle();
     await tester.tap(poseButton);
     await tester.pumpAndSettle();
     final angle = find.byKey(const ValueKey('asset-pose-3'));
     await tester.ensureVisible(angle);
+    await tester.pumpAndSettle();
     await tester.enterText(angle, '100');
     await tester.pumpAndSettle();
     expect(
@@ -457,6 +459,7 @@ void main() {
           .last,
     );
     await tester.ensureVisible(poseButton);
+    await tester.pumpAndSettle();
     await tester.tap(poseButton);
     await tester.pumpAndSettle();
     await tester.ensureVisible(angle);

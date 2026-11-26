@@ -10,8 +10,8 @@
 //
 // Each 3D view gets its own canvas, shown through a platform view with
 // pointer events passed through to Flutter, which keeps all navigation input
-// in the shared Dart camera code. WebGPU is required; without it `create`
-// fails and the view says so.
+// in the shared Dart camera code. Prefers WebGPU and falls back to WebGL2;
+// when neither is available `create` fails and the view falls back to Safe 2D.
 
 import 'dart:convert';
 import 'dart:js_interop';
@@ -67,9 +67,6 @@ extension type _Renderer(JSObject _) implements JSObject {
   external void free();
 }
 
-@JS('navigator.gpu')
-external JSObject? get _gpu;
-
 Future<_RendererModule>? _module;
 
 /// Loads the renderer module once per page, resolved against the page URL so
@@ -110,18 +107,11 @@ class WebScenePresenter implements ScenePresenter {
     switch (method) {
       case 'create':
         // Defence in depth: non-editor clients must also avoid the known
-        // crash path. Do not even load the module or read navigator.gpu first.
+        // crash path. Do not even load the module or touch GPU APIs first.
         if (!_graphicsPolicy.allows3d) {
           throw PlatformException(
             code: 'webgpu-disabled',
             message: _graphicsPolicy.disabledReason,
-          );
-        }
-        if (_gpu == null) {
-          throw PlatformException(
-            code: 'no-webgpu',
-            message:
-                'the 3D view needs WebGPU, which this browser does not offer',
           );
         }
         final module = await _loadModule();
