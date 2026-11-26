@@ -9,7 +9,7 @@
       "sourceUrl": "https://github.com/actions/checkout",
       "license": "MIT",
       "status": "dev-only",
-      "usedIn": ".github/workflows/ci.yml, .github/workflows/release.yml",
+      "usedIn": ".github/workflows/checks.yml, .github/workflows/ci.yml, .github/workflows/release.yml",
       "added": "2026-08-23"
     },
     {
