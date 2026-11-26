@@ -219,6 +219,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('property-plans-button')));
       await tester.pumpAndSettle();
       expect(find.text('HomeHero property: Home'), findsOneWidget);
+      expect(
+        find.text('Sign-in and property access are checked separately.'),
+        findsNothing,
+      );
+      expect(find.byIcon(Icons.open_in_new), findsNothing);
       expect(find.text('Current'), findsOneWidget);
 
       await tester.tap(
@@ -239,7 +244,7 @@ void main() {
       expect(propertyClient.linked.map((plan) => plan.id), contains('plan-3'));
       expect(find.text('Alternative layout'), findsOneWidget);
 
-      await tester.tap(find.byKey(const ValueKey('property-plan-open-plan-2')));
+      await tester.tap(find.byKey(const ValueKey('property-plan-plan-2')));
       await tester.pumpAndSettle();
       expect(opened, ['plan-2']);
       expect(
@@ -255,6 +260,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Unlink').last);
       await tester.pumpAndSettle();
+      expect(opened, ['plan-2'], reason: 'unlinking does not open the plan');
       expect(propertyClient.linked.any((plan) => plan.id == 'plan-2'), isFalse);
     },
   );
