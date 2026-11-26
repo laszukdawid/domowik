@@ -182,6 +182,7 @@ class PlanPage extends StatefulWidget {
     this.accountClient,
     this.graphicsPolicy,
     this.accountClients,
+    this.propertyHint,
   });
 
   /// Tests load the real native library directly; bundles use
@@ -225,6 +226,10 @@ class PlanPage extends StatefulWidget {
   /// (including tests) get no client unless they supply one.
   final AccountClient? Function(String? savedServerUrl)? accountClients;
 
+  /// Optional override for the `?property=` query parameter, primarily for
+  /// tests. Defaults to `Uri.base.queryParameters['property']`.
+  final String? propertyHint;
+
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
@@ -246,6 +251,7 @@ class _PlanPageState extends State<PlanPage>
   late AccountClient? _accountClient = widget.accountClient;
   int _accountClientGeneration = 0;
   AccountSession? _accountSession;
+  bool _initialPropertyHintHandled = false;
   final ValueNotifier<int> _propertyContextChanges = ValueNotifier(0);
   final ValueNotifier<int> _accountSessionChanges = ValueNotifier(0);
   int? _propertyObservedDocumentRevision;
@@ -1217,6 +1223,7 @@ class _PlanPageState extends State<PlanPage>
       await _configReady;
       if (!mounted) return;
       await _newPlan();
+      unawaited(_maybeAutoOpenPropertyPlan());
     } on Object catch (e) {
       setState(() => _loadError = '$e');
     }
@@ -3183,6 +3190,91 @@ class _PlanPageState extends State<PlanPage>
     if (!mounted) return;
     _accountSessionChanges.value++;
     setState(() => _accountSession = session);
+    if (session != null) {
+      unawaited(_maybeAutoOpenPropertyPlan());
+    }
+  }
+
+  String? get _propertyHint => validatedPropertyHint(
+    widget.propertyHint ?? Uri.base.queryParameters['property'],
+  );
+
+  /// When arriving at Planner with a `?property=<id>` hint and a signed-in
+  /// session, automatically opens the property's most recently updated linked
+  /// plan (or opens Property plans when none is linked yet). Runs at most once
+  /// per visit and only while the editor is still on its initial untouched
+  /// blank plan.
+  Future<void> _maybeAutoOpenPropertyPlan() async {
+    if (_initialPropertyHintHandled) return;
+    final hint = _propertyHint;
+    final accountSession = _accountSession;
+    final propertyClient = _propertyPlannerClient;
+    final planClient = _hostedPlanClient;
+    if (hint == null ||
+        accountSession == null ||
+        propertyClient == null ||
+        planClient == null ||
+        _session == null ||
+        _handle == 0) {
+      return;
+    }
+    if (_hostedPlan != null ||
+        _filePath != null ||
+        _dirty ||
+        _fileActionPending) {
+      _initialPropertyHintHandled = true;
+      return;
+    }
+    _initialPropertyHintHandled = true;
+    final sessionRevision = _accountSessionChanges.value;
+    bool sessionStillCurrent(AccountSession session) =>
+        mounted &&
+        identical(_accountSession, session) &&
+        _accountSessionChanges.value == sessionRevision;
+    try {
+      final results = await Future.wait<Object>([
+        propertyClient.propertyOverview(accountSession, propertyHint: hint),
+        planClient.listPlans(accountSession),
+      ]);
+      if (!sessionStillCurrent(accountSession) ||
+          _hostedPlan != null ||
+          _filePath != null ||
+          _dirty ||
+          _fileActionPending) {
+        return;
+      }
+      final overview = results[0] as PlannerPropertyOverview;
+      final plans = results[1] as List<HostedPlan>;
+      final linkedPlans = [
+        for (final summary in overview.plans)
+          if (plans.where((candidate) => candidate.id == summary.id).firstOrNull
+              case final plan?)
+            plan,
+      ];
+      if (linkedPlans.isNotEmpty) {
+        await _requestOpenHostedPlan(linkedPlans.first);
+      } else {
+        await showPropertyPlannerDialog(
+          context,
+          client: propertyClient,
+          planClient: planClient,
+          session: accountSession,
+          propertyHint: hint,
+          isSessionCurrent: sessionStillCurrent,
+          sessionChanges: _accountSessionChanges,
+          onOpen: _requestOpenHostedPlan,
+          initialOverview: overview,
+          initialPlans: plans,
+        );
+      }
+    } on Object catch (error) {
+      if (!sessionStillCurrent(accountSession)) return;
+      final detail = error is AccountException ? error.message : '$error';
+      setState(
+        () =>
+            _setStatus('could not load property plans: $detail', isError: true),
+      );
+    }
   }
 
   Future<bool> _beforeAccountSignIn() => _fileWorkflow.run(() async {
@@ -3287,7 +3379,7 @@ class _PlanPageState extends State<PlanPage>
       client: propertyClient,
       planClient: client,
       session: _accountSession,
-      propertyHint: Uri.base.queryParameters['property'],
+      propertyHint: _propertyHint,
       isSessionCurrent: (session) =>
           mounted &&
           identical(_accountSession, session) &&
@@ -3319,9 +3411,7 @@ class _PlanPageState extends State<PlanPage>
         try {
           final overview = await propertyClient.propertyOverview(
             accountSession,
-            propertyHint: validatedPropertyHint(
-              Uri.base.queryParameters['property'],
-            ),
+            propertyHint: _propertyHint,
           );
           await propertyClient.linkPlanProperty(
             accountSession,

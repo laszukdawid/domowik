@@ -8,6 +8,7 @@ import 'package:domowik_editor/core/ffi_core.dart';
 import 'package:domowik_editor/file_workflows.dart';
 import 'package:domowik_editor/main.dart';
 import 'package:domowik_editor/plan_session.dart';
+import 'package:domowik_editor/property_planner.dart';
 import 'package:domowik_editor/user_config.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -205,6 +206,73 @@ class _HostedClient implements AccountClient, HostedPlanClient {
   }
 }
 
+class _PropertyHostedClient extends _HostedClient
+    implements PropertyPlannerClient {
+  _PropertyHostedClient(super.packageBytes);
+
+  final linked = <PlannerPlanSummary>[];
+  String propertyName = 'Maple House';
+  String propertyId = 'property-1';
+  final propertyHints = <String?>[];
+
+  @override
+  Future<PlannerPropertyOverview> propertyOverview(
+    AccountSession session, {
+    String? propertyHint,
+  }) async {
+    propertyHints.add(propertyHint);
+    return PlannerPropertyOverview(
+      property: PlannerNamedId(id: propertyId, name: propertyName),
+      locations: const [PlannerNamedId(id: 'loc-1', name: 'Kitchen')],
+      plans: List.of(linked),
+    );
+  }
+
+  @override
+  Future<PlannerPlanContext> planPropertyContext(
+    AccountSession session,
+    String planId,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<void> linkPlanProperty(
+    AccountSession session,
+    String planId,
+    String propertyId,
+  ) async {}
+
+  @override
+  Future<void> unlinkPlanProperty(
+    AccountSession session,
+    String planId,
+  ) async {}
+
+  @override
+  Future<void> linkRoomLocation(
+    AccountSession session,
+    String planId,
+    String roomId,
+    String locationId,
+  ) async {}
+
+  @override
+  Future<void> unlinkRoomLocation(
+    AccountSession session,
+    String planId,
+    String roomId,
+  ) async {}
+
+  @override
+  Future<PlannerRoomInventory> roomInventory(
+    AccountSession session,
+    String planId,
+    String roomId,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<bool> openItemUri(Uri uri) async => true;
+}
+
 class _Dialogs implements FileDialogs {
   PlanSource? nextOpen;
   PlanTarget? nextSave;
@@ -251,8 +319,10 @@ void main() {
 
   Future<void> start(
     WidgetTester tester, {
+    AccountClient? accountClient,
     AccountClient? Function(String? savedServerUrl)? accountClients,
     UserConfigStore? configStore,
+    String? propertyHint,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1200, 850));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -260,10 +330,13 @@ void main() {
       MaterialApp(
         home: PlanPage(
           bridgeLoader: () => FfiCore(bridge),
-          accountClient: accountClients == null ? client : null,
+          accountClient: accountClients == null
+              ? (accountClient ?? client)
+              : null,
           accountClients: accountClients,
           configStore: configStore,
           fileDialogs: dialogs,
+          propertyHint: propertyHint,
         ),
       ),
     );
@@ -874,4 +947,52 @@ void main() {
     expect(find.byKey(const ValueKey('account')), findsNothing);
     expect(client.signOutCalls, 1);
   });
+
+  testWidgets(
+    'visiting with a property hint automatically opens its linked plan',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes);
+      final plan = propertyClient._newPlan('Ground Floor', seedBytes);
+      propertyClient.linked.add(
+        PlannerPlanSummary(id: plan.id, title: plan.title),
+      );
+
+      await start(
+        tester,
+        accountClient: propertyClient,
+        propertyHint: 'property-1',
+      );
+
+      expect(propertyClient.propertyHints, ['property-1']);
+      expectOnlineTitle('Ground Floor');
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'visiting with a property hint opens Property plans when none is linked yet',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes);
+
+      await start(
+        tester,
+        accountClient: propertyClient,
+        propertyHint: 'property-1',
+      );
+
+      expect(propertyClient.propertyHints, ['property-1']);
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsOneWidget,
+      );
+      expect(find.text('HomeHero property: Maple House'), findsOneWidget);
+      expect(
+        find.text('Sign-in and property access are checked separately.'),
+        findsNothing,
+      );
+    },
+  );
 }

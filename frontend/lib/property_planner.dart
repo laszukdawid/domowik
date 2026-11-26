@@ -246,6 +246,32 @@ Uri? validatedHomeHeroItemUri(String value) {
   return uri;
 }
 
+Future<void> showPropertyPlannerDialog(
+  BuildContext context, {
+  required PropertyPlannerClient client,
+  required HostedPlanClient planClient,
+  required AccountSession? session,
+  required String? propertyHint,
+  required bool Function(AccountSession session) isSessionCurrent,
+  required Listenable sessionChanges,
+  required Future<bool> Function(HostedPlan plan) onOpen,
+  PlannerPropertyOverview? initialOverview,
+  List<HostedPlan>? initialPlans,
+}) => showDialog<void>(
+  context: context,
+  builder: (_) => _PropertyPlannerDialog(
+    client: client,
+    planClient: planClient,
+    session: session,
+    propertyHint: validatedPropertyHint(propertyHint),
+    isSessionCurrent: isSessionCurrent,
+    sessionChanges: sessionChanges,
+    onOpen: onOpen,
+    initialOverview: initialOverview,
+    initialPlans: initialPlans,
+  ),
+);
+
 class PropertyPlannerManagerButton extends StatelessWidget {
   const PropertyPlannerManagerButton({
     required this.client,
@@ -269,17 +295,15 @@ class PropertyPlannerManagerButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => TextButton.icon(
     key: const ValueKey('property-plans-button'),
-    onPressed: () => showDialog<void>(
-      context: context,
-      builder: (_) => _PropertyPlannerDialog(
-        client: client,
-        planClient: planClient,
-        session: session,
-        propertyHint: validatedPropertyHint(propertyHint),
-        isSessionCurrent: isSessionCurrent,
-        sessionChanges: sessionChanges,
-        onOpen: onOpen,
-      ),
+    onPressed: () => showPropertyPlannerDialog(
+      context,
+      client: client,
+      planClient: planClient,
+      session: session,
+      propertyHint: propertyHint,
+      isSessionCurrent: isSessionCurrent,
+      sessionChanges: sessionChanges,
+      onOpen: onOpen,
     ),
     icon: const Icon(Icons.home_work_outlined),
     label: const Text('Property plans'),
@@ -295,6 +319,8 @@ class _PropertyPlannerDialog extends StatefulWidget {
     required this.isSessionCurrent,
     required this.sessionChanges,
     required this.onOpen,
+    this.initialOverview,
+    this.initialPlans,
   });
 
   final PropertyPlannerClient client;
@@ -304,6 +330,8 @@ class _PropertyPlannerDialog extends StatefulWidget {
   final bool Function(AccountSession session) isSessionCurrent;
   final Listenable sessionChanges;
   final Future<bool> Function(HostedPlan plan) onOpen;
+  final PlannerPropertyOverview? initialOverview;
+  final List<HostedPlan>? initialPlans;
 
   @override
   State<_PropertyPlannerDialog> createState() => _PropertyPlannerDialogState();
@@ -328,6 +356,10 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
     if (_session == null) {
       _loading = false;
       _error = 'Sign in to manage property plans.';
+    } else if (widget.initialOverview != null && widget.initialPlans != null) {
+      _overview = widget.initialOverview;
+      _plans = List.of(widget.initialPlans!);
+      _loading = false;
     } else {
       _refresh();
     }
@@ -612,9 +644,6 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
               children: [
                 Text('HomeHero property: ${_overview!.property.name}'),
                 const SizedBox(height: 8),
-                const Text(
-                  'Sign-in and property access are checked separately.',
-                ),
                 if (_error != null)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
@@ -676,27 +705,25 @@ class _PropertyPlannerDialogState extends State<_PropertyPlannerDialog> {
     final plan = _plans
         .where((candidate) => candidate.id == summary.id)
         .firstOrNull;
-    return ListTile(
-      key: ValueKey('property-plan-${summary.id}'),
-      title: Text(summary.title),
-      subtitle: Text(
-        plan == null ? 'Online plan unavailable' : 'Revision ${plan.revision}',
-      ),
-      trailing: Wrap(
-        children: [
-          IconButton(
-            key: ValueKey('property-plan-open-${summary.id}'),
-            tooltip: 'Open plan',
-            onPressed: _working || plan == null ? null : () => _open(plan),
-            icon: const Icon(Icons.open_in_new),
-          ),
-          IconButton(
-            key: ValueKey('property-plan-unlink-${summary.id}'),
-            tooltip: 'Unlink plan',
-            onPressed: _working || plan == null ? null : () => _unlink(plan),
-            icon: const Icon(Icons.link_off),
-          ),
-        ],
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+        key: ValueKey('property-plan-${summary.id}'),
+        enabled: !_working && plan != null,
+        onTap: _working || plan == null ? null : () => _open(plan),
+        title: Text(summary.title),
+        subtitle: Text(
+          plan == null
+              ? 'Online plan unavailable'
+              : 'Revision ${plan.revision}',
+        ),
+        trailing: IconButton(
+          key: ValueKey('property-plan-unlink-${summary.id}'),
+          tooltip: 'Unlink plan',
+          onPressed: _working || plan == null ? null : () => _unlink(plan),
+          icon: const Icon(Icons.link_off),
+        ),
       ),
     );
   }
