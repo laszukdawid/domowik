@@ -4905,19 +4905,28 @@ page's own origin in the browser, the §11.1 Server preference on the
 desktop) and a signed-in account, the editor may explicitly list, create,
 open, delete (after explicit confirmation), or save the current plan as a new
 hosted ("online") plan. The browser restores the service's session cookie when
-the page loads. The desktop signs in through the system browser (RFC 8252
-loopback redirect with PKCE), which uses the service's own sign-in, and stores
-the issued API token, token ID, and expiry per canonical server origin in
-owner-restricted local storage (`<config>/domowik/auth/tokens.json`, `0700`
-directory and `0600` atomic temporary file on POSIX). When no token is stored
-for the configured server, startup makes no account or plan request; when a
-non-expired token is present, startup `restore()` checks `GET /api/v1/auth/me`,
-clearing locally expired or server-rejected (`401`/`403`) tokens while
-retaining the stored token across transient offline or network failures.
-Sign-out revokes the token via `DELETE /api/v1/tokens/{id}` (treating `401` and
-`404` as already inactive) and always deletes the matching local token even
-when offline or server revocation cannot be confirmed, clearing the local
-desktop session and reporting when server revocation was unconfirmed. Desktop sign-in keeps the
+the page loads, unless the page URL includes `?local=1` (explicit local-only
+launch) or a non-empty `?auth_error=<code>` (failed sign-in callback), both of
+which skip automatic startup session restoration for that visit while leaving
+explicit **Sign in** available; when `?auth_error=<code>` is present on
+startup, the editor surfaces a clear diagnostic in the status bar and snackbar
+while keeping the local canvas open. The desktop signs in through the system
+browser (RFC 8252 loopback redirect with PKCE), which uses the service's own
+sign-in, and stores the issued API token, token ID, and expiry per canonical
+server origin in owner-restricted local storage
+(`<config>/domowik/auth/tokens.json`, `0700` directory and `0600` atomic
+temporary file on POSIX). When no token is stored for the configured server,
+startup makes no account or plan request; when a non-expired token is present,
+startup `restore()` checks `GET /api/v1/auth/me`, clearing locally expired or
+server-rejected (`401`/`403`) tokens best-effort while retaining the stored
+token across transient offline or network failures. Sign-out attempts server
+revocation via `DELETE /api/v1/tokens/{id}` (treating `401` and `404` as
+already inactive) and requires confirmed removal of the matching local token
+before clearing the local desktop session: if local token storage cannot be
+cleared, sign-out fails with an explicit device-storage error and keeps the
+local session active; if local token removal succeeds while server revocation
+cannot be confirmed, the desktop clears the local session and reports the
+unconfirmed server revocation. Desktop sign-in keeps the
 open plan and its edits in place; browser sign-in leaves the page and needs
 the leave choices below. With a signed-in session, **New** defaults to creating a new hosted plan (and,
 when HomeHero property integration is available, linking it to the user's
@@ -4969,9 +4978,11 @@ edits open and offers the copy actions below.
 Save as new online plan uploads the current core encoding as a new hosted
 plan, links it to the active or pending validated `?property=<id>` target when
 property integration is available (preserving the uploaded hosted plan with a
-status notice if linking fails, and clearing pending linkage when opening an
-unlinked hosted plan or switching servers), and then takes its lease without
-downloading it. Only when the lease
+status notice and retaining the pending property target for retry on the next
+Save if linking fails, resolving an opened hosted plan's existing property link
+on checkout, and clearing pending linkage when opening an unlinked hosted plan
+or switching servers), and then takes its lease without downloading it. Only
+when the lease
 revision equals the uploaded revision does the editor adopt it as the save
 target, mark the captured core revision saved, forget any local file binding
 and release the previous plan's lease best-effort; otherwise the current plan

@@ -213,6 +213,7 @@ class _WebPropertyAccountClient
 
   AccountSession? restoredSession;
   bool failPropertyLink = false;
+  bool signInLeavesEditorFlag = true;
   final calls = <String>[];
   final plans = <String, HostedPlan>{};
   final linkedPlanIds = <String>{};
@@ -222,7 +223,7 @@ class _WebPropertyAccountClient
   ServerEndpoint get server => ServerEndpoint('https://planner.homehero.pro');
 
   @override
-  bool get signInLeavesEditor => true;
+  bool get signInLeavesEditor => signInLeavesEditorFlag;
 
   @override
   Future<AccountSession?> restore() async => restoredSession;
@@ -413,7 +414,22 @@ class _WebPropertyAccountClient
   Future<PlannerPlanContext> planPropertyContext(
     AccountSession session,
     String planId,
-  ) => throw UnimplementedError();
+  ) async {
+    final plan = plans[planId];
+    if (plan == null || !linkedPlanIds.contains(planId)) {
+      throw const AccountException(
+        'unlinked',
+        statusCode: 409,
+        code: 'property-unlinked',
+      );
+    }
+    return PlannerPlanContext(
+      plan: PlannerPlanSummary(id: plan.id, title: plan.title),
+      property: const PlannerNamedId(id: 'prop-1', name: 'My Home'),
+      locations: const [],
+      roomLinks: const [],
+    );
+  }
 
   @override
   Future<void> linkRoomLocation(
@@ -473,6 +489,7 @@ void main() {
     required _WebPropertyAccountClient client,
     required _FakeFileDialogs dialogs,
     String? propertyHint,
+    Uri? startupUri,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1280, 820));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -483,6 +500,7 @@ void main() {
           accountClient: client,
           fileDialogs: dialogs,
           propertyHint: propertyHint,
+          startupUri: startupUri,
         ),
       ),
     );
@@ -929,6 +947,92 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('could not link to property'), findsOneWidget);
+      expect(client.linkedPlanIds.contains('plan-2'), isFalse);
+
+      // Pressing ordinary Save after the transient property failure recovers
+      // retries linkPlanProperty on the adopted plan-2 even with no new edits.
+      client.failPropertyLink = false;
+      await tester.tap(find.byKey(const ValueKey('save-action')));
+      await tester.pumpAndSettle();
+
+      expect(client.linkedPlanIds, contains('plan-2'));
+      expect(client.calls.last, 'linkPlanProperty:plan-2:prop-1');
+      expect(
+        find.textContaining('Saved online and linked to property'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'startup ?local=1 skips automatic session restore while keeping explicit Sign in working',
+    (tester) async {
+      final core = _FakeCore();
+      final client = _WebPropertyAccountClient(restoredSession: _session)
+        ..signInLeavesEditorFlag = false;
+      final plan = await client.createPlan(_session, 'Account A Plan');
+      client.linkedPlanIds.add(plan.id);
+      client.calls.clear();
+      final dialogs = _FakeFileDialogs();
+
+      await pumpEditor(
+        tester,
+        core: core,
+        client: client,
+        dialogs: dialogs,
+        startupUri: Uri.parse('https://planner.example/?local=1'),
+      );
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(find.text('Offline'), findsOneWidget);
+      expect(client.calls, isEmpty);
+
+      // Explicit click on Sign in still works normally.
+      await tester.tap(find.byKey(const ValueKey('account')));
+      await tester.pumpAndSettle();
+      expect(find.text('user@homehero.pro'), findsOneWidget);
+      expect(find.text('Sign in'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'startup ?auth_error= skips automatic session restore and surfaces sign-in failure',
+    (tester) async {
+      final core = _FakeCore();
+      final client = _WebPropertyAccountClient(restoredSession: _session)
+        ..signInLeavesEditorFlag = false;
+      final plan = await client.createPlan(_session, 'Account A Plan');
+      client.linkedPlanIds.add(plan.id);
+      client.calls.clear();
+      final dialogs = _FakeFileDialogs();
+
+      await pumpEditor(
+        tester,
+        core: core,
+        client: client,
+        dialogs: dialogs,
+        startupUri: Uri.parse(
+          'https://planner.example/?property=prop-1&auth_error=access-denied',
+        ),
+      );
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(find.text('Offline'), findsOneWidget);
+      expect(client.calls, isEmpty);
+      expect(
+        find.textContaining(
+          'Sign-in was declined or this account is not eligible yet',
+        ),
+        findsWidgets,
+      );
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsNothing,
+      );
+
+      // Explicit click on Sign in still works normally.
+      await tester.tap(find.byKey(const ValueKey('account')));
+      await tester.pumpAndSettle();
+      expect(find.text('user@homehero.pro'), findsOneWidget);
+      expect(find.text('Sign in'), findsNothing);
     },
   );
 }

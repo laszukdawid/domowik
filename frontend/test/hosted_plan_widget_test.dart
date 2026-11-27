@@ -31,6 +31,7 @@ class _HostedClient implements AccountClient, HostedPlanClient {
   String? failRenewCode;
   String? failDeleteCode;
   String? failSignOutMessage;
+  String? failSignOutCode;
   int _nextId = 1;
   int signOutCalls = 0;
   bool leavesEditor = true;
@@ -66,7 +67,7 @@ class _HostedClient implements AccountClient, HostedPlanClient {
   Future<void> signOut(AccountSession session) async {
     signOutCalls++;
     if (failSignOutMessage != null) {
-      throw AccountException(failSignOutMessage!);
+      throw AccountException(failSignOutMessage!, code: failSignOutCode);
     }
   }
 
@@ -254,7 +255,24 @@ class _PropertyHostedClient extends _HostedClient
   Future<PlannerPlanContext> planPropertyContext(
     AccountSession session,
     String planId,
-  ) => throw UnimplementedError();
+  ) async {
+    final summary = linked
+        .where((candidate) => candidate.id == planId)
+        .firstOrNull;
+    if (summary == null) {
+      throw const AccountException(
+        'this plan has no property link',
+        statusCode: 409,
+        code: 'property-unlinked',
+      );
+    }
+    return PlannerPlanContext(
+      plan: summary,
+      property: PlannerNamedId(id: propertyId, name: propertyName),
+      locations: const [PlannerNamedId(id: 'loc-1', name: 'Kitchen')],
+      roomLinks: const [],
+    );
+  }
 
   @override
   Future<void> deletePlan(AccountSession session, String planId) async {
@@ -357,6 +375,7 @@ void main() {
     AccountClient? Function(String? savedServerUrl)? accountClients,
     UserConfigStore? configStore,
     String? propertyHint,
+    Uri? startupUri,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1200, 850));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -371,6 +390,7 @@ void main() {
           configStore: configStore,
           fileDialogs: dialogs,
           propertyHint: propertyHint,
+          startupUri: startupUri,
         ),
       ),
     );
@@ -1308,6 +1328,74 @@ void main() {
       expect(propertyClient.signOutCalls, 1);
       expect(find.text('Sign in'), findsOneWidget);
       expect(find.textContaining('Signed out on this device'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'opening a property-linked plan via Open online plan preserves its property link on Save as new online plan',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes);
+      final linkedOriginal = propertyClient._newPlan('Main House', seedBytes);
+      propertyClient.linked.add(
+        PlannerPlanSummary(id: linkedOriginal.id, title: linkedOriginal.title),
+      );
+
+      // Open without any ?property= URL hint, via Open online plan.
+      await start(tester, accountClient: propertyClient);
+      await openHosted(tester, linkedOriginal);
+      expectOnlineTitle('Main House');
+
+      await saveMenu(tester, 'save-as-online');
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Main House Option B',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      final copied = propertyClient.plans.values.firstWhere(
+        (plan) => plan.title == 'Main House Option B',
+      );
+      expect(
+        propertyClient.calls,
+        contains('linkProperty:${copied.id}:property-1'),
+      );
+      expectOnlineTitle('Main House Option B');
+    },
+  );
+
+  testWidgets(
+    'desktop local-signout-failed keeps session active and refuses to claim device sign-out',
+    (tester) async {
+      final desktopClient = _HostedClient(seedBytes)
+        ..leavesEditor = false
+        ..failSignOutMessage =
+            'Could not remove saved credentials from this device'
+        ..failSignOutCode = 'local-signout-failed';
+
+      await start(tester, accountClient: desktopClient);
+      expect(find.text('person@example.test'), findsOneWidget);
+
+      await tap(tester, find.byKey(const ValueKey('account')));
+      await tap(tester, find.byKey(const ValueKey('sign-out')));
+
+      expect(desktopClient.signOutCalls, 1);
+      expect(find.text('person@example.test'), findsOneWidget);
+      expect(find.text('Sign in'), findsNothing);
+      expect(find.textContaining('Signed out on this device'), findsNothing);
+      expect(
+        find.textContaining('Could not sign out on this device'),
+        findsWidgets,
+      );
+
+      // Once local storage is writable again, retrying sign-out succeeds.
+      desktopClient
+        ..failSignOutMessage = null
+        ..failSignOutCode = null;
+      await tap(tester, find.byKey(const ValueKey('account')));
+      await tap(tester, find.byKey(const ValueKey('sign-out')));
+      expect(desktopClient.signOutCalls, 2);
+      expect(find.text('Sign in'), findsOneWidget);
     },
   );
 }

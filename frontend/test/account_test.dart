@@ -590,6 +590,118 @@ void main() {
       );
       expect(await store.read(endpoint.canonical), isNull);
       expect(await store.file.exists(), isFalse);
+      expect(await client.restore(), isNull);
+    });
+
+    test('surfaces local-signout-failed when offline and local credential deletion fails', () async {
+      final endpoint = ServerEndpoint(server.origin.toString());
+      final client = NativeAccountClient(
+        endpoint,
+        openBrowser: followingBrowser,
+        tokenStore: store,
+      );
+      final session = (await client.signIn())!;
+      await server.stop();
+
+      final unwritableClient = NativeAccountClient(
+        endpoint,
+        tokenStore: _UnwritableDesktopTokenStore(
+          StoredDesktopSession(token: session.token, tokenId: session.tokenId),
+        ),
+      );
+      await expectLater(
+        unwritableClient.signOut(session),
+        throwsA(
+          isA<AccountException>().having(
+            (e) => e.code,
+            'code',
+            'local-signout-failed',
+          ),
+        ),
+      );
+
+      if (!Platform.isWindows) {
+        final chmodReadOnly = await Process.run('chmod', [
+          '500',
+          store.file.parent.path,
+        ]);
+        expect(chmodReadOnly.exitCode, 0);
+        try {
+          await expectLater(
+            client.signOut(session),
+            throwsA(
+              isA<AccountException>().having(
+                (e) => e.code,
+                'code',
+                'local-signout-failed',
+              ),
+            ),
+          );
+        } finally {
+          await Process.run('chmod', ['700', store.file.parent.path]);
+        }
+        expect(await store.read(endpoint.canonical), isNotNull);
+
+        // Once the directory is writable again, offline sign-out deletes the
+        // local token (throwing only the unconfirmed server revocation error)
+        // and a subsequent offline restart restores null.
+        await expectLater(
+          client.signOut(session),
+          throwsA(
+            isA<AccountException>().having(
+              (e) => e.code,
+              'code',
+              isNot('local-signout-failed'),
+            ),
+          ),
+        );
+        expect(await store.read(endpoint.canonical), isNull);
+        expect(
+          await NativeAccountClient(endpoint, tokenStore: store).restore(),
+          isNull,
+        );
+      }
+    });
+
+    test('parses startup local-only and auth_error URL flags generically', () {
+      expect(
+        shouldSkipInitialSessionRestore(Uri.parse('https://planner.example/')),
+        isFalse,
+      );
+      expect(
+        shouldSkipInitialSessionRestore(
+          Uri.parse('https://planner.example/?local=1'),
+        ),
+        isTrue,
+      );
+      expect(
+        shouldSkipInitialSessionRestore(
+          Uri.parse('https://planner.example/?auth_error=access_denied'),
+        ),
+        isTrue,
+      );
+      expect(
+        startupAuthErrorMessage(Uri.parse('https://planner.example/?local=1')),
+        isNull,
+      );
+      expect(
+        startupAuthErrorMessage(
+          Uri.parse('https://planner.example/?auth_error=access-denied'),
+        ),
+        contains('declined or this account is not eligible yet'),
+      );
+      expect(
+        startupAuthErrorMessage(
+          Uri.parse('https://planner.example/?auth_error=invalid_state'),
+        ),
+        contains('request expired'),
+      );
+      expect(
+        startupAuthErrorMessage(
+          Uri.parse('https://planner.example/?auth_error=upstream_error'),
+        ),
+        contains('temporarily unavailable'),
+      );
     });
 
     test('clears expired or server-rejected tokens during restore and isolates servers', () async {
@@ -679,3 +791,24 @@ class RecordingServer {
 
 const _plan =
     '{"id":"p1","title":"Flat","revision":"7","updatedAtEpoch":1793059200}';
+
+class _UnwritableDesktopTokenStore implements DesktopTokenStore {
+  _UnwritableDesktopTokenStore(this._persisted);
+
+  final StoredDesktopSession _persisted;
+
+  @override
+  Future<StoredDesktopSession?> read(String serverOrigin) async => _persisted;
+
+  @override
+  Future<void> write(String serverOrigin, StoredDesktopSession session) async {}
+
+  @override
+  Future<void> delete(
+    String serverOrigin, {
+    String? matchingToken,
+    String? matchingTokenId,
+  }) async {
+    throw const FileSystemException('Directory is read-only');
+  }
+}

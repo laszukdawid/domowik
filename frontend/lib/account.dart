@@ -65,6 +65,49 @@ String nonce(int bytes) {
 String s256(String verifier) =>
     base64Url.encode(sha256(ascii.encode(verifier))).replaceAll('=', '');
 
+/// Whether startup query parameters (`?local=1` or a non-empty
+/// `?auth_error=<code>`) suppress automatic session restoration on initial load.
+bool shouldSkipInitialSessionRestore(Uri uri) {
+  final params = uri.queryParameters;
+  if (params['local'] == '1') return true;
+  final authError = params['auth_error']?.trim();
+  return authError != null && authError.isNotEmpty;
+}
+
+/// A clear, deployment-agnostic message explaining why a browser sign-in
+/// callback reported `?auth_error=<code>`, or null when absent.
+String? startupAuthErrorMessage(Uri uri) {
+  final raw = uri.queryParameters['auth_error']?.trim();
+  if (raw == null || raw.isEmpty) return null;
+  return switch (raw) {
+    'access_denied' || 'access-denied' =>
+      'Sign-in was declined or this account is not eligible yet (for example, '
+          'verify your email first). Your local plan remains open.',
+    'invalid_state' || 'invalid-state' || 'expired_state' || 'expired-state' =>
+      'Sign-in could not be completed because the request expired. Choose Sign '
+          'in to try again; your local plan remains open.',
+    'upstream_error' ||
+    'upstream-error' ||
+    'temporarily_unavailable' ||
+    'server_error' =>
+      'Sign-in could not be completed because the account service is '
+          'temporarily unavailable. Try Sign in again shortly; your local plan '
+          'remains open.',
+    'account_disabled' || 'account-disabled' =>
+      'Sign-in was refused because this account is disabled. Your local plan '
+          'remains open.',
+    'account_deleted' || 'account-deleted' =>
+      'Sign-in was refused because this account is no longer active. Your '
+          'local plan remains open.',
+    'auth_throttled' || 'auth-throttled' || 'rate_limited' || 'rate-limited' =>
+      'Too many sign-in attempts. Wait a moment and try Sign in again; your '
+          'local plan remains open.',
+    _ =>
+      'Sign-in could not be completed (the request expired or was invalid). '
+          'Choose Sign in to try again; your local plan remains open.',
+  };
+}
+
 /// A signed-in account. Desktop: an API token and its id, kept in private
 /// per-user storage across restarts and revoked on sign-out. Browser: the
 /// session's CSRF token (the session itself is an HttpOnly cookie) and no id.

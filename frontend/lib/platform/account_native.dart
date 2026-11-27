@@ -418,7 +418,7 @@ class NativeAccountClient extends HostedPlanProtocol implements AccountClient {
     if (stored.token.isEmpty ||
         stored.tokenId.isEmpty ||
         stored.isExpiredAt(_clock())) {
-      await _deleteStoredSession(
+      await _deleteStoredSessionBestEffort(
         AccountSession(token: stored.token, tokenId: stored.tokenId),
       );
       return null;
@@ -431,7 +431,7 @@ class NativeAccountClient extends HostedPlanProtocol implements AccountClient {
       final response = await request(session, 'GET', 'auth/me');
       if (response.status == HttpStatus.unauthorized ||
           response.status == HttpStatus.forbidden) {
-        await _deleteStoredSession(session);
+        await _deleteStoredSessionBestEffort(session);
         return null;
       }
     } on AccountException {
@@ -511,7 +511,7 @@ class NativeAccountClient extends HostedPlanProtocol implements AccountClient {
     }
   }
 
-  Future<void> _deleteStoredSession(AccountSession session) async {
+  Future<void> _deleteStoredSessionBestEffort(AccountSession session) async {
     final store = tokenStore;
     if (store == null) return;
     try {
@@ -521,7 +521,48 @@ class NativeAccountClient extends HostedPlanProtocol implements AccountClient {
         matchingTokenId: session.tokenId,
       );
     } on IOException {
-      // Best-effort local cleanup when storage is inaccessible.
+      // Best-effort local cleanup during passive startup restore.
+    }
+  }
+
+  /// Mandatory local credential removal for explicit sign-out: deletes from
+  /// [tokenStore] without suppressing storage failures and verifies that no
+  /// matching credential remains readable on disk.
+  Future<void> _requireDeleteStoredSession(AccountSession session) async {
+    final store = tokenStore;
+    if (store == null) return;
+    Object? deleteError;
+    try {
+      await store.delete(
+        server.canonical,
+        matchingToken: session.token,
+        matchingTokenId: session.tokenId,
+      );
+    } on Object catch (error) {
+      deleteError = error;
+    }
+    StoredDesktopSession? remaining;
+    try {
+      remaining = await store.read(server.canonical);
+    } on Object catch (readError) {
+      throw AccountException(
+        'Could not remove saved credentials from this device: '
+        '${deleteError ?? readError}',
+        code: 'local-signout-failed',
+      );
+    }
+    if (deleteError != null ||
+        (remaining != null &&
+            _sessionMatches(
+              remaining,
+              matchingToken: session.token,
+              matchingTokenId: session.tokenId,
+            ))) {
+      throw AccountException(
+        'Could not remove saved credentials from this device: '
+        '${deleteError ?? 'stored token is still present'}',
+        code: 'local-signout-failed',
+      );
     }
   }
 
@@ -544,11 +585,15 @@ class NativeAccountClient extends HostedPlanProtocol implements AccountClient {
     throw const AccountException('Signing in was interrupted');
   }
 
-  /// Revokes the token on the server and always removes any matching persisted
-  /// local token, even if the network or server fails. Tokens the server no
-  /// longer knows (401 or 404) are already inactive.
+  /// Revokes the token on the server and requires confirmed removal of any
+  /// matching persisted local token. Local cleanup failure throws
+  /// `local-signout-failed` (taking precedence over any remote error so the
+  /// caller never falsely reports a device sign-out while credentials remain on
+  /// disk). Tokens the server no longer knows (401 or 404) are already inactive.
   @override
   Future<void> signOut(AccountSession session) async {
+    Object? remoteError;
+    StackTrace? remoteStack;
     try {
       if (session.tokenId.isNotEmpty) {
         final response = await request(
@@ -562,8 +607,14 @@ class NativeAccountClient extends HostedPlanProtocol implements AccountClient {
           throw response.refused();
         }
       }
+    } on Object catch (error, stack) {
+      remoteError = error;
+      remoteStack = stack;
     } finally {
-      await _deleteStoredSession(session);
+      await _requireDeleteStoredSession(session);
+    }
+    if (remoteError != null) {
+      Error.throwWithStackTrace(remoteError, remoteStack!);
     }
   }
 
