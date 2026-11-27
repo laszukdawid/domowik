@@ -4903,13 +4903,21 @@ its saved state, and the same plan and assets produce identical bytes.
 **Normative experimental behavior.** With a hosted service configured (the
 page's own origin in the browser, the §11.1 Server preference on the
 desktop) and a signed-in account, the editor may explicitly list, create,
-open, or save the current plan as a new hosted ("online") plan. The browser
-restores the service's session cookie when the page loads. The desktop signs
-in through the system browser (RFC 8252 loopback redirect with PKCE), which
-uses the service's own sign-in, and keeps the issued API token in memory
-only: every run starts signed out, the editor makes no account or plan
-request before the user signs in, and sign-out revokes the token (a token the
-service no longer accepts counts as signed out). Desktop sign-in keeps the
+open, delete (after explicit confirmation), or save the current plan as a new
+hosted ("online") plan. The browser restores the service's session cookie when
+the page loads. The desktop signs in through the system browser (RFC 8252
+loopback redirect with PKCE), which uses the service's own sign-in, and stores
+the issued API token, token ID, and expiry per canonical server origin in
+owner-restricted local storage (`<config>/domowik/auth/tokens.json`, `0700`
+directory and `0600` atomic temporary file on POSIX). When no token is stored
+for the configured server, startup makes no account or plan request; when a
+non-expired token is present, startup `restore()` checks `GET /api/v1/auth/me`,
+clearing locally expired or server-rejected (`401`/`403`) tokens while
+retaining the stored token across transient offline or network failures.
+Sign-out revokes the token via `DELETE /api/v1/tokens/{id}` (treating `401` and
+`404` as already inactive) and always deletes the matching local token even
+when offline or server revocation cannot be confirmed, clearing the local
+desktop session and reporting when server revocation was unconfirmed. Desktop sign-in keeps the
 open plan and its edits in place; browser sign-in leaves the page and needs
 the leave choices below. With a signed-in session, **New** defaults to creating a new hosted plan (and,
 when HomeHero property integration is available, linking it to the user's
@@ -4959,11 +4967,20 @@ revision; a different server revision is a conflict. Every refusal leaves the
 edits open and offers the copy actions below.
 
 Save as new online plan uploads the current core encoding as a new hosted
-plan, then takes its lease without downloading it. Only when the lease
+plan, links it to the active or pending validated `?property=<id>` target when
+property integration is available (preserving the uploaded hosted plan with a
+status notice if linking fails, and clearing pending linkage when opening an
+unlinked hosted plan or switching servers), and then takes its lease without
+downloading it. Only when the lease
 revision equals the uploaded revision does the editor adopt it as the save
 target, mark the captured core revision saved, forget any local file binding
 and release the previous plan's lease best-effort; otherwise the current plan
-and binding are unchanged and the uploaded plan remains listed.
+and binding are unchanged and the uploaded plan remains listed. Deleting a
+hosted plan from the online plans dialog requires explicit confirmation noting
+when the plan is currently open in the editor or linked to a property; if the
+deleted plan is currently open, the editor detaches its hosted state and stops
+lease renewal without issuing a remote lease release, keeping the in-memory
+document and undo history open locally.
 
 For a hosted plan, the save menu's copy action, and the same choice in the
 leave dialog, write the current core encoding to a `.domo` download in the
