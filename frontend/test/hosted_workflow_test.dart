@@ -124,6 +124,10 @@ class _Client implements HostedPlanClient, UnloadLeaseReleaser {
   ) => throw UnimplementedError();
 
   @override
+  Future<void> deletePlan(AccountSession session, String planId) =>
+      throw UnimplementedError();
+
+  @override
   Future<HostedPlan> importPlan(
     AccountSession session,
     String title,
@@ -684,4 +688,16 @@ void main() {
       expect(client.unloadLeases, isEmpty);
     },
   );
+
+  test('dispose with releaseRemote false cleans up locally without releasing on server', () async {
+    final client = _Client();
+    final workflow = _coordinator(client);
+    await workflow.checkout(_plan);
+    expect(client.unloadLeases, {'plan-1:lease-1'});
+
+    await workflow.dispose(releaseRemote: false);
+    expect(workflow.state, HostedWorkflowState.disposed);
+    expect(client.unloadLeases, isEmpty);
+    expect(client.calls, ['acquire:false', 'download']);
+  });
 }

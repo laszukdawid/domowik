@@ -530,9 +530,11 @@ class HostedWorkflowCoordinator {
     }
   }
 
-  /// Stops renewal and best-effort releases the lease. A network interruption
-  /// cannot make the server forget the lease; expiry remains its backstop.
-  Future<void> dispose() async {
+  /// Stops renewal and best-effort releases the lease unless [releaseRemote]
+  /// is false (for example after the plan was already deleted on the server).
+  /// A network interruption cannot make the server forget the lease; expiry
+  /// remains its backstop.
+  Future<void> dispose({bool releaseRemote = true}) async {
     if (_disposed) return;
     final plan = _plan;
     final lease = _lease;
@@ -542,7 +544,7 @@ class HostedWorkflowCoordinator {
     _renewalTimer?.cancel();
     _renewalTimer = null;
     _setState(HostedWorkflowState.disposed);
-    if (plan != null && lease != null) {
+    if (releaseRemote && plan != null && lease != null) {
       try {
         await client
             .releaseLease(session, plan.id, lease.leaseId)

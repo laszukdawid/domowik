@@ -65,9 +65,9 @@ String nonce(int bytes) {
 String s256(String verifier) =>
     base64Url.encode(sha256(ascii.encode(verifier))).replaceAll('=', '');
 
-/// A signed-in account. Desktop: an API token and its id, kept in memory for
-/// this run of the app only and never written to disk. Browser: the session's CSRF token (the session
-/// itself is an HttpOnly cookie) and no id.
+/// A signed-in account. Desktop: an API token and its id, kept in private
+/// per-user storage across restarts and revoked on sign-out. Browser: the
+/// session's CSRF token (the session itself is an HttpOnly cookie) and no id.
 class AccountSession {
   const AccountSession({required this.token, this.tokenId = ''});
 
@@ -126,6 +126,7 @@ abstract interface class HostedPlanClient {
     String planId,
     String title,
   );
+  Future<void> deletePlan(AccountSession session, String planId);
   Future<HostedPlan> importPlan(
     AccountSession session,
     String title,

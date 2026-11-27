@@ -461,5 +461,20 @@ void main() {
       _dispatchWindowEvent(_Event('pagehide'));
       expect(sent, hasLength(1));
     });
+
+    test('deletes a plan with same-origin CSRF credentials', () async {
+      final client = BrowserAccountClient(server);
+      final sent = answer(204, null);
+      await client.deletePlan(
+        const AccountSession(token: 'csrf-token'),
+        'plan/1',
+      );
+      expect(sent, hasLength(1));
+      expect(sent.single.method, 'DELETE');
+      expect(sent.single.url, '$origin/api/v1/plans/plan%2F1');
+      expect(sent.single.csrf, 'csrf-token');
+      expect(sent.single.credentials, 'same-origin');
+      expect(sent.single.redirect, 'error');
+    });
   });
 }

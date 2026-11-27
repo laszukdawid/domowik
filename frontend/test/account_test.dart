@@ -429,11 +429,208 @@ void main() {
       await client.signOut(session);
       expect(server.received.single.method, 'DELETE');
       expect(server.received.single.path, '/api/v1/tokens/t1');
+      status = 404;
+      await client.signOut(session);
+      expect(server.received, hasLength(2));
       status = 500;
       await expectLater(
         client.signOut(session),
         throwsA(isA<AccountException>()),
       );
+    });
+
+    test(
+      'deletes an online plan with bearer auth and encodes its id',
+      () async {
+        status = 204;
+        await client.deletePlan(session, 'plan/42');
+        final sent = server.received.single;
+        expect(sent.method, 'DELETE');
+        expect(sent.path, '/api/v1/plans/plan%2F42');
+        expect(sent.headers.value('authorization'), 'Bearer dmk_secret');
+        expect(sent.body, isEmpty);
+
+        status = 404;
+        answer = '{"code":"plan-not-found","message":"missing"}';
+        await expectLater(
+          client.deletePlan(session, 'plan/42'),
+          throwsA(
+            isA<AccountException>()
+                .having((e) => e.statusCode, 'status', 404)
+                .having((e) => e.code, 'code', 'plan-not-found'),
+          ),
+        );
+      },
+    );
+  });
+
+  group('desktop token persistence and revocation', () {
+    late FakeServer server;
+    late Directory tempDir;
+    late FileDesktopTokenStore store;
+
+    setUp(() async {
+      server = FakeServer();
+      await server.start();
+      tempDir = await Directory.systemTemp.createTemp('domowik-tokens-');
+      store = FileDesktopTokenStore(File('${tempDir.path}/auth/tokens.json'));
+    });
+
+    tearDown(() async {
+      await server.stop();
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    test('resolves platform token storage paths safely', () {
+      expect(
+        desktopTokenFilePath(
+          operatingSystem: 'linux',
+          environment: {'XDG_CONFIG_HOME': '/tmp/xdg', 'HOME': '/home/alice'},
+        ),
+        '/tmp/xdg/domowik/auth/tokens.json',
+      );
+      expect(
+        desktopTokenFilePath(
+          operatingSystem: 'linux',
+          environment: {'HOME': '/home/alice'},
+        ),
+        '/home/alice/.config/domowik/auth/tokens.json',
+      );
+      expect(
+        desktopTokenFilePath(
+          operatingSystem: 'macos',
+          environment: {'HOME': '/Users/alice'},
+        ),
+        '/Users/alice/Library/Application Support/domowik/auth/tokens.json',
+      );
+      expect(
+        desktopTokenFilePath(
+          operatingSystem: 'windows',
+          environment: {'LOCALAPPDATA': r'C:\Users\alice\AppData\Local'},
+        ),
+        r'C:\Users\alice\AppData\Local/domowik/auth/tokens.json',
+      );
+      expect(
+        desktopTokenFilePath(operatingSystem: 'linux', environment: const {}),
+        isNull,
+      );
+    });
+
+    test('persists desktop token with owner-only permissions across restarts and revokes on sign-out', () async {
+      final now = DateTime.utc(2026, 11, 27, 12);
+      final endpoint = ServerEndpoint(server.origin.toString());
+      final firstRun = NativeAccountClient(
+        endpoint,
+        openBrowser: followingBrowser,
+        tokenStore: store,
+        clock: () => now,
+      );
+      expect(await firstRun.restore(), isNull);
+
+      final signedIn = (await firstRun.signIn())!;
+      expect(signedIn.token, 'dmk_secret');
+      expect(signedIn.tokenId, 'token-id');
+      expect(await store.file.exists(), isTrue);
+      expect(
+        tempDir
+            .listSync(recursive: true)
+            .where((entity) => entity.path.endsWith('.tmp')),
+        isEmpty,
+      );
+      if (!Platform.isWindows) {
+        final fileStat = await store.file.stat();
+        final dirStat = await store.file.parent.stat();
+        expect(fileStat.mode & 0x1ff, 0x180, reason: '0600 owner-only file');
+        expect(dirStat.mode & 0x1ff, 0x1c0, reason: '0700 owner-only dir');
+      }
+
+      // Simulate app restart with a fresh client instance and no browser call.
+      final secondRun = NativeAccountClient(
+        endpoint,
+        openBrowser: (_) async =>
+            fail('restore must not open browser when token is valid'),
+        tokenStore: store,
+        clock: () => now.add(const Duration(days: 1)),
+      );
+      final restored = await secondRun.restore();
+      expect(restored, isNotNull);
+      expect(restored!.token, 'dmk_secret');
+      expect(restored.tokenId, 'token-id');
+
+      await secondRun.signOut(restored);
+      expect(server.revoked, ['Bearer dmk_secret']);
+      expect(await store.read(endpoint.canonical), isNull);
+      expect(await store.file.exists(), isFalse);
+    });
+
+    test('cleans up persisted token locally even when offline or server fails on sign-out', () async {
+      final endpoint = ServerEndpoint(server.origin.toString());
+      final client = NativeAccountClient(
+        endpoint,
+        openBrowser: followingBrowser,
+        tokenStore: store,
+      );
+      final session = (await client.signIn())!;
+      expect(await store.read(endpoint.canonical), isNotNull);
+
+      // Stop server so revocation fails with a network error.
+      await server.stop();
+
+      // Restoring while offline keeps the saved token instead of wiping it.
+      final offlineRestored = await client.restore();
+      expect(offlineRestored?.token, session.token);
+      expect(await store.read(endpoint.canonical), isNotNull);
+
+      // Explicit sign-out while offline still deletes the local token file.
+      await expectLater(
+        client.signOut(session),
+        throwsA(isA<AccountException>()),
+      );
+      expect(await store.read(endpoint.canonical), isNull);
+      expect(await store.file.exists(), isFalse);
+    });
+
+    test('clears expired or server-rejected tokens during restore and isolates servers', () async {
+      final now = DateTime.utc(2026, 11, 27, 12);
+      final endpoint = ServerEndpoint(server.origin.toString());
+      const otherOrigin = 'https://other.planner.example';
+      await store.write(
+        otherOrigin,
+        const StoredDesktopSession(
+          token: 'dmk_other',
+          tokenId: 'other-id',
+          expiresAtEpoch: 4000000000,
+        ),
+      );
+
+      final client = NativeAccountClient(
+        endpoint,
+        openBrowser: followingBrowser,
+        tokenStore: store,
+        clock: () => now,
+      );
+      await client.signIn();
+
+      // Past the 30-day token expiry: restore drops it locally without using it.
+      final expiredClient = NativeAccountClient(
+        endpoint,
+        tokenStore: store,
+        clock: () => now.add(const Duration(days: 31)),
+      );
+      expect(await expiredClient.restore(), isNull);
+      expect(await store.read(endpoint.canonical), isNull);
+      expect((await store.read(otherOrigin))?.token, 'dmk_other');
+
+      // Store a stale/revoked token whose /auth/me returns 401: restore clears it.
+      await store.write(
+        endpoint.canonical,
+        const StoredDesktopSession(token: 'dmk_revoked', tokenId: 'revoked-id'),
+      );
+      expect(await client.restore(), isNull);
+      expect(await store.read(endpoint.canonical), isNull);
+      expect((await store.read(otherOrigin))?.token, 'dmk_other');
     });
   });
 }

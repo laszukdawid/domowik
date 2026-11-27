@@ -280,6 +280,13 @@ class _WebPropertyAccountClient
   }
 
   @override
+  Future<void> deletePlan(AccountSession session, String planId) async {
+    calls.add('delete:$planId');
+    plans.remove(planId);
+    linkedPlanIds.remove(planId);
+  }
+
+  @override
   Future<HostedPlan> importPlan(
     AccountSession session,
     String title,
@@ -465,6 +472,7 @@ void main() {
     required _FakeCore core,
     required _WebPropertyAccountClient client,
     required _FakeFileDialogs dialogs,
+    String? propertyHint,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1280, 820));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -474,6 +482,7 @@ void main() {
           bridgeLoader: () => core,
           accountClient: client,
           fileDialogs: dialogs,
+          propertyHint: propertyHint,
         ),
       ),
     );
@@ -855,4 +864,71 @@ void main() {
     expect(find.byKey(const ValueKey('safe-2d-banner')), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Save as new online plan links pending propertyHint and keeps online save when property link fails',
+    (tester) async {
+      final core = _FakeCore();
+      final client = _WebPropertyAccountClient(restoredSession: _session);
+      final dialogs = _FakeFileDialogs();
+      await pumpEditor(
+        tester,
+        core: core,
+        client: client,
+        dialogs: dialogs,
+        propertyHint: 'prop-1',
+      );
+
+      // Dismiss initial empty Property plans dialog.
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save-as-online')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Linked Upload',
+      );
+      await tester.tap(find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(client.linkedPlanIds, contains('plan-1'));
+      expect(client.calls, contains('linkPlanProperty:plan-1:prop-1'));
+      expect(
+        find.textContaining('Saved as new property plan "Linked Upload"'),
+        findsOneWidget,
+      );
+
+      // Saving an alternative copy when property linking fails still adopts the
+      // uploaded online plan and surfaces the non-fatal link error.
+      client.failPropertyLink = true;
+      await tester.tap(find.byKey(const ValueKey('save-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save-as-online')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Fallback Alternative',
+      );
+      await tester.tap(find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Online'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('plan-title')),
+          matching: find.text('Fallback Alternative'),
+          matchRoot: true,
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('could not link to property'), findsOneWidget);
+    },
+  );
 }

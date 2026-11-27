@@ -29,6 +29,8 @@ class _HostedClient implements AccountClient, HostedPlanClient {
   String? failSaveCode;
   String? failAcquireCode;
   String? failRenewCode;
+  String? failDeleteCode;
+  String? failSignOutMessage;
   int _nextId = 1;
   int signOutCalls = 0;
   bool leavesEditor = true;
@@ -63,6 +65,9 @@ class _HostedClient implements AccountClient, HostedPlanClient {
   @override
   Future<void> signOut(AccountSession session) async {
     signOutCalls++;
+    if (failSignOutMessage != null) {
+      throw AccountException(failSignOutMessage!);
+    }
   }
 
   @override
@@ -100,6 +105,21 @@ class _HostedClient implements AccountClient, HostedPlanClient {
     );
     plans[planId] = renamed;
     return renamed;
+  }
+
+  @override
+  Future<void> deletePlan(AccountSession session, String planId) async {
+    calls.add('delete:$planId');
+    final code = failDeleteCode;
+    failDeleteCode = null;
+    if (code != null) {
+      throw AccountException('could not delete plan', code: code);
+    }
+    if (!plans.containsKey(planId)) {
+      throw const AccountException('missing plan', code: 'plan-not-found');
+    }
+    plans.remove(planId);
+    packages.remove(planId);
   }
 
   @override
@@ -237,17 +257,29 @@ class _PropertyHostedClient extends _HostedClient
   ) => throw UnimplementedError();
 
   @override
+  Future<void> deletePlan(AccountSession session, String planId) async {
+    await super.deletePlan(session, planId);
+    linked.removeWhere((summary) => summary.id == planId);
+  }
+
+  @override
   Future<void> linkPlanProperty(
     AccountSession session,
     String planId,
     String propertyId,
-  ) async {}
+  ) async {
+    calls.add('linkProperty:$planId:$propertyId');
+    final plan = plans[planId];
+    if (plan != null && !linked.any((summary) => summary.id == planId)) {
+      linked.add(PlannerPlanSummary(id: plan.id, title: plan.title));
+    }
+  }
 
   @override
-  Future<void> unlinkPlanProperty(
-    AccountSession session,
-    String planId,
-  ) async {}
+  Future<void> unlinkPlanProperty(AccountSession session, String planId) async {
+    calls.add('unlinkProperty:$planId');
+    linked.removeWhere((summary) => summary.id == planId);
+  }
 
   @override
   Future<void> linkRoomLocation(
@@ -1070,6 +1102,212 @@ void main() {
       // Clicking the alternative plan card opens it directly.
       await tap(tester, find.byKey(ValueKey('property-plan-${second.id}')));
       expectOnlineTitle('Renovation');
+    },
+  );
+
+  testWidgets(
+    'deletes unwanted online plans after confirmation and detaches cleanly when deleting the open plan',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes);
+      final openPlan = propertyClient._newPlan('Active Layout', seedBytes);
+      final sparePlan = propertyClient._newPlan('Old Draft', seedBytes);
+      propertyClient.linked.add(
+        PlannerPlanSummary(id: openPlan.id, title: openPlan.title),
+      );
+
+      await start(tester, accountClient: propertyClient);
+      await openHosted(tester, openPlan);
+      await drawWall(tester);
+      expectOnlineTitle('Active Layout • Unsaved');
+
+      // Open the hosted library and cancel deleting the spare plan first.
+      await showOnlinePlans(tester);
+      await tap(tester, find.byKey(ValueKey('online-delete-${sparePlan.id}')));
+      expect(
+        find.byKey(const ValueKey('online-delete-confirm-dialog')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('currently open'), findsNothing);
+      await tap(tester, find.byKey(const ValueKey('online-delete-cancel')));
+      expect(propertyClient.plans.containsKey(sparePlan.id), isTrue);
+
+      // Confirm deleting the spare plan: removes it and keeps Active Layout open.
+      await tap(tester, find.byKey(ValueKey('online-delete-${sparePlan.id}')));
+      await tap(tester, find.byKey(const ValueKey('online-delete-confirm')));
+      await tester.pumpAndSettle();
+      expect(propertyClient.calls, contains('delete:${sparePlan.id}'));
+      expect(propertyClient.plans.containsKey(sparePlan.id), isFalse);
+      expect(find.text('Old Draft'), findsNothing);
+      expectOnlineTitle('Active Layout • Unsaved');
+
+      // Delete the currently open, property-linked plan: confirmation warns about
+      // both open state and property linkage, then detaches cleanly without
+      // losing the drawn wall on the canvas.
+      await tap(tester, find.byKey(ValueKey('online-delete-${openPlan.id}')));
+      expect(
+        find.byKey(const ValueKey('online-delete-confirm-dialog')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('currently open'), findsOneWidget);
+      expect(
+        find.textContaining('linked to property "Maple House"'),
+        findsOneWidget,
+      );
+      await tap(tester, find.byKey(const ValueKey('online-delete-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(propertyClient.calls, contains('delete:${openPlan.id}'));
+      expect(
+        propertyClient.calls.where((call) => call == 'release:${openPlan.id}'),
+        isEmpty,
+        reason: 'deleted plan needs no redundant lease release',
+      );
+      expect(find.text('No online plans yet'), findsOneWidget);
+      await tap(tester, find.text('Close'));
+
+      expectOfflineTitle('Untitled plan • Unsaved');
+      expect(
+        find.textContaining(
+          'Deleted online plan "Active Layout"; current plan remains open locally',
+        ),
+        findsOneWidget,
+      );
+
+      // The drawn wall is still in memory: Undo is enabled and Save uploads it
+      // as a fresh online plan.
+      expect(
+        tester
+            .widget<IconButton>(find.widgetWithIcon(IconButton, Icons.undo))
+            .onPressed,
+        isNotNull,
+      );
+      await tap(tester, find.byKey(const ValueKey('save-action')));
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Recovered Layout',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+      expectOnlineTitle('Recovered Layout');
+      expect(propertyClient.plans.values.single.title, 'Recovered Layout');
+    },
+  );
+
+  testWidgets(
+    'visiting with a property hint, closing the empty modal, drawing, and saving links the plan so reopening auto-opens it',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes);
+
+      await start(
+        tester,
+        accountClient: propertyClient,
+        propertyHint: 'property-1',
+      );
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsOneWidget,
+      );
+      await tap(tester, find.text('Close'));
+
+      await drawWall(tester);
+      await tap(tester, find.byKey(const ValueKey('save-action')));
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Main Residence',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      final savedPlan = propertyClient.plans.values.single;
+      expect(
+        propertyClient.calls,
+        contains('linkProperty:${savedPlan.id}:property-1'),
+      );
+      expectOnlineTitle('Main Residence');
+      expect(
+        find.textContaining('Saved as new property plan "Main Residence"'),
+        findsOneWidget,
+      );
+
+      // Simulate reopening the editor with the same ?property=property-1 hint:
+      // it now auto-opens "Main Residence" instead of showing the empty dialog.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PlanPage(
+            bridgeLoader: () => FfiCore(bridge),
+            accountClient: propertyClient,
+            fileDialogs: dialogs,
+            propertyHint: 'property-1',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expectOnlineTitle('Main Residence');
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'drawing before desktop sign-in preserves property hint on Save, while opening an unlinked plan clears it',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes)
+        ..restored = null
+        ..leavesEditor = false;
+      final unlinked = propertyClient._newPlan('Separate Cabin', seedBytes);
+
+      await start(
+        tester,
+        accountClient: propertyClient,
+        propertyHint: 'property-1',
+      );
+      await drawWall(tester);
+      await tap(tester, find.byKey(const ValueKey('account')));
+      expect(find.text('person@example.test'), findsOneWidget);
+
+      await tap(tester, find.byKey(const ValueKey('save-action')));
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Drawn Before Sign-In',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      final linkedPlan = propertyClient.plans.values.firstWhere(
+        (plan) => plan.title == 'Drawn Before Sign-In',
+      );
+      expect(
+        propertyClient.calls,
+        contains('linkProperty:${linkedPlan.id}:property-1'),
+      );
+
+      // Opening an unlinked plan from Open online plan and saving a copy does
+      // NOT link the unrelated copy to property-1.
+      propertyClient.calls.clear();
+      await openHosted(tester, unlinked);
+      await saveMenu(tester, 'save-as-online');
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Cabin Copy',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        propertyClient.calls.where((call) => call.startsWith('linkProperty:')),
+        isEmpty,
+      );
+
+      // Desktop offline sign-out still detaches and clears the local session.
+      propertyClient.failSignOutMessage = 'Could not reach server';
+      await tap(tester, find.byKey(const ValueKey('account')));
+      await tap(tester, find.byKey(const ValueKey('sign-out')));
+      expect(propertyClient.signOutCalls, 1);
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(find.textContaining('Signed out on this device'), findsOneWidget);
     },
   );
 }
