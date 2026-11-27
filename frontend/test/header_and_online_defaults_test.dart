@@ -220,7 +220,7 @@ class _WebPropertyAccountClient
   int _nextId = 1;
 
   @override
-  ServerEndpoint get server => ServerEndpoint('https://planner.homehero.pro');
+  ServerEndpoint get server => ServerEndpoint('https://planner.example');
 
   @override
   bool get signInLeavesEditor => signInLeavesEditorFlag;
@@ -237,7 +237,7 @@ class _WebPropertyAccountClient
   @override
   Future<AccountProfile> profile(AccountSession session) async =>
       AccountProfile(
-        email: 'user@homehero.pro',
+        email: 'user@example.com',
         plans: plans.values.toList(),
         planLimit: 5,
       );
@@ -601,7 +601,7 @@ void main() {
 
       // Initially Offline untitled plan.
       expect(find.text('Offline'), findsOneWidget);
-      expect(find.text('user@homehero.pro'), findsOneWidget);
+      expect(find.text('user@example.com'), findsOneWidget);
 
       // Save as local file from dropdown writes locally without touching online storage.
       await tester.tap(find.byKey(const ValueKey('save-menu')));
@@ -989,7 +989,7 @@ void main() {
       // Explicit click on Sign in still works normally.
       await tester.tap(find.byKey(const ValueKey('account')));
       await tester.pumpAndSettle();
-      expect(find.text('user@homehero.pro'), findsOneWidget);
+      expect(find.text('user@example.com'), findsOneWidget);
       expect(find.text('Sign in'), findsNothing);
     },
   );
@@ -1031,7 +1031,7 @@ void main() {
       // Explicit click on Sign in still works normally.
       await tester.tap(find.byKey(const ValueKey('account')));
       await tester.pumpAndSettle();
-      expect(find.text('user@homehero.pro'), findsOneWidget);
+      expect(find.text('user@example.com'), findsOneWidget);
       expect(find.text('Sign in'), findsNothing);
     },
   );
