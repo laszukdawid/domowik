@@ -213,16 +213,17 @@ class _WebPropertyAccountClient
 
   AccountSession? restoredSession;
   bool failPropertyLink = false;
+  bool signInLeavesEditorFlag = true;
   final calls = <String>[];
   final plans = <String, HostedPlan>{};
   final linkedPlanIds = <String>{};
   int _nextId = 1;
 
   @override
-  ServerEndpoint get server => ServerEndpoint('https://planner.homehero.pro');
+  ServerEndpoint get server => ServerEndpoint('https://planner.example');
 
   @override
-  bool get signInLeavesEditor => true;
+  bool get signInLeavesEditor => signInLeavesEditorFlag;
 
   @override
   Future<AccountSession?> restore() async => restoredSession;
@@ -236,7 +237,7 @@ class _WebPropertyAccountClient
   @override
   Future<AccountProfile> profile(AccountSession session) async =>
       AccountProfile(
-        email: 'user@homehero.pro',
+        email: 'user@example.com',
         plans: plans.values.toList(),
         planLimit: 5,
       );
@@ -277,6 +278,13 @@ class _WebPropertyAccountClient
     );
     plans[planId] = renamed;
     return renamed;
+  }
+
+  @override
+  Future<void> deletePlan(AccountSession session, String planId) async {
+    calls.add('delete:$planId');
+    plans.remove(planId);
+    linkedPlanIds.remove(planId);
   }
 
   @override
@@ -406,7 +414,22 @@ class _WebPropertyAccountClient
   Future<PlannerPlanContext> planPropertyContext(
     AccountSession session,
     String planId,
-  ) => throw UnimplementedError();
+  ) async {
+    final plan = plans[planId];
+    if (plan == null || !linkedPlanIds.contains(planId)) {
+      throw const AccountException(
+        'unlinked',
+        statusCode: 409,
+        code: 'property-unlinked',
+      );
+    }
+    return PlannerPlanContext(
+      plan: PlannerPlanSummary(id: plan.id, title: plan.title),
+      property: const PlannerNamedId(id: 'prop-1', name: 'My Home'),
+      locations: const [],
+      roomLinks: const [],
+    );
+  }
 
   @override
   Future<void> linkRoomLocation(
@@ -465,6 +488,8 @@ void main() {
     required _FakeCore core,
     required _WebPropertyAccountClient client,
     required _FakeFileDialogs dialogs,
+    String? propertyHint,
+    Uri? startupUri,
   }) async {
     await tester.binding.setSurfaceSize(const Size(1280, 820));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -474,6 +499,8 @@ void main() {
           bridgeLoader: () => core,
           accountClient: client,
           fileDialogs: dialogs,
+          propertyHint: propertyHint,
+          startupUri: startupUri,
         ),
       ),
     );
@@ -574,7 +601,7 @@ void main() {
 
       // Initially Offline untitled plan.
       expect(find.text('Offline'), findsOneWidget);
-      expect(find.text('user@homehero.pro'), findsOneWidget);
+      expect(find.text('user@example.com'), findsOneWidget);
 
       // Save as local file from dropdown writes locally without touching online storage.
       await tester.tap(find.byKey(const ValueKey('save-menu')));
@@ -855,4 +882,157 @@ void main() {
     expect(find.byKey(const ValueKey('safe-2d-banner')), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Save as new online plan links pending propertyHint and keeps online save when property link fails',
+    (tester) async {
+      final core = _FakeCore();
+      final client = _WebPropertyAccountClient(restoredSession: _session);
+      final dialogs = _FakeFileDialogs();
+      await pumpEditor(
+        tester,
+        core: core,
+        client: client,
+        dialogs: dialogs,
+        propertyHint: 'prop-1',
+      );
+
+      // Dismiss initial empty Property plans dialog.
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('save-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save-as-online')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Linked Upload',
+      );
+      await tester.tap(find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(client.linkedPlanIds, contains('plan-1'));
+      expect(client.calls, contains('linkPlanProperty:plan-1:prop-1'));
+      expect(
+        find.textContaining('Saved as new property plan "Linked Upload"'),
+        findsOneWidget,
+      );
+
+      // Saving an alternative copy when property linking fails still adopts the
+      // uploaded online plan and surfaces the non-fatal link error.
+      client.failPropertyLink = true;
+      await tester.tap(find.byKey(const ValueKey('save-menu')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save-as-online')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Fallback Alternative',
+      );
+      await tester.tap(find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Online'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('plan-title')),
+          matching: find.text('Fallback Alternative'),
+          matchRoot: true,
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('could not link to property'), findsOneWidget);
+      expect(client.linkedPlanIds.contains('plan-2'), isFalse);
+
+      // Pressing ordinary Save after the transient property failure recovers
+      // retries linkPlanProperty on the adopted plan-2 even with no new edits.
+      client.failPropertyLink = false;
+      await tester.tap(find.byKey(const ValueKey('save-action')));
+      await tester.pumpAndSettle();
+
+      expect(client.linkedPlanIds, contains('plan-2'));
+      expect(client.calls.last, 'linkPlanProperty:plan-2:prop-1');
+      expect(
+        find.textContaining('Saved online and linked to property'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'startup ?local=1 skips automatic session restore while keeping explicit Sign in working',
+    (tester) async {
+      final core = _FakeCore();
+      final client = _WebPropertyAccountClient(restoredSession: _session)
+        ..signInLeavesEditorFlag = false;
+      final plan = await client.createPlan(_session, 'Account A Plan');
+      client.linkedPlanIds.add(plan.id);
+      client.calls.clear();
+      final dialogs = _FakeFileDialogs();
+
+      await pumpEditor(
+        tester,
+        core: core,
+        client: client,
+        dialogs: dialogs,
+        startupUri: Uri.parse('https://planner.example/?local=1'),
+      );
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(find.text('Offline'), findsOneWidget);
+      expect(client.calls, isEmpty);
+
+      // Explicit click on Sign in still works normally.
+      await tester.tap(find.byKey(const ValueKey('account')));
+      await tester.pumpAndSettle();
+      expect(find.text('user@example.com'), findsOneWidget);
+      expect(find.text('Sign in'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'startup ?auth_error= skips automatic session restore and surfaces sign-in failure',
+    (tester) async {
+      final core = _FakeCore();
+      final client = _WebPropertyAccountClient(restoredSession: _session)
+        ..signInLeavesEditorFlag = false;
+      final plan = await client.createPlan(_session, 'Account A Plan');
+      client.linkedPlanIds.add(plan.id);
+      client.calls.clear();
+      final dialogs = _FakeFileDialogs();
+
+      await pumpEditor(
+        tester,
+        core: core,
+        client: client,
+        dialogs: dialogs,
+        startupUri: Uri.parse(
+          'https://planner.example/?property=prop-1&auth_error=access-denied',
+        ),
+      );
+      expect(find.text('Sign in'), findsOneWidget);
+      expect(find.text('Offline'), findsOneWidget);
+      expect(client.calls, isEmpty);
+      expect(
+        find.textContaining(
+          'Sign-in was declined or this account is not eligible yet',
+        ),
+        findsWidgets,
+      );
+      expect(
+        find.byKey(const ValueKey('property-planner-dialog')),
+        findsNothing,
+      );
+
+      // Explicit click on Sign in still works normally.
+      await tester.tap(find.byKey(const ValueKey('account')));
+      await tester.pumpAndSettle();
+      expect(find.text('user@example.com'), findsOneWidget);
+      expect(find.text('Sign in'), findsNothing);
+    },
+  );
 }

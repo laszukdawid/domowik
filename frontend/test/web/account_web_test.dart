@@ -461,5 +461,67 @@ void main() {
       _dispatchWindowEvent(_Event('pagehide'));
       expect(sent, hasLength(1));
     });
+
+    test('deletes a plan with same-origin CSRF credentials', () async {
+      final client = BrowserAccountClient(server);
+      final sent = answer(204, null);
+      await client.deletePlan(
+        const AccountSession(token: 'csrf-token'),
+        'plan/1',
+      );
+      expect(sent, hasLength(1));
+      expect(sent.single.method, 'DELETE');
+      expect(sent.single.url, '$origin/api/v1/plans/plan%2F1');
+      expect(sent.single.csrf, 'csrf-token');
+      expect(sent.single.credentials, 'same-origin');
+      expect(sent.single.redirect, 'error');
+    });
+
+    test('skips initial ambient session restore on ?local=1 or ?auth_error= while keeping explicit signIn working', () async {
+      final visited = <String>[];
+      final localClient = BrowserAccountClient(
+        server,
+        navigate: visited.add,
+        currentUri: () => Uri.parse('$origin/?local=1'),
+      );
+      final localRestoreSent = answer(
+        200,
+        '{"userId":"u","username":"a","csrfToken":"c"}',
+      );
+      expect(await localClient.restore(), isNull);
+      expect(localRestoreSent, isEmpty);
+
+      final localSignInSent = answer(
+        200,
+        '{"authorizationUrl":"https://idp.example/authorize?state=local"}',
+      );
+      expect(await localClient.signIn(), isNull);
+      expect(visited.last, 'https://idp.example/authorize?state=local');
+      expect(localSignInSent.single.url, '$origin/api/v1/auth/sign-in');
+
+      final errorClient = BrowserAccountClient(
+        server,
+        navigate: visited.add,
+        currentUri: () =>
+            Uri.parse('$origin/?property=prop-7&auth_error=access-denied'),
+      );
+      final errorRestoreSent = answer(
+        200,
+        '{"userId":"u","username":"a","csrfToken":"c"}',
+      );
+      expect(await errorClient.restore(), isNull);
+      expect(errorRestoreSent, isEmpty);
+
+      final errorSignInSent = answer(
+        200,
+        '{"authorizationUrl":"https://idp.example/authorize?state=retry"}',
+      );
+      expect(await errorClient.signIn(), isNull);
+      expect(visited.last, 'https://idp.example/authorize?state=retry');
+      expect(
+        errorSignInSent.single.url,
+        '$origin/api/v1/auth/sign-in?property=prop-7',
+      );
+    });
   });
 }

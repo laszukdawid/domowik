@@ -13,6 +13,7 @@ class AccountButton extends StatefulWidget {
     this.onSessionChanged,
     this.beforeSignIn,
     this.onSignOut,
+    this.restoreOnInit = true,
   });
 
   final AccountClient client;
@@ -22,6 +23,11 @@ class AccountButton extends StatefulWidget {
   /// When supplied, owns confirmation, lease release and sign-out as one
   /// editor workflow. Returning false leaves this control signed in.
   final Future<bool> Function(AccountSession session)? onSignOut;
+
+  /// Whether [AccountClient.restore] runs automatically on startup. False when
+  /// the page was opened in local-only mode (`?local=1`) or returned from a
+  /// failed sign-in callback (`?auth_error=<code>`).
+  final bool restoreOnInit;
 
   @override
   State<AccountButton> createState() => _AccountButtonState();
@@ -36,6 +42,13 @@ class _AccountButtonState extends State<AccountButton> {
   @override
   void initState() {
     super.initState();
+    if (!widget.restoreOnInit) {
+      _busy = false;
+      Future<void>.microtask(() {
+        if (mounted) widget.onSessionChanged?.call(null);
+      });
+      return;
+    }
     widget.client
         .restore()
         .then<AccountSession?>((session) => session, onError: (_) => null)

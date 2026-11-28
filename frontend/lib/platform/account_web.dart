@@ -49,6 +49,7 @@ class BrowserAccountClient extends HostedPlanProtocol
   final Uri Function() _currentUri;
   final Map<(String, String), AccountSession> _unloadLeases = {};
   JSFunction? _pageHideListener;
+  bool _initialRestoreChecked = false;
 
   @override
   void registerUnloadLease(
@@ -142,6 +143,12 @@ class BrowserAccountClient extends HostedPlanProtocol
 
   @override
   Future<AccountSession?> restore() async {
+    if (!_initialRestoreChecked) {
+      _initialRestoreChecked = true;
+      if (shouldSkipInitialSessionRestore(_currentUri())) {
+        return null;
+      }
+    }
     final response = await _anonymous('GET', 'auth/session');
     if (response.status == 401) return null;
     return AccountSession(token: _field(response, 'csrfToken'));

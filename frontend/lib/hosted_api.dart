@@ -165,6 +165,10 @@ abstract class HostedPlanProtocol implements HostedPlanClient {
   );
 
   @override
+  Future<void> deletePlan(AccountSession session, String planId) =>
+      requestNoContent(session, 'DELETE', planPath(planId));
+
+  @override
   Future<HostedPlan> importPlan(
     AccountSession session,
     String title,

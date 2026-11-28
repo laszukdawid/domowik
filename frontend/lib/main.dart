@@ -183,6 +183,7 @@ class PlanPage extends StatefulWidget {
     this.graphicsPolicy,
     this.accountClients,
     this.propertyHint,
+    this.startupUri,
   });
 
   /// Tests load the real native library directly; bundles use
@@ -230,6 +231,10 @@ class PlanPage extends StatefulWidget {
   /// tests. Defaults to `Uri.base.queryParameters['property']`.
   final String? propertyHint;
 
+  /// Optional override for the page's startup URL (e.g. `?local=1` or
+  /// `?auth_error=<code>` in widget tests). Defaults to [Uri.base].
+  final Uri? startupUri;
+
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
@@ -252,6 +257,11 @@ class _PlanPageState extends State<PlanPage>
   int _accountClientGeneration = 0;
   AccountSession? _accountSession;
   bool _initialPropertyHintHandled = false;
+  late String? _pendingPropertyId = _propertyHint;
+  bool _pendingPropertyDiscovery = false;
+  String? _activePlanPropertyId;
+  bool _activePlanPropertyLookupFailed = false;
+  bool _serverSwitched = false;
   int _userDocumentActionGeneration = 0;
   final ValueNotifier<int> _propertyContextChanges = ValueNotifier(0);
   final ValueNotifier<int> _accountSessionChanges = ValueNotifier(0);
@@ -541,6 +551,19 @@ class _PlanPageState extends State<PlanPage>
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _AppBenchmark(this, output).run(),
       );
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant PlanPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((oldWidget.propertyHint != widget.propertyHint ||
+            oldWidget.startupUri != widget.startupUri) &&
+        !_serverSwitched) {
+      final nextHint = _propertyHint;
+      if (_hostedPlan == null) {
+        _pendingPropertyId = nextHint;
+      }
     }
   }
 
@@ -1224,6 +1247,17 @@ class _PlanPageState extends State<PlanPage>
       await _configReady;
       if (!mounted) return;
       await _newPlan();
+      final authError = _serverSwitched
+          ? null
+          : startupAuthErrorMessage(_startupUri);
+      if (authError != null && mounted) {
+        setState(() => _setStatus(authError, isError: true));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(authError)));
+        });
+      }
       unawaited(_maybeAutoOpenPropertyPlan());
     } on Object catch (e) {
       setState(() => _loadError = '$e');
@@ -3086,7 +3120,35 @@ class _PlanPageState extends State<PlanPage>
       session: accountSession,
       onOpen: _requestOpenHostedPlan,
       lastActionError: () => _hostedLibraryActionError,
+      activePlanId: _hostedPlan?.id,
+      propertyClient: _propertyPlannerClient,
+      propertyHint: _serverSwitched ? null : _propertyHint,
+      onDeleted: _handleHostedPlanDeleted,
     );
+  }
+
+  Future<void> _handleHostedPlanDeleted(HostedPlan deleted) async {
+    if (_hostedPlan?.id != deleted.id) return;
+    final previous = _hostedWorkflow;
+    final previousPropertyId = _activePlanPropertyId;
+    setState(() {
+      _hostedWorkflow = null;
+      _hostedPlan = null;
+      _hostedSaveBlocked = false;
+      _activePlanPropertyId = null;
+      _activePlanPropertyLookupFailed = false;
+      _pendingPropertyDiscovery = false;
+      _pendingPropertyId =
+          previousPropertyId ??
+          _pendingPropertyId ??
+          (_serverSwitched ? null : _propertyHint);
+      _setStatus(
+        'deleted online plan "${deleted.title}"; current plan remains open locally',
+        isError: false,
+      );
+    });
+    _refresh();
+    await previous?.dispose(releaseRemote: false);
   }
 
   Future<void> _requestSaveAsOnlinePlan() async {
@@ -3163,6 +3225,11 @@ class _PlanPageState extends State<PlanPage>
     if (!mounted) return;
     _accountSessionChanges.value++;
     setState(() {
+      _serverSwitched = true;
+      _pendingPropertyId = null;
+      _pendingPropertyDiscovery = false;
+      _activePlanPropertyId = null;
+      _activePlanPropertyLookupFailed = false;
       _accountClientGeneration++;
       _accountClient = _createAccountClient();
       _accountSession = null;
@@ -3198,8 +3265,13 @@ class _PlanPageState extends State<PlanPage>
     }
   }
 
+  Uri get _startupUri => widget.startupUri ?? Uri.base;
+
+  bool get _restoreAccountOnInit =>
+      _serverSwitched || !shouldSkipInitialSessionRestore(_startupUri);
+
   String? get _propertyHint => validatedPropertyHint(
-    widget.propertyHint ?? Uri.base.queryParameters['property'],
+    widget.propertyHint ?? _startupUri.queryParameters['property'],
   );
 
   /// When arriving at Planner with a `?property=<id>` hint and a signed-in
@@ -3264,7 +3336,10 @@ class _PlanPageState extends State<PlanPage>
             plan,
       ];
       if (linkedPlans.isNotEmpty) {
-        final opened = await _requestOpenHostedPlan(linkedPlans.first);
+        final opened = await _requestOpenHostedPlan(
+          linkedPlans.first,
+          linkedPropertyId: overview.property.id,
+        );
         if (opened ||
             !sessionStillCurrent(accountSession) ||
             !editorStillUntouched()) {
@@ -3278,7 +3353,10 @@ class _PlanPageState extends State<PlanPage>
           propertyHint: hint,
           isSessionCurrent: sessionStillCurrent,
           sessionChanges: _accountSessionChanges,
-          onOpen: _requestOpenHostedPlan,
+          onOpen: (plan) => _requestOpenHostedPlan(
+            plan,
+            linkedPropertyId: overview.property.id,
+          ),
           initialOverview: overview,
           initialPlans: plans,
           initialError:
@@ -3294,7 +3372,10 @@ class _PlanPageState extends State<PlanPage>
           propertyHint: hint,
           isSessionCurrent: sessionStillCurrent,
           sessionChanges: _accountSessionChanges,
-          onOpen: _requestOpenHostedPlan,
+          onOpen: (plan) => _requestOpenHostedPlan(
+            plan,
+            linkedPropertyId: overview.property.id,
+          ),
           initialOverview: overview,
           initialPlans: plans,
         );
@@ -3320,29 +3401,63 @@ class _PlanPageState extends State<PlanPage>
         final client = _accountClient;
         if (client == null) return false;
         await _detachHosted();
+        Object? signOutError;
         try {
           await client.signOut(accountSession);
         } on Object catch (error) {
-          if (mounted) {
-            setState(
-              () => _setStatus('could not sign out: $error', isError: true),
-            );
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Could not sign out: $error')),
-            );
+          if (error is AccountException &&
+              error.code == 'local-signout-failed') {
+            if (mounted) {
+              setState(
+                () => _setStatus(
+                  'could not sign out on this device: ${error.message}',
+                  isError: true,
+                ),
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Could not sign out on this device: ${error.message}',
+                  ),
+                ),
+              );
+            }
+            return false;
           }
-          return false;
+          if (client.signInLeavesEditor) {
+            if (mounted) {
+              setState(
+                () => _setStatus('could not sign out: $error', isError: true),
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Could not sign out: $error')),
+              );
+            }
+            return false;
+          }
+          signOutError = error;
         }
         if (mounted) {
           _accountSessionChanges.value++;
           setState(() {
             _accountSession = null;
-            _setStatus(
-              _dirty
-                  ? 'signed out; current edits are local and unsaved'
-                  : 'signed out',
-              isError: false,
-            );
+            _activePlanPropertyId = null;
+            _activePlanPropertyLookupFailed = false;
+            _pendingPropertyDiscovery = false;
+            if (signOutError != null) {
+              _setStatus(
+                'signed out on this device; could not confirm server '
+                'revocation ($signOutError)',
+                isError: true,
+              );
+            } else {
+              _setStatus(
+                _dirty
+                    ? 'signed out; current edits are local and unsaved'
+                    : 'signed out',
+                isError: false,
+              );
+            }
           });
         }
         return true;
@@ -3408,23 +3523,30 @@ class _PlanPageState extends State<PlanPage>
     final propertyClient = _propertyPlannerClient;
     if (client == null || propertyClient == null) return null;
     final accountSessionRevision = _accountSessionChanges.value;
+    final currentHint = _serverSwitched ? null : _propertyHint;
     return PropertyPlannerManagerButton(
       client: propertyClient,
       planClient: client,
       session: _accountSession,
-      propertyHint: _propertyHint,
+      propertyHint: currentHint,
       isSessionCurrent: (session) =>
           mounted &&
           identical(_accountSession, session) &&
           _accountSessionChanges.value == accountSessionRevision,
       sessionChanges: _accountSessionChanges,
-      onOpen: _requestOpenHostedPlan,
+      onOpen: (plan) =>
+          _requestOpenHostedPlan(plan, linkedPropertyId: currentHint),
     );
   }
 
-  Future<bool> _requestOpenHostedPlan(HostedPlan plan) {
+  Future<bool> _requestOpenHostedPlan(
+    HostedPlan plan, {
+    String? linkedPropertyId,
+  }) {
     _hostedLibraryActionError = null;
-    return _fileWorkflow.replace(() => _checkoutHostedPlan(plan));
+    return _fileWorkflow.replace(
+      () => _checkoutHostedPlan(plan, linkedPropertyId: linkedPropertyId),
+    );
   }
 
   Future<bool> _requestCreateHostedPlan(
@@ -3438,27 +3560,42 @@ class _PlanPageState extends State<PlanPage>
       if (client == null || accountSession == null) return false;
       final plan = await client.createPlan(accountSession, title);
       var linkedProperty = false;
+      String? linkedPropertyId;
+      String? failedPropertyTarget;
+      var failedPropertyDiscovery = false;
       String? propertyLinkError;
       final propertyClient = linkToProperty ? _propertyPlannerClient : null;
       if (propertyClient != null) {
+        final currentHint = _serverSwitched ? null : _propertyHint;
+        String? resolvedPropertyId = currentHint;
         try {
           final overview = await propertyClient.propertyOverview(
             accountSession,
-            propertyHint: _propertyHint,
+            propertyHint: currentHint,
           );
+          resolvedPropertyId = overview.property.id;
           await propertyClient.linkPlanProperty(
             accountSession,
             plan.id,
             overview.property.id,
           );
           linkedProperty = true;
+          linkedPropertyId = overview.property.id;
         } on Object catch (error) {
+          failedPropertyTarget = resolvedPropertyId;
+          failedPropertyDiscovery = resolvedPropertyId == null;
           propertyLinkError = error is AccountException
               ? error.message
               : '$error';
         }
       }
-      final opened = await _checkoutHostedPlan(plan);
+      final opened = await _checkoutHostedPlan(
+        plan,
+        linkedPropertyId: linkedPropertyId,
+        pendingPropertyId: failedPropertyTarget,
+        pendingPropertyDiscovery: failedPropertyDiscovery,
+        resolvePropertyLink: false,
+      );
       if (opened && mounted) {
         if (linkedProperty) {
           setState(
@@ -3481,6 +3618,42 @@ class _PlanPageState extends State<PlanPage>
     });
   }
 
+  static bool _isConfirmedPropertyUnlinked(Object error) {
+    if (error is UnimplementedError) return true;
+    if (error is AccountException) {
+      return error.code == 'property-unlinked' ||
+          error.code == 'property-integration-disabled';
+    }
+    return false;
+  }
+
+  Future<bool> _confirmSaveCopyWithoutPropertyLink(String detail) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('save-copy-without-property-link-dialog'),
+        title: const Text('Save copy without property link?'),
+        content: Text(
+          'Could not verify whether this plan is linked to a property '
+          '($detail). Save the new online copy without a property link?',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('cancel-save-without-property-link'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-save-without-property-link'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Save without link'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   /// Uploads the current encoding as a new online plan and makes it where
   /// Save writes, keeping the open document and its history. Nothing changes
   /// unless the new plan's lease matches the uploaded revision.
@@ -3491,8 +3664,74 @@ class _PlanPageState extends State<PlanPage>
     if (client == null || accountSession == null || session == null) {
       return false;
     }
+    final sourceHostedPlan = _hostedPlan;
+    final propertyClient = _propertyPlannerClient;
+    if (_pendingPropertyId == null &&
+        _activePlanPropertyId == null &&
+        _activePlanPropertyLookupFailed &&
+        sourceHostedPlan != null &&
+        propertyClient != null) {
+      try {
+        final context = await propertyClient.planPropertyContext(
+          accountSession,
+          sourceHostedPlan.id,
+        );
+        final resolvedId = context.property.id.isEmpty
+            ? null
+            : context.property.id;
+        if (mounted && _hostedPlan?.id == sourceHostedPlan.id) {
+          setState(() {
+            _activePlanPropertyLookupFailed = false;
+            _activePlanPropertyId = resolvedId;
+          });
+        }
+      } on Object catch (error) {
+        if (_isConfirmedPropertyUnlinked(error)) {
+          if (mounted && _hostedPlan?.id == sourceHostedPlan.id) {
+            setState(() {
+              _activePlanPropertyLookupFailed = false;
+              _activePlanPropertyId = null;
+            });
+          }
+        } else {
+          if (!mounted) return false;
+          final detail = error is AccountException ? error.message : '$error';
+          final saveUnlinked = await _confirmSaveCopyWithoutPropertyLink(
+            detail,
+          );
+          if (!saveUnlinked || !mounted) return false;
+        }
+      }
+    }
     final snapshot = session.captureForSave();
     final plan = await client.importPlan(accountSession, title, snapshot.bytes);
+    var linkedProperty = false;
+    String? propertyLinkError;
+    var propertyIdToLink = _pendingPropertyId ?? _activePlanPropertyId;
+    var retainPendingDiscovery = false;
+    if (propertyClient != null &&
+        (propertyIdToLink != null || _pendingPropertyDiscovery)) {
+      try {
+        if (propertyIdToLink == null) {
+          final overview = await propertyClient.propertyOverview(
+            accountSession,
+            propertyHint: _serverSwitched ? null : _propertyHint,
+          );
+          propertyIdToLink = overview.property.id;
+        }
+        await propertyClient.linkPlanProperty(
+          accountSession,
+          plan.id,
+          propertyIdToLink,
+        );
+        linkedProperty = true;
+      } on Object catch (error) {
+        retainPendingDiscovery = propertyIdToLink == null;
+        propertyLinkError = error is AccountException
+            ? error.message
+            : '$error';
+      }
+    }
     if (!mounted) return false;
     final candidate = _hostedWorkflowFor(client, accountSession);
     Object? failure;
@@ -3519,15 +3758,32 @@ class _PlanPageState extends State<PlanPage>
     final previous = _hostedWorkflow;
     session.detachFile(plan.title);
     final marked = session.markSaved(snapshot);
+    final clean = marked.succeeded && !session.isDirty;
     setState(() {
       _hostedPlan = plan;
       _customPlanTitle = null;
       _hostedWorkflow = candidate;
       _hostedSaveBlocked = false;
+      _activePlanPropertyLookupFailed = false;
+      if (linkedProperty) {
+        _activePlanPropertyId = propertyIdToLink;
+        _pendingPropertyId = null;
+        _pendingPropertyDiscovery = false;
+      } else {
+        _activePlanPropertyId = null;
+        _pendingPropertyId = propertyIdToLink;
+        _pendingPropertyDiscovery = retainPendingDiscovery;
+      }
+      final baseMessage = linkedProperty
+          ? 'saved as new property plan "${plan.title}"'
+          : 'saved as new online plan "${plan.title}"';
+      final suffix = [
+        if (propertyLinkError != null)
+          'could not link to property ($propertyLinkError)',
+        if (!clean) 'newer edits are not saved yet',
+      ].join('; ');
       _setStatus(
-        marked.succeeded && !session.isDirty
-            ? 'saved as new online plan "${plan.title}"'
-            : 'saved as new online plan "${plan.title}"; newer edits are not saved yet',
+        suffix.isEmpty ? baseMessage : '$baseMessage; $suffix',
         isError: false,
       );
     });
@@ -3539,7 +3795,13 @@ class _PlanPageState extends State<PlanPage>
     return marked.succeeded;
   }
 
-  Future<bool> _checkoutHostedPlan(HostedPlan plan) async {
+  Future<bool> _checkoutHostedPlan(
+    HostedPlan plan, {
+    String? linkedPropertyId,
+    String? pendingPropertyId,
+    bool pendingPropertyDiscovery = false,
+    bool resolvePropertyLink = true,
+  }) async {
     final client = _hostedPlanClient;
     final accountSession = _accountSession;
     final session = _session;
@@ -3549,6 +3811,10 @@ class _PlanPageState extends State<PlanPage>
     final previous = _hostedWorkflow;
     final previousPlan = _hostedPlan;
     final previousBaseline = previous?.expectedRevision;
+    final previousPropertyId = _activePlanPropertyId;
+    final previousPropertyLookupFailed = _activePlanPropertyLookupFailed;
+    final previousPendingPropertyId = _pendingPropertyId;
+    final previousPendingDiscovery = _pendingPropertyDiscovery;
     final reopeningSamePlan = previous != null && previousPlan?.id == plan.id;
     if (reopeningSamePlan) {
       final released = await previous.release(bestEffort: false);
@@ -3561,6 +3827,32 @@ class _PlanPageState extends State<PlanPage>
     final candidate = _hostedWorkflowFor(client, accountSession);
     try {
       final checkout = await candidate.checkout(plan);
+      if (!mounted) {
+        await candidate.dispose();
+        return false;
+      }
+      String? resolvedPropertyId = linkedPropertyId;
+      var propertyLookupFailed = false;
+      if (resolvedPropertyId == null &&
+          resolvePropertyLink &&
+          (!reopeningSamePlan || previousPropertyLookupFailed)) {
+        final propertyClient = _propertyPlannerClient;
+        if (propertyClient != null) {
+          try {
+            final context = await propertyClient.planPropertyContext(
+              accountSession,
+              plan.id,
+            );
+            resolvedPropertyId = context.property.id.isEmpty
+                ? null
+                : context.property.id;
+            propertyLookupFailed = false;
+          } on Object catch (error) {
+            resolvedPropertyId = null;
+            propertyLookupFailed = !_isConfirmedPropertyUnlinked(error);
+          }
+        }
+      }
       if (!mounted) {
         await candidate.dispose();
         return false;
@@ -3593,6 +3885,20 @@ class _PlanPageState extends State<PlanPage>
         _hostedPlan = plan;
         _hostedWorkflow = candidate;
         _hostedSaveBlocked = false;
+        _pendingPropertyId = reopeningSamePlan
+            ? (pendingPropertyId ?? previousPendingPropertyId)
+            : pendingPropertyId;
+        _pendingPropertyDiscovery = reopeningSamePlan
+            ? (pendingPropertyDiscovery || previousPendingDiscovery)
+            : pendingPropertyDiscovery;
+        _activePlanPropertyId = reopeningSamePlan
+            ? (resolvedPropertyId ?? previousPropertyId)
+            : resolvedPropertyId;
+        _activePlanPropertyLookupFailed =
+            _activePlanPropertyId == null &&
+            (reopeningSamePlan && !resolvePropertyLink
+                ? previousPropertyLookupFailed
+                : propertyLookupFailed);
         _setStatus('opened online plan "${plan.title}"', isError: false);
       });
       _refresh();
@@ -3697,12 +4003,56 @@ class _PlanPageState extends State<PlanPage>
 
   Future<void> _detachHosted() async {
     final previous = _hostedWorkflow;
+    final hadHostedPlan = _hostedPlan != null;
     _hostedWorkflow = null;
     _hostedPlan = null;
     _hostedSaveBlocked = false;
+    _activePlanPropertyId = null;
+    _activePlanPropertyLookupFailed = false;
+    _pendingPropertyDiscovery = false;
+    if (hadHostedPlan) {
+      _pendingPropertyId = _serverSwitched ? null : _propertyHint;
+    }
     if (previous != null) {
       await previous.release();
       await previous.dispose();
+    }
+  }
+
+  /// Retries a pending property link for an already-adopted [_hostedPlan] whose
+  /// initial `linkPlanProperty` call failed. Returns null on success or an
+  /// error detail string on failure.
+  Future<String?> _retryPendingHostedPropertyLink(HostedPlan plan) async {
+    final accountSession = _accountSession;
+    final propertyClient = _propertyPlannerClient;
+    if (accountSession == null ||
+        propertyClient == null ||
+        _activePlanPropertyId != null ||
+        (_pendingPropertyId == null && !_pendingPropertyDiscovery)) {
+      return null;
+    }
+    try {
+      var targetId = _pendingPropertyId;
+      if (targetId == null) {
+        final overview = await propertyClient.propertyOverview(
+          accountSession,
+          propertyHint: _serverSwitched ? null : _propertyHint,
+        );
+        targetId = overview.property.id;
+        if (mounted && _hostedPlan?.id == plan.id) {
+          _pendingPropertyId = targetId;
+          _pendingPropertyDiscovery = false;
+        }
+      }
+      await propertyClient.linkPlanProperty(accountSession, plan.id, targetId);
+      if (mounted && _hostedPlan?.id == plan.id) {
+        _activePlanPropertyId = targetId;
+        _pendingPropertyId = null;
+        _pendingPropertyDiscovery = false;
+      }
+      return null;
+    } on Object catch (error) {
+      return error is AccountException ? error.message : '$error';
     }
   }
 
@@ -3711,7 +4061,8 @@ class _PlanPageState extends State<PlanPage>
   Future<bool> _saveHostedPlan() async {
     final workflow = _hostedWorkflow;
     final session = _session;
-    if (session == null) return false;
+    final hosted = _hostedPlan;
+    if (session == null || hosted == null) return false;
     if (workflow == null) {
       setState(
         () => _setStatus(
@@ -3722,8 +4073,30 @@ class _PlanPageState extends State<PlanPage>
       );
       return false;
     }
+    final hasPendingPropertyRetry =
+        _activePlanPropertyId == null &&
+        _propertyPlannerClient != null &&
+        (_pendingPropertyId != null || _pendingPropertyDiscovery);
     _hostedSaveInFlight = true;
     try {
+      if (!session.isDirty &&
+          hasPendingPropertyRetry &&
+          !_hostedSaveBlocked &&
+          workflow.state == HostedWorkflowState.ready) {
+        final linkError = await _retryPendingHostedPropertyLink(hosted);
+        if (!mounted) return false;
+        setState(
+          () => _setStatus(
+            linkError == null
+                ? 'saved online and linked to property'
+                : 'plan is saved online, but could not link to property '
+                      '($linkError). Save again to retry',
+            isError: linkError != null,
+          ),
+        );
+        _refresh();
+        return linkError == null;
+      }
       if (_hostedSaveBlocked ||
           workflow.state == HostedWorkflowState.leaseLost ||
           workflow.state == HostedWorkflowState.conflict) {
@@ -3746,16 +4119,29 @@ class _PlanPageState extends State<PlanPage>
       final result = await workflow.save(PlanSessionHostedDocument(session));
       if (!mounted) return false;
       _hostedSaveBlocked = false;
+      String? linkError;
+      var linkedNow = false;
+      if (hasPendingPropertyRetry) {
+        linkError = await _retryPendingHostedPropertyLink(hosted);
+        if (!mounted) return false;
+        linkedNow = linkError == null && _activePlanPropertyId != null;
+      }
+      final base = linkedNow
+          ? 'saved online and linked to property'
+          : 'saved online';
+      final suffix = [
+        if (linkError != null) 'could not link to property ($linkError)',
+        if (!result.localDocumentClean)
+          'edits made while saving are not saved yet',
+      ].join('; ');
       setState(
         () => _setStatus(
-          result.localDocumentClean
-              ? 'saved online'
-              : 'saved online; edits made while saving are not saved yet',
-          isError: !result.localDocumentClean,
+          suffix.isEmpty ? base : '$base; $suffix',
+          isError: !result.localDocumentClean || linkError != null,
         ),
       );
       _refresh();
-      return result.localDocumentClean;
+      return result.localDocumentClean && linkError == null;
     } on Object catch (error) {
       if (mounted) {
         setState(() {
@@ -3879,6 +4265,7 @@ class _PlanPageState extends State<PlanPage>
     await _detachHosted();
     setState(() {
       _resetForPlanReplacement();
+      _pendingPropertyId = _serverSwitched ? null : _propertyHint;
       _setStatus('opened ${source.name}', isError: false);
     });
     _refresh();
@@ -4025,6 +4412,7 @@ class _PlanPageState extends State<PlanPage>
     await _detachHosted();
     setState(() {
       _resetForPlanReplacement();
+      _pendingPropertyId = _serverSwitched ? null : _propertyHint;
       _setStatus('new plan created', isError: false);
     });
     _refresh();
@@ -4034,6 +4422,7 @@ class _PlanPageState extends State<PlanPage>
   /// Shared UI baseline after the session successfully replaces a plan.
   void _resetForPlanReplacement() {
     _customPlanTitle = null;
+    _activePlanPropertyLookupFailed = false;
     _selection.clear();
     _placing = null;
     _wallChainTool = false;
@@ -4258,6 +4647,7 @@ class _PlanPageState extends State<PlanPage>
                 // A new server gets a fresh control, never the old session.
                 key: ValueKey(_accountClientGeneration),
                 client: accountClient,
+                restoreOnInit: _restoreAccountOnInit,
                 onSessionChanged: _accountSessionChanged,
                 beforeSignIn: accountClient.signInLeavesEditor
                     ? _beforeAccountSignIn
