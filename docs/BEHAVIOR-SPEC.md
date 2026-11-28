@@ -4980,9 +4980,11 @@ plan, links it to the active or pending validated `?property=<id>` target when
 property integration is available (preserving the uploaded hosted plan with a
 status notice and retaining the pending property target for retry on the next
 Save if linking fails, resolving an opened hosted plan's existing property link
-on checkout, and clearing pending linkage when opening an unlinked hosted plan
-or switching servers), and then takes its lease without downloading it. Only
-when the lease
+on checkout, retrying that lookup before uploading a copy if the checkout
+lookup failed—or asking for explicit confirmation before saving an unlinked
+copy when property verification remains unavailable—and clearing pending
+linkage when opening a confirmed unlinked hosted plan or switching servers),
+and then takes its lease without downloading it. Only when the lease
 revision equals the uploaded revision does the editor adopt it as the save
 target, mark the captured core revision saved, forget any local file binding
 and release the previous plan's lease best-effort; otherwise the current plan

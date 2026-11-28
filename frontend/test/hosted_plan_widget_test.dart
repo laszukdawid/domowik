@@ -234,6 +234,8 @@ class _PropertyHostedClient extends _HostedClient
   final linked = <PlannerPlanSummary>[];
   String propertyName = 'Maple House';
   String propertyId = 'property-1';
+  bool failPlanPropertyContext = false;
+  final propertyContextLookups = <String>[];
   final propertyHints = <String?>[];
   Completer<PlannerPropertyOverview>? pendingOverview;
 
@@ -256,6 +258,14 @@ class _PropertyHostedClient extends _HostedClient
     AccountSession session,
     String planId,
   ) async {
+    propertyContextLookups.add(planId);
+    if (failPlanPropertyContext) {
+      throw const AccountException(
+        'Property service temporarily unavailable',
+        statusCode: 503,
+        code: 'property-upstream-unavailable',
+      );
+    }
     final summary = linked
         .where((candidate) => candidate.id == planId)
         .firstOrNull;
@@ -1396,6 +1406,123 @@ void main() {
       await tap(tester, find.byKey(const ValueKey('sign-out')));
       expect(desktopClient.signOutCalls, 2);
       expect(find.text('Sign in'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Save as new online plan retries failed checkout planPropertyContext and links recovered property',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes)
+        ..failPlanPropertyContext = true;
+      final linkedOriginal = propertyClient._newPlan('Main House', seedBytes);
+      propertyClient.linked.add(
+        PlannerPlanSummary(id: linkedOriginal.id, title: linkedOriginal.title),
+      );
+
+      await start(tester, accountClient: propertyClient);
+      await openHosted(tester, linkedOriginal);
+      expectOnlineTitle('Main House');
+
+      // Property service recovers before the user saves a new online copy.
+      propertyClient.propertyContextLookups.clear();
+      propertyClient.failPlanPropertyContext = false;
+
+      await saveMenu(tester, 'save-as-online');
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Main House Recovered Copy',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('save-copy-without-property-link-dialog')),
+        findsNothing,
+      );
+      expect(propertyClient.propertyContextLookups, [linkedOriginal.id]);
+      final copied = propertyClient.plans.values.firstWhere(
+        (plan) => plan.title == 'Main House Recovered Copy',
+      );
+      expect(
+        propertyClient.calls,
+        contains('linkProperty:${copied.id}:property-1'),
+      );
+      expectOnlineTitle('Main House Recovered Copy');
+    },
+  );
+
+  testWidgets(
+    'Save as new online plan prompts before saving unlinked when planPropertyContext remains unavailable',
+    (tester) async {
+      final propertyClient = _PropertyHostedClient(seedBytes)
+        ..failPlanPropertyContext = true;
+      final linkedOriginal = propertyClient._newPlan('Main House', seedBytes);
+      propertyClient.linked.add(
+        PlannerPlanSummary(id: linkedOriginal.id, title: linkedOriginal.title),
+      );
+
+      await start(tester, accountClient: propertyClient);
+      await openHosted(tester, linkedOriginal);
+      expectOnlineTitle('Main House');
+      propertyClient.calls.clear();
+
+      // Still failing during Save as new online plan -> confirmation dialog.
+      await saveMenu(tester, 'save-as-online');
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Unlinked Copy',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('save-copy-without-property-link-dialog')),
+        findsOneWidget,
+      );
+
+      // Cancel aborts before importPlan is ever called.
+      await tap(
+        tester,
+        find.byKey(const ValueKey('cancel-save-without-property-link')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        propertyClient.plans.values.where((p) => p.title == 'Unlinked Copy'),
+        isEmpty,
+      );
+      expect(
+        propertyClient.calls.where((call) => call.startsWith('import:')),
+        isEmpty,
+      );
+      expectOnlineTitle('Main House');
+
+      // Explicit Save without link proceeds and uploads the unlinked copy.
+      await saveMenu(tester, 'save-as-online');
+      await tester.enterText(
+        find.byKey(const ValueKey('online-plan-title')),
+        'Unlinked Copy',
+      );
+      await tap(tester, find.byKey(const ValueKey('online-title-confirm')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('save-copy-without-property-link-dialog')),
+        findsOneWidget,
+      );
+      await tap(
+        tester,
+        find.byKey(const ValueKey('confirm-save-without-property-link')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        propertyClient.plans.values.where((p) => p.title == 'Unlinked Copy'),
+        hasLength(1),
+      );
+      expect(
+        propertyClient.calls.where((call) => call.startsWith('linkProperty:')),
+        isEmpty,
+      );
+      expectOnlineTitle('Unlinked Copy');
     },
   );
 }

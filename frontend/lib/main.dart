@@ -260,6 +260,7 @@ class _PlanPageState extends State<PlanPage>
   late String? _pendingPropertyId = _propertyHint;
   bool _pendingPropertyDiscovery = false;
   String? _activePlanPropertyId;
+  bool _activePlanPropertyLookupFailed = false;
   bool _serverSwitched = false;
   int _userDocumentActionGeneration = 0;
   final ValueNotifier<int> _propertyContextChanges = ValueNotifier(0);
@@ -3135,6 +3136,7 @@ class _PlanPageState extends State<PlanPage>
       _hostedPlan = null;
       _hostedSaveBlocked = false;
       _activePlanPropertyId = null;
+      _activePlanPropertyLookupFailed = false;
       _pendingPropertyDiscovery = false;
       _pendingPropertyId =
           previousPropertyId ??
@@ -3227,6 +3229,7 @@ class _PlanPageState extends State<PlanPage>
       _pendingPropertyId = null;
       _pendingPropertyDiscovery = false;
       _activePlanPropertyId = null;
+      _activePlanPropertyLookupFailed = false;
       _accountClientGeneration++;
       _accountClient = _createAccountClient();
       _accountSession = null;
@@ -3439,6 +3442,7 @@ class _PlanPageState extends State<PlanPage>
           setState(() {
             _accountSession = null;
             _activePlanPropertyId = null;
+            _activePlanPropertyLookupFailed = false;
             _pendingPropertyDiscovery = false;
             if (signOutError != null) {
               _setStatus(
@@ -3614,6 +3618,42 @@ class _PlanPageState extends State<PlanPage>
     });
   }
 
+  static bool _isConfirmedPropertyUnlinked(Object error) {
+    if (error is UnimplementedError) return true;
+    if (error is AccountException) {
+      return error.code == 'property-unlinked' ||
+          error.code == 'property-integration-disabled';
+    }
+    return false;
+  }
+
+  Future<bool> _confirmSaveCopyWithoutPropertyLink(String detail) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('save-copy-without-property-link-dialog'),
+        title: const Text('Save copy without property link?'),
+        content: Text(
+          'Could not verify whether this plan is linked to a property '
+          '($detail). Save the new online copy without a property link?',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('cancel-save-without-property-link'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('confirm-save-without-property-link'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Save without link'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
   /// Uploads the current encoding as a new online plan and makes it where
   /// Save writes, keeping the open document and its history. Nothing changes
   /// unless the new plan's lease matches the uploaded revision.
@@ -3624,13 +3664,51 @@ class _PlanPageState extends State<PlanPage>
     if (client == null || accountSession == null || session == null) {
       return false;
     }
+    final sourceHostedPlan = _hostedPlan;
+    final propertyClient = _propertyPlannerClient;
+    if (_pendingPropertyId == null &&
+        _activePlanPropertyId == null &&
+        _activePlanPropertyLookupFailed &&
+        sourceHostedPlan != null &&
+        propertyClient != null) {
+      try {
+        final context = await propertyClient.planPropertyContext(
+          accountSession,
+          sourceHostedPlan.id,
+        );
+        final resolvedId = context.property.id.isEmpty
+            ? null
+            : context.property.id;
+        if (mounted && _hostedPlan?.id == sourceHostedPlan.id) {
+          setState(() {
+            _activePlanPropertyLookupFailed = false;
+            _activePlanPropertyId = resolvedId;
+          });
+        }
+      } on Object catch (error) {
+        if (_isConfirmedPropertyUnlinked(error)) {
+          if (mounted && _hostedPlan?.id == sourceHostedPlan.id) {
+            setState(() {
+              _activePlanPropertyLookupFailed = false;
+              _activePlanPropertyId = null;
+            });
+          }
+        } else {
+          if (!mounted) return false;
+          final detail = error is AccountException ? error.message : '$error';
+          final saveUnlinked = await _confirmSaveCopyWithoutPropertyLink(
+            detail,
+          );
+          if (!saveUnlinked || !mounted) return false;
+        }
+      }
+    }
     final snapshot = session.captureForSave();
     final plan = await client.importPlan(accountSession, title, snapshot.bytes);
     var linkedProperty = false;
     String? propertyLinkError;
     var propertyIdToLink = _pendingPropertyId ?? _activePlanPropertyId;
     var retainPendingDiscovery = false;
-    final propertyClient = _propertyPlannerClient;
     if (propertyClient != null &&
         (propertyIdToLink != null || _pendingPropertyDiscovery)) {
       try {
@@ -3686,6 +3764,7 @@ class _PlanPageState extends State<PlanPage>
       _customPlanTitle = null;
       _hostedWorkflow = candidate;
       _hostedSaveBlocked = false;
+      _activePlanPropertyLookupFailed = false;
       if (linkedProperty) {
         _activePlanPropertyId = propertyIdToLink;
         _pendingPropertyId = null;
@@ -3733,6 +3812,7 @@ class _PlanPageState extends State<PlanPage>
     final previousPlan = _hostedPlan;
     final previousBaseline = previous?.expectedRevision;
     final previousPropertyId = _activePlanPropertyId;
+    final previousPropertyLookupFailed = _activePlanPropertyLookupFailed;
     final previousPendingPropertyId = _pendingPropertyId;
     final previousPendingDiscovery = _pendingPropertyDiscovery;
     final reopeningSamePlan = previous != null && previousPlan?.id == plan.id;
@@ -3752,9 +3832,10 @@ class _PlanPageState extends State<PlanPage>
         return false;
       }
       String? resolvedPropertyId = linkedPropertyId;
+      var propertyLookupFailed = false;
       if (resolvedPropertyId == null &&
-          !reopeningSamePlan &&
-          resolvePropertyLink) {
+          resolvePropertyLink &&
+          (!reopeningSamePlan || previousPropertyLookupFailed)) {
         final propertyClient = _propertyPlannerClient;
         if (propertyClient != null) {
           try {
@@ -3762,12 +3843,13 @@ class _PlanPageState extends State<PlanPage>
               accountSession,
               plan.id,
             );
-            if (context.property.id.isNotEmpty) {
-              resolvedPropertyId = context.property.id;
-            }
-          } on Object {
-            // Unlinked plans, disabled adapters, or transient errors still open
-            // the hosted plan cleanly.
+            resolvedPropertyId = context.property.id.isEmpty
+                ? null
+                : context.property.id;
+            propertyLookupFailed = false;
+          } on Object catch (error) {
+            resolvedPropertyId = null;
+            propertyLookupFailed = !_isConfirmedPropertyUnlinked(error);
           }
         }
       }
@@ -3812,6 +3894,11 @@ class _PlanPageState extends State<PlanPage>
         _activePlanPropertyId = reopeningSamePlan
             ? (resolvedPropertyId ?? previousPropertyId)
             : resolvedPropertyId;
+        _activePlanPropertyLookupFailed =
+            _activePlanPropertyId == null &&
+            (reopeningSamePlan && !resolvePropertyLink
+                ? previousPropertyLookupFailed
+                : propertyLookupFailed);
         _setStatus('opened online plan "${plan.title}"', isError: false);
       });
       _refresh();
@@ -3921,6 +4008,7 @@ class _PlanPageState extends State<PlanPage>
     _hostedPlan = null;
     _hostedSaveBlocked = false;
     _activePlanPropertyId = null;
+    _activePlanPropertyLookupFailed = false;
     _pendingPropertyDiscovery = false;
     if (hadHostedPlan) {
       _pendingPropertyId = _serverSwitched ? null : _propertyHint;
@@ -4334,6 +4422,7 @@ class _PlanPageState extends State<PlanPage>
   /// Shared UI baseline after the session successfully replaces a plan.
   void _resetForPlanReplacement() {
     _customPlanTitle = null;
+    _activePlanPropertyLookupFailed = false;
     _selection.clear();
     _placing = null;
     _wallChainTool = false;
